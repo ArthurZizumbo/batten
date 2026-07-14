@@ -1,0 +1,58 @@
+# batten governing its own development (dogfood).
+# This is the spec for the batten repo itself. enforcement: report while we bring it up —
+# it warns instead of denying, so it can't get in the way of active work.
+version: 1
+project: batten
+
+unit:
+  name: TASK
+  pattern: 'TASK-\d+'
+
+# During bring-up the gates advise; flip to `enforce` once trusted.
+enforcement: report
+
+artifacts:
+  handoff: HANDOFF.md
+
+phases:
+  - id: build
+    fanout: true
+    anchor: git_sha
+  - id: verify
+    gate: qa
+    diff_from: anchor
+  - id: close
+    requires_verdict: ok
+
+domains:
+  cmd:
+    path: cmd/
+    check: ['go build ./...', 'go vet ./...']
+    invariants:
+      - never write state under CLAUDE_PLUGIN_ROOT (wiped on update); use CLAUDE_PLUGIN_DATA
+      - a hook must degrade, never break a session
+  internal:
+    path: internal/
+    check: ['go build ./...', 'go test ./...']
+    invariants:
+      - never invent a number; unmeasurable reports as unavailable, not zero
+      - fail-open only with a visible warning
+
+gates:
+  qa:
+    checks: ['go build ./...', 'go vet ./...', 'go test ./...']
+    verdict: required
+    evidence: required
+
+provenance:
+  format: '{id} @ {git_sha7}'
+
+budget:
+  tokens_per_run: 5000000
+  on_exceed: warn
+
+capabilities:
+  memory:
+    provider: engram
+  obsidian:
+    vault: ''   # set to a real vault path to see run notes appear

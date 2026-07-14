@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -85,6 +86,33 @@ func context(event, ctx string) *Output {
 type Handler struct {
 	Spec  *spec.Spec
 	Store *store.Store
+	// TapPath, when set and its ".on" flag exists, receives a copy of every raw payload.
+	// This is the E0 instrument for the agent_id question; empty in normal operation.
+	TapPath string
+}
+
+// tap appends the raw payload to the tap file when the tap flag is present. Best-effort and
+// silent: a debug instrument must never affect whether a hook allows or denies.
+func tap(path string, raw []byte) {
+	if path == "" {
+		return
+	}
+	if _, err := os.Stat(path + ".on"); err != nil {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(append(bytesTrimNL(raw), '\n'))
+}
+
+func bytesTrimNL(b []byte) []byte {
+	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r') {
+		b = b[:len(b)-1]
+	}
+	return b
 }
 
 // Dispatch routes one hook event. Returns the JSON to print (or nil for silence).
@@ -96,6 +124,8 @@ func (h *Handler) Dispatch(event string, raw []byte) (*Output, error) {
 	if in.HookEventName == "" {
 		in.HookEventName = event
 	}
+	tap(h.TapPath, raw) // E0: capture the real payload when a debug tap is active
+
 	if h.Spec == nil || h.Store == nil {
 		return nil, nil // not a batten repo: stay out of the way
 	}

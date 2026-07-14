@@ -70,6 +70,8 @@ func main() {
 		err = cmdStatusline(os.Args[2:])
 	case "ingest":
 		err = cmdIngest(os.Args[2:])
+	case "hook-debug":
+		err = cmdHookDebug(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("batten", version)
 	default:
@@ -158,7 +160,7 @@ func cmdHook(args []string) error {
 	}
 	defer st.Close()
 
-	h := &hooks.Handler{Spec: sp, Store: st}
+	h := &hooks.Handler{Spec: sp, Store: st, TapPath: tapPath()}
 	out, err := h.Dispatch(event, raw)
 	if err != nil || out == nil {
 		return nil
@@ -490,6 +492,76 @@ func cmdCanvas(args []string) error {
 		fmt.Printf("wrote run note %s — open the vault in Obsidian\n", w.RunNotePath(unit))
 	}
 	return nil
+}
+
+// ---------- hook-debug: resolve the agent_id question (E0 step 2) ----------
+
+// tapPath is where hooks dump their raw payload while a tap is active. The whole point is
+// E0's load-bearing unknown: does a PreToolUse fired INSIDE a subagent carry agent_id?
+// We answer it by capturing the real thing rather than guessing.
+func tapPath() string {
+	dir := os.Getenv("CLAUDE_PLUGIN_DATA")
+	if dir == "" {
+		dir = filepath.Dir(dbPath())
+	}
+	return filepath.Join(dir, "hook-taps.jsonl")
+}
+
+func tapFlagPath() string { return tapPath() + ".on" }
+
+func cmdHookDebug(args []string) error {
+	if len(args) == 0 {
+		return errors.New("hook-debug: --tap | --off | --show")
+	}
+	switch args[0] {
+	case "--tap":
+		if err := os.MkdirAll(filepath.Dir(tapFlagPath()), 0o755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(tapFlagPath(), []byte("on"), 0o644); err != nil {
+			return err
+		}
+		fmt.Printf("tap ON — every hook payload now appends to %s\n", tapPath())
+		fmt.Println("now launch a subagent that edits a file, then run: batten hook-debug --show")
+		return nil
+	case "--off":
+		_ = os.Remove(tapFlagPath())
+		fmt.Println("tap OFF")
+		return nil
+	case "--show":
+		b, err := os.ReadFile(tapPath())
+		if err != nil {
+			return fmt.Errorf("no taps captured yet (%v)", err)
+		}
+		// Summarize the one thing we care about: which PreToolUse payloads carried agent_id.
+		var withAgent, withoutAgent int
+		for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			if line == "" {
+				continue
+			}
+			var m map[string]any
+			if json.Unmarshal([]byte(line), &m) != nil {
+				continue
+			}
+			if m["hook_event_name"] != "PreToolUse" {
+				continue
+			}
+			if id, ok := m["agent_id"].(string); ok && id != "" {
+				withAgent++
+			} else {
+				withoutAgent++
+			}
+		}
+		fmt.Print(string(b))
+		fmt.Printf("\n--- PreToolUse payloads: %d WITH agent_id, %d without ---\n", withAgent, withoutAgent)
+		if withAgent > 0 {
+			fmt.Println("VERDICT: subagent hooks DO carry agent_id — the write-set guard works as designed.")
+		} else if withoutAgent > 0 {
+			fmt.Println("VERDICT: no agent_id seen — the guard runs in advisory mode (warns, cannot hard-deny per-agent).")
+		}
+		return nil
+	}
+	return fmt.Errorf("hook-debug: unknown flag %q", args[0])
 }
 
 // ---------- mcp / tui ----------
