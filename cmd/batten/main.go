@@ -23,6 +23,7 @@ import (
 	"github.com/arthu/batten/internal/discovery"
 	"github.com/arthu/batten/internal/hooks"
 	"github.com/arthu/batten/internal/mcp"
+	"github.com/arthu/batten/internal/scan"
 	"github.com/arthu/batten/internal/spec"
 	"github.com/arthu/batten/internal/statusline"
 	"github.com/arthu/batten/internal/store"
@@ -849,6 +850,12 @@ func cmdDoctor() error {
 	} else {
 		fmt.Println("⚠ no phase sets requires_verdict — nothing gates a commit")
 	}
+	if sp.ReportOnly() {
+		fmt.Println("● enforcement: REPORT — gates WARN, they do not block yet. " +
+			"Set enforcement: enforce (or remove it) when the team trusts the gates.")
+	} else {
+		fmt.Println("✓ enforcement: enforce — gates block")
+	}
 
 	st, err := store.Open(dbPath())
 	if err != nil {
@@ -934,38 +941,58 @@ func have(bin string) bool {
 // ---------- init ----------
 
 func cmdInit(args []string) error {
-	from := ""
+	scanJSON, from := false, ""
 	for i := 0; i < len(args); i++ {
-		if args[i] == "--from" && i+1 < len(args) {
-			from = args[i+1]
+		switch args[i] {
+		case "--scan-json":
+			scanJSON = true
+		case "--from":
+			if i+1 < len(args) {
+				from = args[i+1]
+			}
 		}
 	}
 	cwd, _ := os.Getwd()
+
+	facts, err := scan.Scan(cwd)
+	if err != nil {
+		return err
+	}
+
+	// --scan-json feeds the facts to /batten-init, which adds the judgment a heuristic can't:
+	// mining invariants from AGENTS.md, migrating from a prose doc (--from), naming gates.
+	if scanJSON {
+		b, _ := json.MarshalIndent(facts, "", "  ")
+		fmt.Println(string(b))
+		return nil
+	}
+
 	dst := filepath.Join(cwd, spec.Filename)
 	if _, err := os.Stat(dst); err == nil {
-		return fmt.Errorf("%s already exists", spec.Filename)
+		return fmt.Errorf("%s already exists — remove it or edit it by hand", spec.Filename)
 	}
-
-	// The real work of `init` is a judgment call about a specific repo, and a model
-	// makes it far better than a heuristic would. So the binary prepares the ground
-	// and hands the interview to the agent, via the /batten-init command.
-	fmt.Printf(`batten init prepares a spec by interviewing this repo.
-
-Run this inside Claude Code:
-
-    /batten-init%s
-
-The command inspects your build files, per-directory AGENTS.md/CLAUDE.md, installed
-skills, and test targets, then writes %s. Review it — it is your process, as data.
-`, fromArg(from), spec.Filename)
+	if err := os.WriteFile(dst, []byte(facts.ToYAML()), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("wrote %s — a working draft in report mode (gates warn, don't block).\n", spec.Filename)
+	fmt.Printf("  project=%q unit=%q, %d domain(s) detected", facts.Project, facts.UnitName, len(facts.Domains))
+	if facts.Graphify {
+		fmt.Print(", graphify found")
+	}
+	if facts.Engram {
+		fmt.Print(", engram found")
+	}
+	fmt.Println()
+	fmt.Println("Next:")
+	fmt.Println("  1. fill the invariants (the TODOs) — the highest-value part of the file")
+	if from != "" {
+		fmt.Printf("  2. reconcile against your prose workflow: %s\n", from)
+	}
+	fmt.Println("  2. run: batten doctor")
+	fmt.Println("  3. flip enforcement: enforce when you trust the gates")
+	fmt.Println("For a richer draft (invariants mined from AGENTS.md, migration from a prose doc),")
+	fmt.Println("run /batten-init inside Claude Code instead — it uses `batten init --scan-json`.")
 	return nil
-}
-
-func fromArg(from string) string {
-	if from == "" {
-		return ""
-	}
-	return " --from " + from
 }
 
 // ---------- helpers ----------

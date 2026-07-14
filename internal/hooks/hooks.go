@@ -91,6 +91,29 @@ type Handler struct {
 	TapPath string
 }
 
+// gate turns a gate decision into the right output for the current enforcement mode.
+// In "enforce" it denies; in "report" it lets the tool through but surfaces the reason as a
+// visible warning — the adoption ramp, so a project mid-sprint isn't blocked on day one.
+func (h *Handler) gate(event, reason string) *Output {
+	if h.Spec.ReportOnly() {
+		return &Output{
+			SystemMessage: "batten (report mode — not blocking): " + firstLine(reason),
+			HookSpecific: &HookSpecific{
+				HookEventName:     event,
+				AdditionalContext: "batten would DENY this in enforce mode:\n" + reason,
+			},
+		}
+	}
+	return deny(event, reason)
+}
+
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
 // tap appends the raw payload to the tap file when the tap flag is present. Best-effort and
 // silent: a debug instrument must never affect whether a hook allows or denies.
 func tap(path string, raw []byte) {
@@ -213,7 +236,7 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 
 	v, err := h.Store.LatestVerdict(run.RunID, gateName)
 	if err != nil {
-		return deny("PreToolUse", fmt.Sprintf(
+		return h.gate("PreToolUse", fmt.Sprintf(
 			"batten: %s has no verdict envelope. Run the %q phase before committing.\n"+
 				"To proceed anyway (recorded in the audit log): batten override %s --reason \"...\"",
 			unit, gateGuess(h.Spec), unit)), nil
@@ -223,11 +246,11 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	case v.Result == "ok" && len(v.Evidence) == 0:
 		// Belt and braces: SaveVerdict already refuses this, but if a verdict got in
 		// by another path, the gate still catches it.
-		return deny("PreToolUse", fmt.Sprintf(
+		return h.gate("PreToolUse", fmt.Sprintf(
 			"batten: %s has result=ok but an empty evidence[]. An approval must cite something.\n%s",
 			unit, store.ErrNoEvidence)), nil
 	case v.Result != closing.RequiresVerdict && v.Result != "ok":
-		return deny("PreToolUse", fmt.Sprintf(
+		return h.gate("PreToolUse", fmt.Sprintf(
 			"batten: %s verdict is %q, not %q. %s\nsafe_next_step: %s\n"+
 				"To proceed anyway (recorded): batten override %s --reason \"...\"",
 			unit, v.Result, closing.RequiresVerdict, v.Why, v.SafeNextStep, unit)), nil
@@ -238,7 +261,7 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 		b := h.Spec.Budget
 		over, cs, err := h.Store.OverBudget(run.RunID, b.TokensPerRun, b.ImputedUSDPerRun, b.QuotaPctPerRun)
 		if err == nil && over {
-			return deny("PreToolUse", fmt.Sprintf(
+			return h.gate("PreToolUse", fmt.Sprintf(
 				"batten: %s is over budget. budget.on_exceed=block.\n%s\n"+
 					"To proceed anyway (recorded): batten override %s --reason \"...\"",
 				unit, formatCeilings(cs), unit)), nil
@@ -306,7 +329,7 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 	}
 
 	mine, _ := h.Store.WriteSet(node.RunID, node.NodeID)
-	return deny("PreToolUse", fmt.Sprintf(
+	return h.gate("PreToolUse", fmt.Sprintf(
 		"batten: write-set collision. %s belongs to another agent's write-set (%s); you are %s.\n"+
 			"Two agents must never write the same file — that is what makes the fan-out safe.\n"+
 			"Your write-set:\n  %s\n"+

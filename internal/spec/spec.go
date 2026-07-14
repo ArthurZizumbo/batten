@@ -17,21 +17,28 @@ import (
 const Filename = "batten.yaml"
 
 type Spec struct {
-	Version      int                   `yaml:"version"`
-	Project      string                `yaml:"project"`
-	Unit         Unit                  `yaml:"unit"`
-	Artifacts    map[string]string     `yaml:"artifacts"`
-	Phases       []Phase               `yaml:"phases"`
-	Domains      map[string]Domain     `yaml:"domains"`
-	Resources    map[string]Resource   `yaml:"resources"`
-	Gates        map[string]Gate       `yaml:"gates"`
-	Provenance   Provenance            `yaml:"provenance"`
-	Budget       Budget                `yaml:"budget"`
-	Capabilities Capabilities          `yaml:"capabilities"`
+	Version int    `yaml:"version"`
+	Project string `yaml:"project"`
+	// Enforcement is the adoption ramp. "enforce" (default) denies; "report" turns every gate
+	// into a visible warning instead of a block, so a project mid-sprint can adopt batten without
+	// the gates getting in the way on day one. Flip to enforce when the team trusts it.
+	Enforcement  string              `yaml:"enforcement"`
+	Unit         Unit                `yaml:"unit"`
+	Artifacts    map[string]string   `yaml:"artifacts"`
+	Phases       []Phase             `yaml:"phases"`
+	Domains      map[string]Domain   `yaml:"domains"`
+	Resources    map[string]Resource `yaml:"resources"`
+	Gates        map[string]Gate     `yaml:"gates"`
+	Provenance   Provenance          `yaml:"provenance"`
+	Budget       Budget              `yaml:"budget"`
+	Capabilities Capabilities        `yaml:"capabilities"`
 
 	// Root is the directory batten.yaml was loaded from. Not serialized.
 	Root string `yaml:"-"`
 }
+
+// ReportOnly reports whether gates should warn instead of deny.
+func (s *Spec) ReportOnly() bool { return s.Enforcement == "report" }
 
 // Unit is the work-item noun: US, ticket, issue, story.
 type Unit struct {
@@ -208,6 +215,11 @@ func (s *Spec) Validate() error {
 	}
 	if s.Project == "" {
 		add("project is required")
+	}
+	switch s.Enforcement {
+	case "", "enforce", "report":
+	default:
+		add("enforcement must be \"enforce\" or \"report\", got %q", s.Enforcement)
 	}
 	if s.Unit.Name == "" {
 		add("unit.name is required (the work-item noun: US, ticket, issue...)")
