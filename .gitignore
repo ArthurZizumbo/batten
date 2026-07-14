@@ -1,0 +1,6 @@
+/plugin/claude-code/bin/batten
+/plugin/claude-code/bin/batten.exe
+*.db
+*.db-wal
+*.db-shm
+/.batten/

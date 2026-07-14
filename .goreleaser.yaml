@@ -1,0 +1,70 @@
+# Release config for batten.
+#
+# The binary ships INSIDE the Claude Code plugin, at plugin/claude-code/bin/batten[.exe].
+# That is not a packaging detail, it is the whole distribution strategy: Claude Code adds a
+# plugin's bin/ to PATH automatically, so the hooks resolve the binary with zero out-of-band
+# installation. (engram installs its binary via brew/go install instead — and when a user
+# skips that step its hooks fail silently. A gate that fails silently is worse than no gate.)
+#
+# Hence: static binaries, every platform, no runtime deps.
+version: 2
+
+project_name: batten
+
+builds:
+  - id: batten
+    main: ./cmd/batten
+    binary: batten
+
+    env:
+      # The reason modernc.org/sqlite was chosen over mattn/go-sqlite3 in the first place.
+      # A cgo build would need a C toolchain on every target — and would make the Windows
+      # story miserable, which is unacceptable: Windows is a first-class target here.
+      - CGO_ENABLED=0
+
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+
+    # -s -w strips the symbol table and DWARF; main.version is stamped so that
+    # `batten version` reports the tag it was cut from rather than the placeholder.
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+    mod_timestamp: '{{ .CommitTimestamp }}' # reproducible builds: no build-time nondeterminism
+
+archives:
+  - id: batten
+    ids: [batten]
+    # Windows gets .zip because tar.gz is a second-class citizen there and this project
+    # refuses to make Windows a second-class citizen.
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE*
+      - batten.schema.json
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: sha256
+
+snapshot:
+  version_template: '{{ incpatch .Version }}-next'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  draft: false
+  prerelease: auto # a tag like v0.2.0-rc1 marks itself; batten is pre-1.0 and says so

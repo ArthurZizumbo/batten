@@ -1,0 +1,206 @@
+# AgroSatCopilot — el primer adapter.
+#
+# Esto ES `prompts_optimizers_v2.local.md` (700 líneas de prosa) reducido a su parte
+# ejecutable. Lo que quedó fuera no se perdió: se quedó en prosa porque no es ejecutable
+# (los prompts largos, las explicaciones, los ejemplos). La regla es §10 del DESIGN:
+# si no lo puede hacer cumplir un hook o ejecutar un comando, no va aquí.
+#
+# El motor no sabe qué es FarSLIP, ni una H100, ni una US. Todo eso es dato.
+
+version: 1
+project: agrosat
+
+unit:
+  name: US
+  pattern: 'US-\d{3}'
+  plan: context/RefinamientoPlaneacionAgroSatCopilot_v8.md
+  locator: '### {id}'
+
+artifacts:
+  research: docs/us-research/{id}.md
+  planning: docs/us-planning/{id}.md
+  handoff: docs/us-handoff/{id}.md
+  manual: docs/manual-test/{id}.md
+  resolved: docs/us-resolved/{id}.md
+
+# Las 7 fases. La mecánica es del motor; los nombres son tuyos.
+phases:
+  - id: research
+    optional: true # solo si la US trae tecnología nueva
+
+  - id: plan
+    reads: [research]
+    graph_query: true # "entiende qué YA existe" — el grafo, no grep. Aquí es donde se paga
+                      # el impuesto de re-orientación y donde graphify lo elimina.
+
+  - id: build
+    fanout: true # 1 agente por dominio + N por sub-tarea con write-sets disjuntos
+    reads: [planning]
+    anchor: git_sha # el SHA base: todas las fases siguientes diffean desde aquí, no desde HEAD~N
+
+  - id: verify
+    gate: qa
+    diff_from: anchor
+
+  - id: fix
+    interactive: true # sesión separada: diálogo largo
+
+  - id: reverify
+    gate: qa
+    when: fix.changed_logic # si Fase 5 solo tocó texto/i18n, se omite
+
+  - id: close
+    requires_verdict: ok # GATE DURO: sin veredicto ok, el hook deniega el commit
+
+# Los dominios = los ejes del fan-out. La única parte específica del proyecto.
+domains:
+  backend:
+    path: backend/
+    rules: backend/AGENTS.md
+    check: ['make lint', 'make test']
+    coverage: 70
+    skills: [agrosat-backend-api, agrosat-backend-services, agrosat-titiler-cog]
+    invariants:
+      - session_id en TODA query/endpoint
+      - Depends(get_current_user) en protegidos
+      - rate limit /chat (10/min) y /llm/switch (5/min)
+      - router -> service -> model (lógica en service, nunca en router)
+      - google-genai, NO google-adk
+      - StreamingResponse para SSE
+
+  frontend:
+    path: frontend/
+    rules: frontend/AGENTS.md
+    check: ['pnpm lint', 'pnpm typecheck', 'pnpm test']
+    coverage: 50
+    skills: [agrosat-frontend-components, agrosat-frontend-composables, agrosat-maplibre-geo, ui-ux-pro-max]
+    invariants:
+      - i18n simultáneo it+es+en (validado por scripts/i18n_check.mjs)
+      - t('key') siempre; cero strings hardcodeados
+      - <script setup lang=ts>; Tailwind v4
+      - SSR-safe (import.meta.client donde aplique)
+      - mapa con cleanup en onBeforeUnmount
+
+  ml:
+    path: ml/
+    exclude: [ml/agent/] # ml/agent es otro dominio: otro agente, otro write-set
+    rules: ml/AGENTS.md
+    check: ['poetry run ruff check .', 'pytest']
+    # Subagente custom (.claude/agents/agrosat-ml-engineer.md) en vez de general-purpose.
+    # El orquestador lo usa como subagent_type -> el nodo del DAG, el .canvas y la TUI
+    # muestran ESTE nombre, no "general-purpose" siete veces.
+    agent: agrosat-ml-engineer
+    skills: [agrosat-ml-segmentation, agrosat-ml-features, agrosat-ml-ensemble, agrosat-ml-evaluation]
+    resources: [gpu] # declara contención -> el motor serializa contra el probe
+    invariants:
+      - Polars, no pandas en pipelines
+      - Spatial CV (build_spatial_kfold), nunca random split
+      - canonical_parcel_id Utf8
+      - MLflow @track_experiment con data_version + code_version (server :5010, NO ./mlruns)
+      - FarSLIP usa prototipos fenológicos reales, NO torch.randn
+      - checkpoints por época en checkpoints/<modelo>/<run>/ (el repo ya vive en F:)
+
+  agent:
+    path: ml/agent/
+    rules: ml/agent/AGENTS.md
+    check: ['make test']
+    skills: [agrosat-google-adk-agent, agrosat-spatial-rag]
+    invariants:
+      - cada tool = FunctionDeclaration de google-genai + Pydantic ToolInput/ToolOutput
+      # Comillas OBLIGATORIAS: un escalar YAML sin comillas que contiene ": " se parsea como MAPA,
+      # no como string, y el invariante entero desaparece del prompt del subagente sin avisar.
+      - 'reasoner = Gemini 3.5 Flash frozen (patrón Be My Eyes: razona sobre el TEXTO del perceiver)'
+      - session_id en cada query
+      - mockear Vertex AI y vLLM en tests (sin llamadas reales)
+
+  db:
+    path: db/
+    rules: db/AGENTS.md
+    check: ['make db-migrate']
+    skills: [agrosat-db-migrations, agrosat-db-models, agrosat-security]
+    invariants:
+      - solo dbmate; JAMÁS SQLModel.metadata.create_all
+      - migraciones reversibles (-- migrate:up/down)
+      - nunca editar una migración aplicada (rollforward)
+      - GEOMETRY(POLYGON,4326)+GIST; VECTOR(64) para alphaearth_embedding
+
+  infra:
+    path: infrastructure/
+    rules: infrastructure/AGENTS.md
+    check: ['terraform fmt -recursive', 'terraform validate']
+    # Un dominio donde equivocarse cuesta dinero real merece un agente con menos herramientas
+    # y más miedo. Eso se declara aquí, no se pide por favor en el prompt.
+    agent: agrosat-infra-reviewer
+    skills: [agrosat-terraform, agrosat-gcp-services, agrosat-finops]
+    invariants:
+      - IAM least privilege (sin roles/owner|editor en runtime SAs)
+      - Cloud Run min_instances=0
+      - secretos creados vacíos por TF (se rellenan a mano)
+      - NO terraform apply sin confirmación
+
+  dagster:
+    path: dagster_project/
+    rules: dagster_project/AGENTS.md
+    check: ['poetry run pytest tests/dagster/ -v']
+    skills: [agrosat-dagster-mlops, agrosat-dvc-mlflow]
+    invariants:
+      - '@asset(deps=[...]) explícito'
+      - MaterializeResult + MetadataValue
+      - graceful skip on is_gcs_auth_error -> "skipped_no_gcs"
+
+# La H100: un recurso escaso, compartido entre 3 personas. Hoy la coordinación es prosa
+# ("revisa nvidia-smi antes"). Aquí es un recurso declarado: el motor lo consulta.
+resources:
+  gpu:
+    kind: exclusive_pool
+    probe: 'nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits'
+    unit: MiB
+    priority: [farslip, tsvit, ensembles, qwen] # el orden cuando no caben en paralelo
+
+gates:
+  qa:
+    checks: ['make check', 'pnpm lint', 'make test', 'pnpm test']
+    skills: [agrosat-security-audit, agrosat-code-review]
+    verdict: required
+    evidence: required # la regla de oro, mecanizada. evidence[] vacío -> blocked.
+
+provenance:
+  format: '{id} @ {git_sha7} + mlflow:{mlflow_run} + dvc:{dvc_rev}'
+
+# El tripwire que hoy no existe: el modo nocturno gira toda la noche sin tope.
+#
+# Con suscripción el costo marginal de un token es CERO, así que "dólares gastados" es el techo
+# equivocado. Tres techos honestos lo reemplazan, y batten hace cumplir los que puede MEDIR.
+# El que no puede medir lo reporta como no disponible — nunca como 0.
+budget:
+  tokens_per_run: 3_000_000 # exacto: lo único que se puede contar con certeza (los 5 buckets,
+                            # padre + TODOS los subagentes del fan-out; leer solo el transcript
+                            # del padre subcuenta brutalmente justo en el caso que nos importa)
+  imputed_usd_per_run: 8.00 # lo que HABRÍA costado en la API. No es una factura: mide el valor
+                            # que este run extrae de la suscripción. Tabla de precios propia,
+                            # nunca el total_cost_usd del transcript (sabidamente incorrecto)
+  quota_pct_per_run: 15     # % de la ventana móvil de 5h que este run puede quemar. Anthropic no
+                            # publica cuotas absolutas -> el porcentaje es la ÚNICA métrica de
+                            # cuota confiable. Necesita `batten statusline` instalado (la cuota
+                            # solo se expone ahí); sin él este techo NO se aplica, y lo dice.
+  max_iterations: 3         # vueltas de fix -> reverify antes de parar. Sin esto, un run nocturno
+                            # muele el mismo check rojo hasta que se acaba la ventana.
+  on_exceed: block          # block | warn | downgrade_effort
+
+capabilities:
+  graph:
+    provider: graphify
+    query_before_read: true
+    lessons: false # engram es dueño de lo episódico; la capa lessons de graphify lo pisa
+
+  memory:
+    provider: engram
+
+  obsidian:
+    vault: ~/vaults/agrosat
+    export: [runs, verdicts, canvas]
+
+  compression:
+    provider: headroom
+    memory: false # apagada: engram es dueño
+    measure: true # medir si de verdad ahorra en NUESTRO fan-out, en vez de creerle al README

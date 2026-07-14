@@ -1,0 +1,795 @@
+// Package store is batten's source of truth: the run graph, verdicts, and budget ledger.
+//
+// SQLite is canonical. The .canvas file, the handoff .md and any OTLP export are
+// lossy projections of what lives here.
+package store
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	_ "modernc.org/sqlite" // pure-Go driver; registers as "sqlite" (not "sqlite3")
+)
+
+type Store struct{ db *sql.DB }
+
+// Open prepares the database for the concurrency situation batten actually lives in:
+// several short-lived hook processes, one MCP subprocess, and the CLI, all writing
+// the same file.
+//
+// Two mechanisms, both required:
+//   - SetMaxOpenConns(1) serializes writes WITHIN a process. Without it, database/sql's
+//     pool opens several connections to the same file and you deadlock against yourself.
+//   - WAL + busy_timeout absorbs contention BETWEEN processes.
+func Open(path string) (*Store, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return nil, err
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+
+	for _, p := range []string{
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA busy_timeout = 5000",
+		"PRAGMA synchronous = NORMAL",
+		"PRAGMA foreign_keys = ON",
+	} {
+		if _, err := db.Exec(p); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("batten: pragma %q: %w", p, err)
+		}
+	}
+	s := &Store{db: db}
+	if err := s.migrate(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return s, nil
+}
+
+func (s *Store) Close() error { return s.db.Close() }
+
+const schema = `
+CREATE TABLE IF NOT EXISTS runs (
+  run_id       TEXT PRIMARY KEY,
+  project      TEXT NOT NULL,
+  unit_id      TEXT NOT NULL,          -- US-034
+  session_id   TEXT,
+  phase        TEXT,                   -- current phase id
+  status       TEXT NOT NULL,          -- running|ok|blocked|failed|rolled_back
+  base_sha     TEXT,                   -- the anchor: diffs are computed from here
+  tokens_spent      INTEGER NOT NULL DEFAULT 0,   -- exact; the only thing we can count for sure
+  imputed_usd_spent REAL NOT NULL DEFAULT 0,      -- what it WOULD have cost on the API
+  quota_start_5h    REAL,                          -- five_hour_pct when the run opened
+  iterations   INTEGER NOT NULL DEFAULT 0,
+  started_at   INTEGER NOT NULL,
+  ended_at     INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_runs_unit ON runs(project, unit_id);
+CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+
+CREATE TABLE IF NOT EXISTS nodes (
+  node_id    TEXT PRIMARY KEY,
+  run_id     TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  kind       TEXT NOT NULL,            -- phase|subagent|gate|tool
+  label      TEXT NOT NULL,
+  domain     TEXT,                     -- the fan-out axis this node owns
+  status     TEXT NOT NULL,            -- running|ok|blocked|failed
+  agent_id   TEXT,                     -- from SubagentStart/Stop
+  agent_type TEXT,
+  cost_usd   REAL NOT NULL DEFAULT 0,
+  started_at INTEGER NOT NULL,
+  ended_at   INTEGER,
+  attempt    INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_nodes_run ON nodes(run_id);
+CREATE INDEX IF NOT EXISTS idx_nodes_agent ON nodes(agent_id);
+
+-- Typed, multi-relation edges. This is what a flat OTel trace cannot express
+-- (one parent edge + untyped links) and why SQLite is canonical, not a cache.
+CREATE TABLE IF NOT EXISTS edges (
+  run_id   TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  src_node TEXT NOT NULL,
+  dst_node TEXT NOT NULL,
+  rel      TEXT NOT NULL,              -- spawn|depends_on|retry_of|supersedes|rollback
+  PRIMARY KEY (src_node, dst_node, rel)
+);
+
+-- A subagent's declared write-set. The write-set guard reads this to deny
+-- agent B writing a file owned by agent A.
+CREATE TABLE IF NOT EXISTS writesets (
+  run_id   TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  node_id  TEXT NOT NULL,
+  path     TEXT NOT NULL,              -- repo-relative, slash-normalized
+  PRIMARY KEY (run_id, path)           -- one owner per file, enforced by the DB itself
+);
+CREATE INDEX IF NOT EXISTS idx_ws_node ON writesets(node_id);
+
+CREATE TABLE IF NOT EXISTS verdicts (
+  verdict_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id      TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  node_id     TEXT,
+  gate        TEXT NOT NULL,
+  check_id    TEXT NOT NULL,
+  result      TEXT NOT NULL,           -- ok|warn|blocked
+  evidence_json TEXT NOT NULL DEFAULT '[]',
+  why         TEXT,
+  safe_next_step TEXT,
+  requires_confirmation INTEGER NOT NULL DEFAULT 0,
+  ts          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_verdicts_run ON verdicts(run_id, result);
+
+-- Append-only. events + budget_ledger together ARE the replay log. No Temporal.
+CREATE TABLE IF NOT EXISTS events (
+  event_id  INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id    TEXT,
+  node_id   TEXT,
+  hook      TEXT NOT NULL,
+  ts        INTEGER NOT NULL,
+  payload   TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_run ON events(run_id, event_id);
+
+CREATE TABLE IF NOT EXISTS budget_ledger (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id    TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  node_id   TEXT,
+  ts        INTEGER NOT NULL,
+  delta_usd REAL NOT NULL,
+  tokens_in  INTEGER NOT NULL DEFAULT 0,
+  tokens_out INTEGER NOT NULL DEFAULT 0,
+  reason    TEXT
+);
+
+-- One row per (request, run). request_id is the dedup key: transcripts get replayed on
+-- resume, and a retried request appears twice. INSERT OR IGNORE + this PK makes ingestion
+-- idempotent, so re-parsing a transcript can never double-count.
+CREATE TABLE IF NOT EXISTS usage (
+  request_id  TEXT NOT NULL,
+  run_id      TEXT NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+  node_id     TEXT,
+  agent_id    TEXT,
+  model       TEXT NOT NULL,
+  speed       TEXT NOT NULL DEFAULT 'standard',
+  ts          INTEGER NOT NULL,
+  input_tokens        INTEGER NOT NULL DEFAULT 0,
+  output_tokens       INTEGER NOT NULL DEFAULT 0,
+  cache_write_5m      INTEGER NOT NULL DEFAULT 0,
+  cache_write_1h      INTEGER NOT NULL DEFAULT 0,
+  cache_read          INTEGER NOT NULL DEFAULT 0,
+  web_searches        INTEGER NOT NULL DEFAULT 0,
+  imputed_usd REAL NOT NULL DEFAULT 0,
+  PRIMARY KEY (request_id, run_id)
+);
+CREATE INDEX IF NOT EXISTS idx_usage_run ON usage(run_id);
+CREATE INDEX IF NOT EXISTS idx_usage_node ON usage(node_id);
+
+-- Subscription quota, sampled by "batten statusline" (the ONLY local surface that exposes
+-- it -- hooks never see it). Account-global, so a run's share is a DELTA between the first
+-- and last sample taken while it was open.
+CREATE TABLE IF NOT EXISTS quota_snapshots (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id   TEXT NOT NULL,
+  ts           INTEGER NOT NULL,
+  five_hour_pct   REAL,
+  five_hour_reset INTEGER,
+  seven_day_pct   REAL,
+  seven_day_reset INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_quota_session ON quota_snapshots(session_id, ts);
+
+-- Audited escapes. A gate with no escape hatch gets the plugin uninstalled;
+-- an unlogged escape defeats the gate. So: escape, but on the record.
+CREATE TABLE IF NOT EXISTS overrides (
+  id      INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id  TEXT NOT NULL,
+  gate    TEXT NOT NULL,
+  reason  TEXT NOT NULL,
+  ts      INTEGER NOT NULL
+);
+`
+
+func (s *Store) migrate() error {
+	_, err := s.db.Exec(schema)
+	return err
+}
+
+func now() int64 { return time.Now().Unix() }
+
+// ---------- runs ----------
+
+type Run struct {
+	RunID       string
+	Project     string
+	UnitID      string
+	SessionID   string
+	Phase       string
+	Status      string
+	BaseSHA     string
+	TokensSpent int64
+	ImputedUSD  float64
+	QuotaStart5h *float64 // five_hour_pct when the run opened; nil if statusline is not installed
+	Iterations  int
+	StartedAt   int64
+	EndedAt     *int64
+}
+
+const runCols = `run_id, project, unit_id, COALESCE(session_id,''), COALESCE(phase,''),
+	status, COALESCE(base_sha,''), tokens_spent, imputed_usd_spent, quota_start_5h,
+	iterations, started_at, ended_at`
+
+// EnsureRun returns the open run for a unit, creating it if absent. Idempotent:
+// hooks fire in any order and may race, so this must never duplicate a run.
+func (s *Store) EnsureRun(project, unitID, sessionID string) (*Run, error) {
+	r, err := s.ActiveRun(project, unitID)
+	if err == nil {
+		return r, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	id := fmt.Sprintf("%s-%d", unitID, time.Now().UnixNano())
+	// Anchor the quota baseline at birth: a run's share of the 5h window is the delta
+	// from here, since the window itself is account-global and shared with everything else.
+	var q any
+	if sessionID != "" {
+		if snap, err := s.LatestQuota(sessionID); err == nil && snap.FiveHourPct != nil {
+			q = *snap.FiveHourPct
+		}
+	}
+	_, err = s.db.Exec(`INSERT INTO runs (run_id, project, unit_id, session_id, status, quota_start_5h, started_at)
+	                    VALUES (?,?,?,?,'running',?,?)`, id, project, unitID, sessionID, q, now())
+	if err != nil {
+		return nil, err
+	}
+	return s.ActiveRun(project, unitID)
+}
+
+func (s *Store) ActiveRun(project, unitID string) (*Run, error) {
+	row := s.db.QueryRow(`SELECT `+runCols+`
+	   FROM runs WHERE project=? AND unit_id=? AND status='running' ORDER BY started_at DESC LIMIT 1`,
+		project, unitID)
+	return scanRun(row.Scan)
+}
+
+func (s *Store) Run(runID string) (*Run, error) {
+	row := s.db.QueryRow(`SELECT `+runCols+` FROM runs WHERE run_id=?`, runID)
+	return scanRun(row.Scan)
+}
+
+func scanRun(scan func(...any) error) (*Run, error) {
+	var r Run
+	err := scan(&r.RunID, &r.Project, &r.UnitID, &r.SessionID, &r.Phase, &r.Status,
+		&r.BaseSHA, &r.TokensSpent, &r.ImputedUSD, &r.QuotaStart5h,
+		&r.Iterations, &r.StartedAt, &r.EndedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+func (s *Store) ListRuns(project string, limit int) ([]Run, error) {
+	rows, err := s.db.Query(`SELECT `+runCols+`
+	   FROM runs WHERE (?='' OR project=?) ORDER BY started_at DESC LIMIT ?`, project, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Run
+	for rows.Next() {
+		r, err := scanRun(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) SetPhase(runID, phase string) error {
+	_, err := s.db.Exec(`UPDATE runs SET phase=? WHERE run_id=?`, phase, runID)
+	return err
+}
+
+func (s *Store) SetBaseSHA(runID, sha string) error {
+	_, err := s.db.Exec(`UPDATE runs SET base_sha=? WHERE run_id=?`, sha, runID)
+	return err
+}
+
+func (s *Store) CloseRun(runID, status string) error {
+	t := now()
+	_, err := s.db.Exec(`UPDATE runs SET status=?, ended_at=? WHERE run_id=?`, status, t, runID)
+	return err
+}
+
+// ---------- nodes & edges ----------
+
+type Node struct {
+	NodeID    string
+	RunID     string
+	Kind      string
+	Label     string
+	Domain    string
+	Status    string
+	AgentID   string
+	AgentType string
+	CostUSD   float64
+	StartedAt int64
+	EndedAt   *int64
+}
+
+func (s *Store) AddNode(n Node) error {
+	if n.StartedAt == 0 {
+		n.StartedAt = now()
+	}
+	if n.Status == "" {
+		n.Status = "running"
+	}
+	_, err := s.db.Exec(`INSERT OR REPLACE INTO nodes
+	   (node_id, run_id, kind, label, domain, status, agent_id, agent_type, cost_usd, started_at)
+	   VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		n.NodeID, n.RunID, n.Kind, n.Label, n.Domain, n.Status, n.AgentID, n.AgentType, n.CostUSD, n.StartedAt)
+	return err
+}
+
+func (s *Store) FinishNode(nodeID, status string, cost float64) error {
+	t := now()
+	_, err := s.db.Exec(`UPDATE nodes SET status=?, ended_at=?, cost_usd=cost_usd+? WHERE node_id=?`,
+		status, t, cost, nodeID)
+	return err
+}
+
+func (s *Store) NodeByAgent(agentID string) (*Node, error) {
+	row := s.db.QueryRow(`SELECT node_id, run_id, kind, label, COALESCE(domain,''), status,
+	   COALESCE(agent_id,''), COALESCE(agent_type,''), cost_usd, started_at, ended_at
+	   FROM nodes WHERE agent_id=? ORDER BY started_at DESC LIMIT 1`, agentID)
+	var n Node
+	err := row.Scan(&n.NodeID, &n.RunID, &n.Kind, &n.Label, &n.Domain, &n.Status,
+		&n.AgentID, &n.AgentType, &n.CostUSD, &n.StartedAt, &n.EndedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
+func (s *Store) Nodes(runID string) ([]Node, error) {
+	rows, err := s.db.Query(`SELECT node_id, run_id, kind, label, COALESCE(domain,''), status,
+	   COALESCE(agent_id,''), COALESCE(agent_type,''), cost_usd, started_at, ended_at
+	   FROM nodes WHERE run_id=? ORDER BY started_at`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Node
+	for rows.Next() {
+		var n Node
+		if err := rows.Scan(&n.NodeID, &n.RunID, &n.Kind, &n.Label, &n.Domain, &n.Status,
+			&n.AgentID, &n.AgentType, &n.CostUSD, &n.StartedAt, &n.EndedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+type Edge struct{ Src, Dst, Rel string }
+
+func (s *Store) AddEdge(runID, src, dst, rel string) error {
+	_, err := s.db.Exec(`INSERT OR IGNORE INTO edges (run_id, src_node, dst_node, rel) VALUES (?,?,?,?)`,
+		runID, src, dst, rel)
+	return err
+}
+
+func (s *Store) Edges(runID string) ([]Edge, error) {
+	rows, err := s.db.Query(`SELECT src_node, dst_node, rel FROM edges WHERE run_id=?`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Edge
+	for rows.Next() {
+		var e Edge
+		if err := rows.Scan(&e.Src, &e.Dst, &e.Rel); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ---------- write-sets ----------
+
+// ClaimWriteSet assigns files to a node. The PRIMARY KEY (run_id, path) means the
+// database itself refuses a second owner for a file — the disjointness rule is not
+// advice, it is a constraint.
+func (s *Store) ClaimWriteSet(runID, nodeID string, paths []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, p := range paths {
+		p = normPath(p)
+		var owner string
+		err := tx.QueryRow(`SELECT node_id FROM writesets WHERE run_id=? AND path=?`, runID, p).Scan(&owner)
+		if err == nil && owner != nodeID {
+			return fmt.Errorf("write-set collision: %s is already owned by %s", p, owner)
+		}
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT OR REPLACE INTO writesets (run_id, node_id, path) VALUES (?,?,?)`,
+			runID, nodeID, p); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// WriteSetOwner returns the node owning a path in a run, or "" if unclaimed.
+func (s *Store) WriteSetOwner(runID, path string) (string, error) {
+	var owner string
+	err := s.db.QueryRow(`SELECT node_id FROM writesets WHERE run_id=? AND path=?`,
+		runID, normPath(path)).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return owner, err
+}
+
+func (s *Store) WriteSet(runID, nodeID string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT path FROM writesets WHERE run_id=? AND node_id=? ORDER BY path`, runID, nodeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func normPath(p string) string { return filepath.ToSlash(filepath.Clean(p)) }
+
+// ---------- verdicts ----------
+
+// Verdict is the envelope. The shape is engram's mem_doctor envelope, not invented here.
+type Verdict struct {
+	RunID                string   `json:"-"`
+	NodeID               string   `json:"-"`
+	Gate                 string   `json:"-"`
+	CheckID              string   `json:"check_id"`
+	Result               string   `json:"result"` // ok|warn|blocked
+	Evidence             []string `json:"evidence"`
+	Why                  string   `json:"why"`
+	SafeNextStep         string   `json:"safe_next_step"`
+	RequiresConfirmation bool     `json:"requires_confirmation"`
+	TS                   int64    `json:"-"`
+}
+
+// ErrNoEvidence is the golden rule, mechanized: an approval with nothing to point at
+// is not an approval. This is the single thing batten exists to make impossible.
+var ErrNoEvidence = errors.New(
+	"result \"ok\" with an empty evidence[] is not allowed: an approval must cite something " +
+		"(command output, test counts, a criterion verified). Without evidence the result is \"blocked\"")
+
+func (s *Store) SaveVerdict(v Verdict, evidenceRequired bool) error {
+	if evidenceRequired && v.Result == "ok" && len(v.Evidence) == 0 {
+		return ErrNoEvidence
+	}
+	ev, err := json.Marshal(v.Evidence)
+	if err != nil {
+		return err
+	}
+	if v.TS == 0 {
+		v.TS = now()
+	}
+	rc := 0
+	if v.RequiresConfirmation {
+		rc = 1
+	}
+	_, err = s.db.Exec(`INSERT INTO verdicts
+	  (run_id, node_id, gate, check_id, result, evidence_json, why, safe_next_step, requires_confirmation, ts)
+	  VALUES (?,?,?,?,?,?,?,?,?,?)`,
+		v.RunID, v.NodeID, v.Gate, v.CheckID, v.Result, string(ev), v.Why, v.SafeNextStep, rc, v.TS)
+	return err
+}
+
+// LatestVerdict returns the most recent verdict for a run's gate.
+func (s *Store) LatestVerdict(runID, gate string) (*Verdict, error) {
+	row := s.db.QueryRow(`SELECT gate, check_id, result, evidence_json, COALESCE(why,''),
+	   COALESCE(safe_next_step,''), requires_confirmation, ts
+	   FROM verdicts WHERE run_id=? AND (?='' OR gate=?) ORDER BY ts DESC, verdict_id DESC LIMIT 1`,
+		runID, gate, gate)
+	var v Verdict
+	var ev string
+	var rc int
+	err := row.Scan(&v.Gate, &v.CheckID, &v.Result, &ev, &v.Why, &v.SafeNextStep, &rc, &v.TS)
+	if err != nil {
+		return nil, err
+	}
+	v.RunID = runID
+	v.RequiresConfirmation = rc == 1
+	_ = json.Unmarshal([]byte(ev), &v.Evidence)
+	return &v, nil
+}
+
+// ---------- usage & budget ----------
+
+// Usage is one API request's token buckets, already priced.
+type Usage struct {
+	RequestID    string
+	RunID        string
+	NodeID       string
+	AgentID      string
+	Model        string
+	Speed        string
+	TS           int64
+	InputTokens  int64
+	OutputTokens int64
+	CacheWrite5m int64
+	CacheWrite1h int64
+	CacheRead    int64
+	WebSearches  int64
+	ImputedUSD   float64
+}
+
+// Tokens is every bucket that counts against a token ceiling. Cache reads are included:
+// they are cheap, not free, and they are real context the model processed.
+func (u Usage) Tokens() int64 {
+	return u.InputTokens + u.OutputTokens + u.CacheWrite5m + u.CacheWrite1h + u.CacheRead
+}
+
+// RecordUsage ingests parsed transcript rows. Idempotent by (request_id, run_id): a
+// transcript can be re-parsed any number of times without double-counting, which matters
+// because resumes and retries genuinely do replay lines.
+func (s *Store) RecordUsage(us []Usage) (added int, err error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+
+	ins, err := tx.Prepare(`INSERT OR IGNORE INTO usage
+	  (request_id, run_id, node_id, agent_id, model, speed, ts,
+	   input_tokens, output_tokens, cache_write_5m, cache_write_1h, cache_read, web_searches, imputed_usd)
+	  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return 0, err
+	}
+	defer ins.Close()
+
+	touched := map[string]bool{}
+	for _, u := range us {
+		res, err := ins.Exec(u.RequestID, u.RunID, nullable(u.NodeID), nullable(u.AgentID),
+			u.Model, u.Speed, u.TS, u.InputTokens, u.OutputTokens,
+			u.CacheWrite5m, u.CacheWrite1h, u.CacheRead, u.WebSearches, u.ImputedUSD)
+		if err != nil {
+			return 0, err
+		}
+		if n, _ := res.RowsAffected(); n > 0 {
+			added++
+			touched[u.RunID] = true
+		}
+	}
+	// Recompute run totals from the usage table rather than incrementing, so the totals
+	// can never drift away from their own ledger.
+	for runID := range touched {
+		if _, err := tx.Exec(`UPDATE runs SET
+		    tokens_spent = (SELECT COALESCE(SUM(input_tokens+output_tokens+cache_write_5m+cache_write_1h+cache_read),0)
+		                    FROM usage WHERE run_id=?),
+		    imputed_usd_spent = (SELECT COALESCE(SUM(imputed_usd),0) FROM usage WHERE run_id=?)
+		    WHERE run_id=?`, runID, runID, runID); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return added, nil
+}
+
+// UsageByNode totals a run's usage per node, for the TUI and the canvas.
+func (s *Store) UsageByNode(runID string) (map[string]Usage, error) {
+	rows, err := s.db.Query(`SELECT COALESCE(node_id,''),
+	   SUM(input_tokens), SUM(output_tokens), SUM(cache_write_5m), SUM(cache_write_1h),
+	   SUM(cache_read), SUM(web_searches), SUM(imputed_usd)
+	   FROM usage WHERE run_id=? GROUP BY node_id`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]Usage{}
+	for rows.Next() {
+		var u Usage
+		if err := rows.Scan(&u.NodeID, &u.InputTokens, &u.OutputTokens, &u.CacheWrite5m,
+			&u.CacheWrite1h, &u.CacheRead, &u.WebSearches, &u.ImputedUSD); err != nil {
+			return nil, err
+		}
+		u.RunID = runID
+		out[u.NodeID] = u
+	}
+	return out, rows.Err()
+}
+
+// SeenRequests returns the request ids already ingested for a run, so a parser can skip
+// re-pricing what it has already priced.
+func (s *Store) SeenRequests(runID string) (map[string]bool, error) {
+	rows, err := s.db.Query(`SELECT request_id FROM usage WHERE run_id=?`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	seen := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		seen[id] = true
+	}
+	return seen, rows.Err()
+}
+
+// Ceiling is one budget limit and where the run stands against it.
+type Ceiling struct {
+	Kind      string  // tokens | imputed_usd | quota_pct
+	Spent     float64
+	Cap       float64
+	Exceeded  bool
+	Available bool // false => we cannot measure this; it is NOT enforced, and we say so
+}
+
+// Budget reports every declared ceiling. A ceiling we cannot measure is reported as
+// unavailable, never as zero — a budget tool that invents a number is worse than none.
+func (s *Store) Budget(runID string, tokensCap int64, usdCap, quotaCap float64) ([]Ceiling, error) {
+	r, err := s.Run(runID)
+	if err != nil {
+		return nil, err
+	}
+	var cs []Ceiling
+	if tokensCap > 0 {
+		cs = append(cs, Ceiling{"tokens", float64(r.TokensSpent), float64(tokensCap),
+			r.TokensSpent >= tokensCap, true})
+	}
+	if usdCap > 0 {
+		cs = append(cs, Ceiling{"imputed_usd", r.ImputedUSD, usdCap, r.ImputedUSD >= usdCap, true})
+	}
+	if quotaCap > 0 {
+		burned, ok, err := s.QuotaBurned(r)
+		if err != nil {
+			return nil, err
+		}
+		cs = append(cs, Ceiling{"quota_pct", burned, quotaCap, ok && burned >= quotaCap, ok})
+	}
+	return cs, nil
+}
+
+// QuotaBurned is the share of the rolling 5-hour window this run consumed: the delta
+// between the baseline taken when it opened and the newest sample. Only `batten statusline`
+// can supply either, so this is unavailable (not zero) when it is not installed.
+//
+// The window resets on a rolling basis; a negative delta means it rolled over mid-run,
+// which we report as unmeasurable rather than as a bogus number.
+func (s *Store) QuotaBurned(r *Run) (pct float64, ok bool, err error) {
+	if r.QuotaStart5h == nil || r.SessionID == "" {
+		return 0, false, nil
+	}
+	snap, err := s.LatestQuota(r.SessionID)
+	if err != nil || snap.FiveHourPct == nil {
+		return 0, false, nil //nolint:nilerr // absence is not an error; it is "not installed"
+	}
+	d := *snap.FiveHourPct - *r.QuotaStart5h
+	if d < 0 {
+		return 0, false, nil // the window rolled over mid-run
+	}
+	return d, true, nil
+}
+
+// OverBudget reports whether any measurable ceiling is blown, and which.
+func (s *Store) OverBudget(runID string, tokensCap int64, usdCap, quotaCap float64) (bool, []Ceiling, error) {
+	cs, err := s.Budget(runID, tokensCap, usdCap, quotaCap)
+	if err != nil {
+		return false, nil, err
+	}
+	for _, c := range cs {
+		if c.Exceeded {
+			return true, cs, nil
+		}
+	}
+	return false, cs, nil
+}
+
+// ---------- quota snapshots ----------
+
+type QuotaSnapshot struct {
+	SessionID     string
+	TS            int64
+	FiveHourPct   *float64
+	FiveHourReset *int64
+	SevenDayPct   *float64
+	SevenDayReset *int64
+}
+
+func (s *Store) SaveQuota(q QuotaSnapshot) error {
+	if q.TS == 0 {
+		q.TS = now()
+	}
+	_, err := s.db.Exec(`INSERT INTO quota_snapshots
+	  (session_id, ts, five_hour_pct, five_hour_reset, seven_day_pct, seven_day_reset)
+	  VALUES (?,?,?,?,?,?)`,
+		q.SessionID, q.TS, q.FiveHourPct, q.FiveHourReset, q.SevenDayPct, q.SevenDayReset)
+	return err
+}
+
+func (s *Store) LatestQuota(sessionID string) (*QuotaSnapshot, error) {
+	row := s.db.QueryRow(`SELECT session_id, ts, five_hour_pct, five_hour_reset,
+	   seven_day_pct, seven_day_reset
+	   FROM quota_snapshots WHERE session_id=? ORDER BY ts DESC, id DESC LIMIT 1`, sessionID)
+	var q QuotaSnapshot
+	err := row.Scan(&q.SessionID, &q.TS, &q.FiveHourPct, &q.FiveHourReset,
+		&q.SevenDayPct, &q.SevenDayReset)
+	if err != nil {
+		return nil, err
+	}
+	return &q, nil
+}
+
+// SetQuotaBaseline back-fills a run's baseline once the first snapshot arrives. Runs
+// often open before the first statusline invocation of a session.
+func (s *Store) SetQuotaBaseline(runID string, pct float64) error {
+	_, err := s.db.Exec(`UPDATE runs SET quota_start_5h=? WHERE run_id=? AND quota_start_5h IS NULL`,
+		pct, runID)
+	return err
+}
+
+// AdoptSession attaches a session to a run that was created without one (e.g. from the CLI).
+func (s *Store) AdoptSession(runID, sessionID string) error {
+	_, err := s.db.Exec(`UPDATE runs SET session_id=? WHERE run_id=? AND COALESCE(session_id,'')=''`,
+		sessionID, runID)
+	return err
+}
+
+// ---------- events & overrides ----------
+
+func (s *Store) LogEvent(runID, nodeID, hook string, payload []byte) error {
+	_, err := s.db.Exec(`INSERT INTO events (run_id, node_id, hook, ts, payload) VALUES (?,?,?,?,?)`,
+		nullable(runID), nullable(nodeID), hook, now(), string(payload))
+	return err
+}
+
+func nullable(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func (s *Store) Override(runID, gate, reason string) error {
+	_, err := s.db.Exec(`INSERT INTO overrides (run_id, gate, reason, ts) VALUES (?,?,?,?)`,
+		runID, gate, reason, now())
+	return err
+}
+
+// HasOverride reports whether a run's gate was explicitly overridden. The escape
+// hatch exists so the gate does not get the plugin uninstalled — but it is on the record.
+func (s *Store) HasOverride(runID, gate string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM overrides WHERE run_id=? AND (gate=? OR gate='*')`,
+		runID, gate).Scan(&n)
+	return n > 0, err
+}

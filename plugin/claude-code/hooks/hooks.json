@@ -1,0 +1,83 @@
+{
+  "description": "batten — enforces the workflow declared in batten.yaml. Exec form: the binary reads the hook JSON on stdin, so there is no dependency on bash, jq or curl (which is what makes engram's hooks fragile on Windows).",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/batten",
+            "args": ["hook", "SessionStart"],
+            "timeout": 10,
+            "statusMessage": "batten: loading run state..."
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/batten",
+            "args": ["hook", "PreToolUse"],
+            "timeout": 10,
+            "statusMessage": "batten: verdict gate"
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/batten",
+            "args": ["hook", "PreToolUse"],
+            "timeout": 10,
+            "statusMessage": "batten: write-set guard"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/batten",
+            "args": ["hook", "SubagentStart"],
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/batten",
+            "args": ["hook", "SubagentStop"],
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/batten",
+            "args": ["hook", "Stop"],
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ]
+  }
+}

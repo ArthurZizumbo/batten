@@ -1,0 +1,387 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/arthu/batten/main/batten.schema.json",
+  "title": "batten.yaml",
+  "description": "A project's procedural memory, declared as data: the phases it runs, the domains it fans out over, the checks that gate a close, and the ceilings an unattended run may not cross. The engine knows nothing about any project — it reads this file and executes it. Governing rule: if a hook cannot enforce it or a command cannot run it, it does not belong here. Over-declaring turns the spec into a DSL nobody maintains.",
+  "type": "object",
+  "required": ["version", "project", "unit", "phases"],
+  "additionalProperties": false,
+
+  "properties": {
+    "version": {
+      "description": "Spec format version. Only 1 exists; the loader rejects anything else rather than guessing at forward compatibility.",
+      "type": "integer",
+      "const": 1
+    },
+
+    "project": {
+      "description": "Project name. Namespaces runs in the store, so two repos sharing one batten.db do not collide.",
+      "type": "string",
+      "minLength": 1
+    },
+
+    "unit": {
+      "description": "The work-item noun this repo already uses: US, ticket, issue, story. batten never invents one — it reads yours out of branch names and commit messages.",
+      "type": "object",
+      "required": ["name", "pattern"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "description": "The noun itself, as your team says it out loud: \"US\", \"ticket\", \"issue\". Used in messages back to the agent.",
+          "type": "string",
+          "minLength": 1
+        },
+        "pattern": {
+          "description": "Go regexp (RE2) that matches a unit id anywhere in free text — a branch name, a prompt, a commit message. Example: 'US-\\d{3}'. This is how batten answers \"which unit is this commit for?\" without being told.",
+          "type": "string",
+          "minLength": 1,
+          "examples": ["US-\\d{3}", "TICKET-\\d+", "#\\d+"]
+        },
+        "plan": {
+          "description": "Path to the canonical plan document that holds the unit blocks (acceptance criteria, tasks). Optional: repos that track units in an issue tracker instead of a file simply omit it.",
+          "type": "string"
+        },
+        "locator": {
+          "description": "How to find one unit's block inside `plan`. '{id}' is substituted with the unit id. Example: '### {id}' finds the Markdown heading for US-034.",
+          "type": "string",
+          "examples": ["### {id}", "## {id} —"]
+        }
+      }
+    },
+
+    "artifacts": {
+      "description": "Where each phase writes its output. Keys are artifact kinds (referenced from phases[].reads); values are paths relative to the repo root. Every path MUST contain '{id}' — without it every unit would overwrite the same file, and the loader refuses to start.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "\\{id\\}",
+        "description": "A path template containing '{id}', e.g. 'docs/us-planning/{id}.md'."
+      },
+      "examples": [{ "planning": "docs/us-planning/{id}.md", "resolved": "docs/us-resolved/{id}.md" }]
+    },
+
+    "phases": {
+      "description": "The state machine, in order. The names are yours; the mechanics are batten's. Most real workflows are a variant of research -> plan -> build -> verify -> fix -> close.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/phase" }
+    },
+
+    "domains": {
+      "description": "The fan-out axes — the only genuinely project-specific part of the file. One domain per area of the codebase that a separate subagent can own with a disjoint write-set. Keyed by domain name (backend, frontend, ml, db...).",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/domain" }
+    },
+
+    "resources": {
+      "description": "Scarce things that force agents to serialize: a shared GPU, a staging database, a rate-limited API. If your prose ever said \"coordinate with the team before doing X\", X is a resource. Declaring it turns that coordination from etiquette into a probe the orchestrator runs.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/resource" }
+    },
+
+    "gates": {
+      "description": "Verdict checkpoints, keyed by gate name. A phase references one via `gate:`. This is where the evidence rule lives.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/gate" }
+    },
+
+    "provenance": {
+      "description": "What anchors a closed unit to reproducible evidence.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "description": "A one-line template stamped at close. Placeholders are filled from the run: {id}, {git_sha7}, plus any project-specific keys your close phase resolves (e.g. {mlflow_run}, {dvc_rev}). Use '-' for the ones that do not apply to a given unit.",
+          "type": "string",
+          "examples": ["{id} @ {git_sha7}", "{id} @ {git_sha7} + mlflow:{mlflow_run} + dvc:{dvc_rev}"]
+        }
+      }
+    },
+
+    "budget": {
+      "description": "The tripwire an unattended overnight run otherwise lacks.\n\nOn a subscription the marginal cost of a token is zero, so \"dollars spent\" is the wrong ceiling. Three honest ceilings replace it, and batten enforces whichever ones it can actually measure. A ceiling it cannot measure is reported as unavailable — never as zero.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tokens_per_run": {
+          "description": "Hard ceiling on total tokens for one run (all five buckets: input, output, 5m cache write, 1h cache write, cache read; parent agent AND every fanned-out subagent). This is the only thing that can be counted exactly, which is why it is the ceiling to trust. Underscores are allowed for readability (3_000_000).",
+          "type": ["integer", "string"],
+          "minimum": 0,
+          "pattern": "^[0-9][0-9_]*$",
+          "examples": [3000000]
+        },
+        "imputed_usd_per_run": {
+          "description": "What this run's tokens WOULD have cost at API list price. NOT a bill — on a subscription nothing is charged. It measures the value being pulled out of the subscription, which is the honest way to compare a run against an API budget. Computed from batten's own price table, never from the transcript's total_cost_usd field (which is known to be wrong).",
+          "type": "number",
+          "minimum": 0,
+          "examples": [8.0]
+        },
+        "quota_pct_per_run": {
+          "description": "Share of the rolling 5-hour subscription window this run may burn, as a percentage. Anthropic publishes no absolute quota numbers, so a percentage is the ONLY trustworthy quota metric — an absolute token figure would be invented. Requires `batten statusline` to be installed, since the quota is exposed to the status line and to nothing else. Without it this ceiling is simply not enforced, and `batten budget` says so rather than reporting 0%.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "examples": [15]
+        },
+        "max_iterations": {
+          "description": "How many times a fix -> re-verify loop may go round before batten stops it. The guard against an overnight run grinding on the same failing check until the window is gone.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "on_exceed": {
+          "description": "What happens when a declared ceiling is crossed. `block`: the close gate denies the commit (the ceiling is real). `warn`: record it and continue. `downgrade_effort`: keep going with less thinking.",
+          "type": "string",
+          "enum": ["block", "warn", "downgrade_effort"],
+          "default": "block"
+        }
+      }
+    },
+
+    "capabilities": {
+      "description": "Optional integrations. Every one of these degrades gracefully: if the provider is absent, batten falls back (graph -> grep) and never fails the run. Declare only what is actually installed — a declared-and-absent capability is noise that `batten doctor` will nag about.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "graph": {
+          "description": "Structural memory: what the code IS, right now. Reconstructed deterministically from the AST — this is where a fan-out otherwise pays a large re-orientation tax (grep + N reads) just to answer \"what already exists?\".",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "description": "Code-graph provider. `none` (or omitted) falls back to grep — the spec degrades, it does not fail.",
+              "type": "string",
+              "enum": ["graphify", "none"]
+            },
+            "query_before_read": {
+              "description": "In phases marked `graph_query: true`, answer \"what already exists?\" by querying the graph instead of grepping and reading files.",
+              "type": "boolean"
+            },
+            "lessons": {
+              "description": "Keep this false. graphify's outcome/lessons layer overlaps episodic memory, which engram owns and does better. Two systems claiming to remember the same decisions is how they drift apart.",
+              "type": "boolean",
+              "default": false
+            }
+          }
+        },
+        "memory": {
+          "description": "Episodic memory: what we DECIDED, over time. batten never builds this — it interoperates.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "description": "Episodic memory provider, consulted before planning and written to after closing.",
+              "type": "string",
+              "enum": ["engram", "claude-mem", "none"]
+            }
+          }
+        },
+        "obsidian": {
+          "description": "The human surface. batten writes plain files straight into the vault — .md, .canvas, .base are just files. (The Obsidian CLI needs the desktop app running, which makes it useless from a hook or from CI.)",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "vault": {
+              "description": "Absolute path to the Obsidian vault. Point it at the same vault your code-graph exports to and the wikilinks between a run note and a code node will resolve.",
+              "type": "string"
+            },
+            "export": {
+              "description": "What to write into the vault. `runs`: a note per unit with typed frontmatter. `verdicts`: the verdict envelopes. `canvas`: the run DAG as JSON Canvas 1.0, which Obsidian renders with zero layout code on our side.",
+              "type": "array",
+              "items": { "type": "string", "enum": ["runs", "verdicts", "canvas"] },
+              "uniqueItems": true
+            }
+          }
+        },
+        "compression": {
+          "description": "Context compression. Admitted, but measured — not taken on faith.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "provider": {
+              "description": "Compression provider. Install it as a proxy (its own `init`), never in MCP mode: an MCP compression tool runs after the content is already in the context window and already billed.",
+              "type": "string",
+              "enum": ["headroom", "none"]
+            },
+            "memory": {
+              "description": "Keep this false. The provider's own memory layer would overwrite ground that engram already owns.",
+              "type": "boolean",
+              "default": false
+            },
+            "measure": {
+              "description": "Instrument it. batten already counts tokens per node, so it can prove whether compression saves anything in YOUR fan-out instead of quoting the vendor's benchmark. There is an open question about whether such hooks even fire for subagents launched via the Agent tool — and a fan-out is exactly where that would matter. If it does not save, turn it off with one line.",
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    }
+  },
+
+  "$defs": {
+    "phase": {
+      "type": "object",
+      "required": ["id"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "description": "Phase name. Yours, not ours — use the word your team already says ('research', 'qa', 'cierre'). Must be unique within the file.",
+          "type": "string",
+          "minLength": 1
+        },
+        "optional": {
+          "description": "The phase may be skipped when it does not apply (e.g. a research phase only runs when the unit brings in unfamiliar technology).",
+          "type": "boolean"
+        },
+        "interactive": {
+          "description": "This phase is a long human dialogue and belongs in its own session. An unattended run must stop before it, not attempt it.",
+          "type": "boolean"
+        },
+        "fanout": {
+          "description": "This phase spawns one subagent per marked domain, plus one per parallel sub-task with a disjoint write-set. It is the phase the write-set guard exists to protect.",
+          "type": "boolean"
+        },
+        "reads": {
+          "description": "Inputs: artifact kinds (keys of `artifacts`) or ids of earlier phases. The loader rejects a reference to neither — a phase that reads an artifact nobody writes is a typo, and it should surface at load time rather than at 3am.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "graph_query": {
+          "description": "Answer \"what already exists?\" with the code graph rather than by grepping and reading. Falls back to grep when no graph provider is configured.",
+          "type": "boolean"
+        },
+        "anchor": {
+          "description": "Record the base git SHA when this phase starts. Set it on the build phase. Every later phase then diffs from that anchor rather than from HEAD~N — which is what keeps the review scope correct when work interleaves, rebases, or lands on top of someone else's commits.",
+          "type": "string",
+          "enum": ["git_sha"]
+        },
+        "diff_from": {
+          "description": "Operate only on this unit's diff, measured from the recorded anchor. Set it on the verify phase so QA reviews the unit's changes and not the whole tree.",
+          "type": "string",
+          "enum": ["anchor"]
+        },
+        "gate": {
+          "description": "Name of the gate (a key of `gates`) this phase must emit a verdict for. The loader rejects a reference to a gate that does not exist.",
+          "type": "string"
+        },
+        "requires_verdict": {
+          "description": "THE HARD GATE, enforced by a PreToolUse hook rather than by good intentions. On the phase that carries this, a `git commit` is DENIED unless a verdict with this result — and a non-empty evidence[] — exists for the unit. Put it on your closing phase. Exactly one phase should carry it.",
+          "type": "string",
+          "enum": ["ok", "warn"]
+        },
+        "when": {
+          "description": "Free-form condition, advisory only — it is read by the agent, not evaluated by the engine. Example: 'fix.changed_logic' (skip re-verification when the fix phase only touched copy).",
+          "type": "string"
+        }
+      }
+    },
+
+    "domain": {
+      "type": "object",
+      "required": ["path"],
+      "additionalProperties": false,
+      "properties": {
+        "path": {
+          "description": "Root directory this domain owns, repo-relative, forward slashes. File ownership is resolved by longest matching prefix, so a nested domain (ml/agent/) correctly wins over its parent (ml/).",
+          "type": "string",
+          "minLength": 1
+        },
+        "exclude": {
+          "description": "Subtrees carved out of `path` because another domain owns them. Without this, a nested domain's files would have two owners and the write-set guard would have to guess.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "rules": {
+          "description": "Path to the AGENTS.md / CLAUDE.md governing this directory. The domain's subagent reads it FIRST, before writing anything.",
+          "type": "string"
+        },
+        "check": {
+          "description": "Commands that must pass before this domain's agent may declare itself finished. Take them verbatim from the Makefile / package.json — do not invent a command that does not exist in the repo. batten runs them; it has no idea what 'pytest' is.",
+          "type": "array",
+          "items": { "type": "string" },
+          "examples": [["make lint", "make test"]]
+        },
+        "coverage": {
+          "description": "Minimum test coverage percentage for this domain, cited as evidence at the gate.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "skills": {
+          "description": "Skills this domain's agent should have loaded. `batten doctor` verifies each one actually exists — a renamed skill should be caught there, not fail silently in the middle of an overnight run.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "agent": {
+          "description": "A custom subagent (.claude/agents/<name>.md) to run this domain, instead of a general-purpose one. The fan-out orchestrator uses it as the subagent type, so the DAG, the canvas and the hook matchers all show YOUR agent's name.",
+          "type": "string"
+        },
+        "resources": {
+          "description": "Shared resources this domain contends for (keys of `resources`). Declaring contention is what lets the orchestrator probe capacity and serialize instead of launching two jobs that do not fit. The loader rejects a reference to an undeclared resource.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "invariants": {
+          "description": "The rules a reviewer would catch and a distracted agent would break. These ride VERBATIM into every fanned-out agent's prompt, which makes them the highest-value lines in the whole file. Write them as flat imperatives ('session_id in every query'), not as essays. Mine them from your AGENTS.md files.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "description": "`exclusive_pool`: has capacity, several agents may share it if their budgets fit (a 96GB GPU). `mutex`: one holder at a time, no sharing (a staging database).",
+          "type": "string",
+          "enum": ["exclusive_pool", "mutex"]
+        },
+        "probe": {
+          "description": "Command that reports the free capacity, printing a bare number in `unit`. The orchestrator runs it BEFORE launching and queues when capacity is short. If the probe cannot run, capacity is unknown — and unknown is not the same as zero, nor as infinite: say so and let the human decide.",
+          "type": "string",
+          "examples": ["nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits"]
+        },
+        "unit": {
+          "description": "The unit the probe prints, for the human reading the queue decision. Example: MiB.",
+          "type": "string"
+        },
+        "priority": {
+          "description": "Ordering to queue by when capacity is short. Names here are yours — sub-task or job names your plan uses. This encodes the decision that would otherwise be made at 3am by whoever launched first.",
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "checks": {
+          "description": "Commands that must pass at this gate. Their output is what the verdict's evidence[] cites — which is precisely why evidence cannot be hand-waved.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "skills": {
+          "description": "Skills to run at this gate (a security audit, a code review). Their findings become evidence[] items in the verdict.",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "verdict": {
+          "description": "`required`: this gate must end with a recorded verdict envelope. A phase that ends with a summary instead of a verdict has not passed the gate.",
+          "type": "string",
+          "enum": ["required"]
+        },
+        "evidence": {
+          "description": "`required`: an approval must cite something. result=\"ok\" with an empty evidence[] is REJECTED by the binary before it reaches the database, and the commit is separately denied by the hook.\n\nThis is the one failure batten exists to kill: closing a work item because it LOOKS fine. A spec that requires a verdict but not evidence is refused at load time — it would permit exactly the failure the gate is there to prevent.",
+          "type": "string",
+          "enum": ["required"]
+        }
+      },
+      "dependentRequired": {
+        "verdict": ["evidence"]
+      }
+    }
+  }
+}

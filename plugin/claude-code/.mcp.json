@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "batten": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/bin/batten",
+      "args": ["mcp"]
+    }
+  }
+}
