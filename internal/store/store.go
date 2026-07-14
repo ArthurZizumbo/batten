@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite" // pure-Go driver; registers as "sqlite" (not "sqlite3")
@@ -198,8 +199,33 @@ CREATE TABLE IF NOT EXISTS overrides (
 );
 `
 
+// schemaVersion is bumped whenever an additive migration is added below. The base schema
+// (CREATE TABLE IF NOT EXISTS ...) always runs; versioned steps run once, in order, so a
+// database created by an older batten upgrades in place instead of needing a rebuild.
+const schemaVersion = 1
+
 func (s *Store) migrate() error {
-	_, err := s.db.Exec(schema)
+	if _, err := s.db.Exec(schema); err != nil {
+		return err
+	}
+	var have int
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&have); err != nil {
+		return err
+	}
+	// v1: tag each run with whether the headroom compression proxy was live, so `batten measure`
+	// can compare with/without instead of trusting a vendor README.
+	migrations := []string{
+		`ALTER TABLE runs ADD COLUMN headroom INTEGER`, // NULL = unknown, 0 = off, 1 = on
+	}
+	for i := have; i < schemaVersion; i++ {
+		if _, err := s.db.Exec(migrations[i]); err != nil {
+			// A duplicate-column error means an older path already added it; tolerate and move on.
+			if !strings.Contains(err.Error(), "duplicate column") {
+				return fmt.Errorf("migration v%d: %w", i+1, err)
+			}
+		}
+	}
+	_, err := s.db.Exec(fmt.Sprintf("PRAGMA user_version = %d", schemaVersion))
 	return err
 }
 
@@ -792,4 +818,51 @@ func (s *Store) HasOverride(runID, gate string) (bool, error) {
 	err := s.db.QueryRow(`SELECT COUNT(*) FROM overrides WHERE run_id=? AND (gate=? OR gate='*')`,
 		runID, gate).Scan(&n)
 	return n > 0, err
+}
+
+// ---------- headroom measurement ----------
+
+// SetHeadroom records whether the compression proxy was live for a run. Called once at run
+// creation; NULL stays NULL (unknown) if never set, which `batten measure` treats as its own
+// bucket rather than lumping it with "off".
+func (s *Store) SetHeadroom(runID string, on bool) error {
+	v := 0
+	if on {
+		v = 1
+	}
+	_, err := s.db.Exec(`UPDATE runs SET headroom=? WHERE run_id=? AND headroom IS NULL`, v, runID)
+	return err
+}
+
+// MeasureGroup is the aggregate for one headroom state across finished runs.
+type MeasureGroup struct {
+	Label      string // "with headroom" | "without headroom" | "unknown"
+	Runs       int
+	MeanTokens float64
+	MeanUSD    float64
+}
+
+// MeasureByHeadroom groups finished runs by their headroom flag. It reports means only; with
+// too few runs per group the caller should say "insufficient", because comparing units that
+// differ in size is noisy — batten must not pretend a 2-run sample is a conclusion.
+func (s *Store) MeasureByHeadroom(project string) ([]MeasureGroup, error) {
+	rows, err := s.db.Query(`SELECT
+	    CASE headroom WHEN 1 THEN 'with headroom' WHEN 0 THEN 'without headroom' ELSE 'unknown' END,
+	    COUNT(*), AVG(tokens_spent), AVG(imputed_usd_spent)
+	  FROM runs
+	  WHERE (?='' OR project=?) AND status IN ('ok','blocked','failed','rolled_back') AND tokens_spent > 0
+	  GROUP BY headroom`, project, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []MeasureGroup
+	for rows.Next() {
+		var g MeasureGroup
+		if err := rows.Scan(&g.Label, &g.Runs, &g.MeanTokens, &g.MeanUSD); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
 }

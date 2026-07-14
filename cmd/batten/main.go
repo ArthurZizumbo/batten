@@ -13,14 +13,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/arthu/batten/internal/canvas"
 	"github.com/arthu/batten/internal/discovery"
+	"github.com/arthu/batten/internal/export"
 	"github.com/arthu/batten/internal/hooks"
 	"github.com/arthu/batten/internal/mcp"
 	"github.com/arthu/batten/internal/scan"
@@ -29,7 +32,6 @@ import (
 	"github.com/arthu/batten/internal/store"
 	"github.com/arthu/batten/internal/tui"
 	"github.com/arthu/batten/internal/usage"
-	"github.com/arthu/batten/internal/vault"
 )
 
 var version = "0.1.0"
@@ -71,6 +73,8 @@ func main() {
 		err = cmdStatusline(os.Args[2:])
 	case "ingest":
 		err = cmdIngest(os.Args[2:])
+	case "measure":
+		err = cmdMeasure()
 	case "hook-debug":
 		err = cmdHookDebug(os.Args[2:])
 	case "version", "--version", "-v":
@@ -270,6 +274,12 @@ func cmdVerdict(args []string) error {
 	if v.Result != "ok" {
 		fmt.Printf("the close gate will deny a commit while this stands at %q\n", v.Result)
 	}
+	// The moment the vault most wants to reflect reality: the gate state just changed.
+	if sp.Capabilities.Obsidian.Vault != "" {
+		if res, err := export.Run(sp, st, unit); err == nil && res.RunNotePath != "" {
+			fmt.Printf("updated run note %s\n", res.RunNotePath)
+		}
+	}
 	return nil
 }
 
@@ -327,6 +337,10 @@ func cmdPhase(args []string) error {
 	}
 	if err := st.SetPhase(run.RunID, phaseID); err != nil {
 		return err
+	}
+	// Tag the run with whether compression is live, so `batten measure` can compare later.
+	if sp.Capabilities.CompressionEnabled() && sp.Capabilities.Compression.Measure {
+		_ = st.SetHeadroom(run.RunID, headroomAlive())
 	}
 	_ = st.AddNode(store.Node{
 		NodeID: "p-" + phaseID, RunID: run.RunID, Kind: "phase", Label: phaseID, Status: "running",
@@ -449,50 +463,85 @@ func cmdCanvas(args []string) error {
 			out = args[i+1]
 		}
 	}
-	run, err := st.ActiveRun(sp.Project, unit)
-	if err != nil {
-		return fmt.Errorf("no active run for %s", unit)
-	}
-	nodes, err := st.Nodes(run.RunID)
-	if err != nil {
-		return err
-	}
-	edges, err := st.Edges(run.RunID)
-	if err != nil {
-		return err
-	}
-	v, _ := st.LatestVerdict(run.RunID, "")
 
-	// A configured vault owns the canvas location: it must sit where the run note embeds it
-	// (runs/<unit>.canvas), so the two stay colocated instead of the wikilink resolving by luck.
-	var w *vault.Writer
-	if vlt := sp.Capabilities.Obsidian.Vault; vlt != "" && out == "" {
-		w = vault.New(expandHome(vlt), sp.Project)
-		out = w.CanvasPath(unit)
-	}
-	if out == "" {
-		out = filepath.Join(sp.Root, ".batten", unit+".canvas")
-	}
-
-	c := canvas.Render(run, nodes, edges, v)
-	if err := c.WriteFile(out); err != nil {
-		return err
-	}
-	fmt.Printf("wrote %s (%d nodes, %d edges)\n", out, len(c.Nodes), len(c.Edges))
-
-	// The run note carries the frontmatter, the verdict, and the wikilinks that put this run
-	// in the same graph as the code (graphify) and the decisions (engram) — the whole point.
-	if w != nil {
-		usg, _ := st.UsageByNode(run.RunID)
-		if err := w.WriteRun(run, nodes, edges, v, usg, w.CanvasRel(unit)); err != nil {
-			return fmt.Errorf("run note: %w", err)
+	// --out is the escape hatch for "just give me the canvas here"; without it, export.Run
+	// does the full thing (canvas + vault note + dashboards) — the same path the Stop hook fires.
+	if out != "" {
+		run, err := st.ActiveRun(sp.Project, unit)
+		if err != nil {
+			return fmt.Errorf("no active run for %s", unit)
 		}
-		if err := w.WriteBases(); err != nil {
-			return fmt.Errorf("bases: %w", err)
+		nodes, _ := st.Nodes(run.RunID)
+		edges, _ := st.Edges(run.RunID)
+		v, _ := st.LatestVerdict(run.RunID, "")
+		c := canvas.Render(run, nodes, edges, v)
+		if err := c.WriteFile(out); err != nil {
+			return err
 		}
-		fmt.Printf("wrote run note %s — open the vault in Obsidian\n", w.RunNotePath(unit))
+		fmt.Printf("wrote %s (%d nodes, %d edges)\n", out, len(c.Nodes), len(c.Edges))
+		return nil
+	}
+
+	res, err := export.Run(sp, st, unit)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("wrote %s (%d nodes, %d edges)\n", res.CanvasPath, res.Nodes, res.Edges)
+	if res.RunNotePath != "" {
+		fmt.Printf("wrote run note %s — open the vault in Obsidian\n", res.RunNotePath)
 	}
 	return nil
+}
+
+// ---------- measure: does headroom actually save tokens in OUR fan-out? ----------
+
+func cmdMeasure() error {
+	sp, st, err := load()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	groups, err := st.MeasureByHeadroom(sp.Project)
+	if err != nil {
+		return err
+	}
+	if len(groups) == 0 {
+		fmt.Println("no finished runs with usage yet — nothing to compare")
+		return nil
+	}
+	fmt.Println("headroom effect on THIS project's runs (imputed, not billed):")
+	var with, without *store.MeasureGroup
+	for i := range groups {
+		g := groups[i]
+		note := ""
+		// Never present a 2-run sample as a conclusion: units differ in size, so the noise
+		// swamps the signal. Say "insufficient" rather than imply a finding.
+		if g.Runs < 3 {
+			note = "  (insufficient — need ≥3 runs to compare meaningfully)"
+		}
+		fmt.Printf("  %-18s %d run(s): %s tokens, $%.2f imputed (mean)%s\n",
+			g.Label, g.Runs, humanTokens(int64(g.MeanTokens)), g.MeanUSD, note)
+		if g.Label == "with headroom" {
+			with = &groups[i]
+		}
+		if g.Label == "without headroom" {
+			without = &groups[i]
+		}
+	}
+	if with != nil && without != nil && with.Runs >= 3 && without.Runs >= 3 && without.MeanTokens > 0 {
+		delta := (1 - with.MeanTokens/without.MeanTokens) * 100
+		fmt.Printf("\n  → with headroom used %.1f%% %s tokens on average\n",
+			abs(delta), map[bool]string{true: "fewer", false: "more"}[delta >= 0])
+		fmt.Println("  (still noisy — runs are not identical work; treat as directional, not exact)")
+	}
+	return nil
+}
+
+func abs(f float64) float64 {
+	if f < 0 {
+		return -f
+	}
+	return f
 }
 
 // ---------- hook-debug: resolve the agent_id question (E0 step 2) ----------
@@ -871,6 +920,11 @@ func cmdDoctor() error {
 		if sp.Capabilities.Graph.Lessons {
 			fmt.Println("  ⚠ graph.lessons is on; it overlaps engram's job. Prefer lessons: false")
 		}
+		graphStaleness(sp) // a stale code graph gives wrong answers silently; warn loudly
+		if sp.Capabilities.Obsidian.Vault != "" {
+			fmt.Printf("  → for one graph of all three memories, export graphify into the same vault:\n"+
+				"    graphify . --obsidian --obsidian-dir %s\n", expandHome(sp.Capabilities.Obsidian.Vault))
+		}
 	}
 	if sp.Capabilities.Memory.Provider != "" && sp.Capabilities.Memory.Provider != "none" {
 		fmt.Printf("· memory: %s (via MCP; batten does not store episodic memory)\n",
@@ -878,10 +932,20 @@ func cmdDoctor() error {
 	}
 	if sp.Capabilities.CompressionEnabled() {
 		report("compression", sp.Capabilities.Compression.Provider, have(sp.Capabilities.Compression.Provider))
+		if sp.Capabilities.Compression.Provider == "headroom" {
+			if headroomAlive() {
+				fmt.Println("  ✓ headroom proxy responding on :8787")
+			} else {
+				fmt.Println("  ⚠ headroom proxy not responding on :8787 — no compression is happening. " +
+					"Start it: headroom init claude")
+			}
+		}
 		if sp.Capabilities.Compression.Memory {
 			fmt.Println("  ⚠ compression.memory is on; it duplicates engram. Prefer memory: false")
 		}
-		if !sp.Capabilities.Compression.Measure {
+		if sp.Capabilities.Compression.Measure {
+			fmt.Println("  → runs are tagged by headroom on/off; compare with: batten measure")
+		} else {
 			fmt.Println("  ⚠ compression.measure is off; you are trusting the README instead of your own numbers")
 		}
 	}
@@ -936,6 +1000,40 @@ func report(kind, provider string, ok bool) {
 func have(bin string) bool {
 	_, err := exec.LookPath(bin)
 	return err == nil
+}
+
+// graphStaleness compares the code graph's age against HEAD. A graph N commits behind answers
+// "what already exists?" with yesterday's code — a silent way to mislead the plan phase.
+func graphStaleness(sp *spec.Spec) {
+	gj := filepath.Join(sp.Root, "graphify-out", "graph.json")
+	fi, err := os.Stat(gj)
+	if err != nil {
+		fmt.Println("  ⚠ no graphify-out/graph.json yet — run: graphify .")
+		return
+	}
+	out, err := exec.Command("git", "-C", sp.Root, "log", "-1", "--format=%ct").Output()
+	if err != nil {
+		return
+	}
+	var headUnix int64
+	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &headUnix)
+	if headUnix > fi.ModTime().Unix()+3600 { // more than an hour behind HEAD
+		fmt.Println("  ⚠ the code graph is older than HEAD — it may answer with stale code.")
+		fmt.Println("    refresh: graphify . --update   (or once: graphify hook install)")
+	} else {
+		fmt.Println("  ✓ code graph is current")
+	}
+}
+
+// headroomAlive probes the local compression proxy without blocking doctor for long.
+func headroomAlive() bool {
+	c := http.Client{Timeout: 250 * time.Millisecond}
+	resp, err := c.Get("http://127.0.0.1:8787/health")
+	if err != nil {
+		return false
+	}
+	_ = resp.Body.Close()
+	return resp.StatusCode == 200
 }
 
 // ---------- init ----------

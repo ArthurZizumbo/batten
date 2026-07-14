@@ -102,3 +102,8 @@ job.
 The criteria table (criterion → status → evidence), the files audited, the issues found, the
 coverage per domain, and the verdict. If the result is not `ok`, say plainly what has to happen
 next — the fix phase is going to read this and act on it.
+
+## Memory (if `capabilities.memory.provider` is set)
+
+Before judging, `mem_search "<the bug or concern>"` for prior occurrences — a bug fixed once and
+recurring is worth flagging in the verdict's `why`. Do not save here; verify only observes.

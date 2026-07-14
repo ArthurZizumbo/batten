@@ -105,3 +105,10 @@ a planner that starts coding stops planning.
 Report: the domains, the agent count, which sub-tasks are sequential and why, and anything in the
 acceptance criteria you could **not** turn into something verifiable — that last one is the part
 people skip, and it is the part that produces an un-closable unit at the gate.
+
+## Memory (if `capabilities.memory.provider` is set — e.g. engram)
+
+Before planning, **search past work**: `mem_search "<unit title / the technology involved>"`. A unit
+like this may have been solved before; batten governs the process, but the decisions live in engram.
+Pull anything relevant into the plan rather than re-deriving it. batten does NOT store this itself —
+it interoperates; episodic memory is engram's job, structural memory is graphify's.

@@ -84,3 +84,10 @@ overridden routinely is a gate nobody believes, and then it is not a gate.
 
 Report: the provenance line, the commit SHA, and anything left undone (a manual test still pending,
 a debt noted in a `warn`). A close that hides its loose ends is how they become somebody's surprise.
+
+## Memory (if `capabilities.memory.provider` is set)
+
+On a clean close, persist what was non-obvious: `mem_save` the key technical decisions and any
+gotcha found, then `mem_session_summary` (Goal / Discoveries / Accomplished / Next / Files). This is
+the episodic memory the next unit's plan phase will `mem_search`. The provenance line stays batten's;
+the reasoning behind it is engram's.

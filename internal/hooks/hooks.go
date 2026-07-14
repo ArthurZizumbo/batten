@@ -21,6 +21,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/arthu/batten/internal/export"
 	"github.com/arthu/batten/internal/spec"
 	"github.com/arthu/batten/internal/store"
 	"github.com/arthu/batten/internal/usage"
@@ -382,8 +383,8 @@ func looksFailed(msg string) bool {
 	return strings.Contains(l, "failed") || strings.Contains(l, "error:") || strings.Contains(l, "blocked")
 }
 
-// stop closes out the session's accounting. Also async in the plugin, so the JSONL walk
-// never sits on the critical path of the user's turn.
+// stop closes out the session's accounting and refreshes the vault. Async in the plugin, so
+// neither the JSONL walk nor the vault write sits on the critical path of the user's turn.
 func (h *Handler) stop(in Input) (*Output, error) {
 	unit := h.activeUnit(in)
 	if unit == "" {
@@ -391,6 +392,11 @@ func (h *Handler) stop(in Input) (*Output, error) {
 	}
 	if run, err := h.Store.ActiveRun(h.Spec.Project, unit); err == nil {
 		h.ingest(in, run.RunID)
+		// The vault fills itself here — a run note appears without anyone running `batten canvas`.
+		// Best-effort: a vault write must never be able to break the session.
+		if h.Spec.Capabilities.Obsidian.Vault != "" {
+			_, _ = export.Run(h.Spec, h.Store, unit)
+		}
 	}
 	return nil, nil
 }

@@ -4,14 +4,15 @@
 > Última actualización: 2026-07-14, inicio de la ejecución v2.
 
 ## Dónde retomar
-**Próximo paso**: P1 — `batten init` real (Go) + rampa `enforcement: report`.
+**Próximo paso**: P2 — vault automático (internal/export), engram en commands, graphify doctor, headroom measure.
 
 ## Fases y estado
 - [x] E0 — artefactos de dogfooding LISTOS. Arthur debe correr `docs/E0-DOGFOOD.md` (5 pasos) e
       pegar resultados. `batten hook-debug --tap/--show` captura el `agent_id` real. batten.yaml
       propio creado (dogfood, enforcement: report). Build scripts en scripts/.
       **Pendiente de Arthur**: los 5 resultados del spike (solo #1 .exe y #2 agent_id cambian diseño).
-- [ ] P1 — instalación en proyecto existente + rampa `enforcement: report`
+- [x] P1 — `batten init` real (internal/scan) + `enforcement: report`. Verificado en repo TS.
+      Commit incluido. init deriva unidad/dominios/checks reales; report mode advierte en vez de bloquear.
 - [ ] P2 — integraciones (vault auto, engram, graphify, headroom measure)
 - [ ] P2.5 — multi-sesión (binding sesión↔run, guard entre runs)
 - [ ] P3 — distribución del binario
