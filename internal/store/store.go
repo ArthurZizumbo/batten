@@ -494,13 +494,15 @@ func (s *Store) WriteSet(runID, nodeID string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// normPath canonicalizes a repo-relative path for write-set comparison. On Windows it also
-// case-folds: ml/F.py and ml/f.py are the SAME file there, and a guard that treated them as
-// two would let an agent cross the fence just by changing the casing. Storing the folded form
-// means claims and checks compare on the same key the OS actually uses.
+// normPath canonicalizes a repo-relative path for write-set comparison. On Windows AND macOS
+// it also case-folds: NTFS and default APFS are both case-insensitive, so ml/F.py and ml/f.py
+// are the SAME file there, and a guard that treated them as two would let an agent cross the
+// fence just by changing the casing. A Mac with a case-sensitive volume loses nothing that
+// matters: folding errs toward DETECTING collisions, and two paths differing only by case is
+// a practice that breaks on every default macOS/Windows checkout anyway. Linux stays exact.
 func normPath(p string) string {
 	p = filepath.ToSlash(filepath.Clean(p))
-	if runtime.GOOS == "windows" {
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
 		p = strings.ToLower(p)
 	}
 	return p
