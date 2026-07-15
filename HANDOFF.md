@@ -4,7 +4,12 @@
 > Última actualización: 2026-07-14, inicio de la ejecución v2.
 
 ## Dónde retomar
-**Próximo paso**: P3 — distribución del binario (goreleaser, bootstrap, .gitignore del bin, README).
+**Próximo paso**: TODAS las fases de código terminadas. Falta SOLO E0 (Arthur instala el plugin
+y corre `docs/E0-DOGFOOD.md`). Los 2 resultados que pueden cambiar diseño: el `.exe` en hooks
+de Windows, y si `agent_id` llega en PreToolUse de subagente (si no, el guard ya cae a advisory).
+
+**Antes del primer release**: fijar el repo real (`arthu/batten` es placeholder) en
+`scripts/bootstrap.sh` y `.goreleaser.yaml`, y decidir el module path definitivo.
 
 ## Fases y estado
 - [x] E0 — artefactos de dogfooding LISTOS. Arthur debe correr `docs/E0-DOGFOOD.md` (5 pasos) e
@@ -19,8 +24,10 @@
 - [x] P2.5 — multi-sesión. binding sesión↔run (RunBySession + PostToolUse hook), write-set guard
       ENTRE runs abiertos, ambigüedad visible en sessionStart. Verificado: US-034/sessA vs
       US-051/sessB; sessB pisando archivo de US-034 → DENY. Commit incluido.
-- [ ] P3 — distribución del binario
-- [ ] P4 — verificación end-to-end
+- [x] P3 — distribución. release.yml (GoReleaser en tag v*), bootstrap.sh (SessionStart descarga
+      el binario a CLAUDE_PLUGIN_DATA), build-plugin scripts, docs/INSTALL.md. Commit incluido.
+- [x] P4 — verificación end-to-end. Suite verde; report→WARN / enforce→DENY; migración user_version
+      0→1 en sitio; measure dice "insufficient" con <3 runs. Resultados en docs/VERIFICATION.md.
 
 ## Contexto imprescindible
 - Repo: `c:/Users/arthu/Proyectos/Public/LoopWorkFlow`, module `github.com/arthu/batten`, rama `feat/batten-mvp`.

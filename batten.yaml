@@ -12,7 +12,7 @@ unit:
 enforcement: report
 
 artifacts:
-  handoff: HANDOFF.md
+  handoff: docs/tasks/{id}.md
 
 phases:
   - id: build
