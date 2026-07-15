@@ -3,8 +3,8 @@
 // This is where prose becomes mechanism. Two rules that a document can only ask for,
 // a PreToolUse hook can actually impose:
 //
-//	1. verdict gate    — a commit without cited evidence is denied.
-//	2. write-set guard — an agent writing another agent's file is denied.
+//  1. verdict gate    — a commit without cited evidence is denied.
+//  2. write-set guard — an agent writing another agent's file is denied.
 //
 // The hook payload arrives as JSON on stdin and the decision leaves as JSON on stdout.
 // No jq, no curl, no bash: the binary does it. (engram's hooks shell out, which is why
@@ -52,9 +52,9 @@ type Input struct {
 
 // Output is what Claude Code reads back from us.
 type Output struct {
-	Continue      *bool          `json:"continue,omitempty"`
-	SystemMessage string         `json:"systemMessage,omitempty"`
-	HookSpecific  *HookSpecific  `json:"hookSpecificOutput,omitempty"`
+	Continue      *bool         `json:"continue,omitempty"`
+	SystemMessage string        `json:"systemMessage,omitempty"`
+	HookSpecific  *HookSpecific `json:"hookSpecificOutput,omitempty"`
 }
 
 type HookSpecific struct {
@@ -97,15 +97,22 @@ type Handler struct {
 // visible warning — the adoption ramp, so a project mid-sprint isn't blocked on day one.
 func (h *Handler) gate(event, reason string) *Output {
 	if h.Spec.ReportOnly() {
-		return &Output{
-			SystemMessage: "batten (report mode — not blocking): " + firstLine(reason),
-			HookSpecific: &HookSpecific{
-				HookEventName:     event,
-				AdditionalContext: "batten would DENY this in enforce mode:\n" + reason,
-			},
-		}
+		return advise(event, reason)
 	}
 	return deny(event, reason)
+}
+
+// advise is the warning form: the tool call proceeds, but the reason lands both in front of
+// the user (systemMessage) and in the model's context. Used by report mode, and by any check
+// that cannot attribute blame well enough to justify a hard deny.
+func advise(event, reason string) *Output {
+	return &Output{
+		SystemMessage: "batten (warning — not blocking): " + firstLine(reason),
+		HookSpecific: &HookSpecific{
+			HookEventName:     event,
+			AdditionalContext: "batten warning:\n" + reason,
+		},
+	}
 }
 
 func firstLine(s string) string {
@@ -139,6 +146,15 @@ func bytesTrimNL(b []byte) []byte {
 	return b
 }
 
+// truncateBytes caps a payload for the event log. The cut is marked so a reader of the
+// replay log knows it is looking at a prefix, not the whole event.
+func truncateBytes(b []byte, n int) []byte {
+	if len(b) <= n {
+		return b
+	}
+	return append(append([]byte{}, b[:n]...), []byte(`...[truncated by batten]`)...)
+}
+
 // Dispatch routes one hook event. Returns the JSON to print (or nil for silence).
 func (h *Handler) Dispatch(event string, raw []byte) (*Output, error) {
 	var in Input
@@ -154,7 +170,11 @@ func (h *Handler) Dispatch(event string, raw []byte) (*Output, error) {
 		return nil, nil // not a batten repo: stay out of the way
 	}
 
-	_ = h.Store.LogEvent("", "", event, raw)
+	// The replay log wants every event, not every byte: a Write tool's payload embeds the
+	// whole file body, and this INSERT sits on the fast path of every tool call in every
+	// session sharing the DB. 4KB keeps the log diagnostic (event shape, ids, decisions)
+	// without turning the events table into a mirror of the working tree.
+	_ = h.Store.LogEvent("", "", event, truncateBytes(raw, 4096))
 
 	switch event {
 	case "PreToolUse":
@@ -371,13 +391,25 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 	// Within-run collision (agent vs agent).
 	if myRun != "" {
 		if owner, err := h.Store.WriteSetOwner(myRun, rel); err == nil && owner != "" && owner != myNode {
+			// An UNATTRIBUTED write (no agent_id in the payload) cannot be hard-denied: we
+			// cannot tell the owning agent apart from a trespasser, and if Claude Code ever
+			// stops carrying agent_id in subagent hooks, denying here would deny the owner
+			// too and brick the whole fan-out. The risks are asymmetric — a loud warning on
+			// a real trespass is recoverable; silently blocking every legitimate write is
+			// not. So: attributed collision -> gate; unattributed -> always advisory.
+			if myNode == "" {
+				return advise("PreToolUse", fmt.Sprintf(
+					"batten: %s is claimed by a fanned-out agent (%s) in this run. If you are that "+
+						"agent, ignore this; if you are the orchestrator, let the agent own its file.",
+					rel, owner)), nil
+			}
 			mine, _ := h.Store.WriteSet(myRun, myNode)
 			return h.gate("PreToolUse", fmt.Sprintf(
 				"batten: write-set collision. %s belongs to another agent's write-set (%s); you are %s.\n"+
 					"Two agents must never write the same file — that is what makes the fan-out safe.\n"+
 					"Your write-set:\n  %s\n"+
 					"If this file genuinely belongs to you, the plan is wrong: fix the plan, do not cross the fence.",
-				rel, owner, orSelf(myNode), strings.Join(mine, "\n  "))), nil
+				rel, owner, myNode, strings.Join(mine, "\n  "))), nil
 		}
 	}
 
@@ -389,13 +421,6 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 			rel, cross.UnitID, cross.RunID)), nil
 	}
 	return nil, nil
-}
-
-func orSelf(node string) string {
-	if node == "" {
-		return "this session's main loop"
-	}
-	return node
 }
 
 // ---------- graph ingestion ----------
