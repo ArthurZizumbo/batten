@@ -10,6 +10,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -75,6 +77,10 @@ func main() {
 		err = cmdIngest(os.Args[2:])
 	case "measure":
 		err = cmdMeasure()
+	case "close":
+		err = cmdClose(os.Args[2:])
+	case "check":
+		err = cmdCheck(os.Args[2:])
 	case "hook-debug":
 		err = cmdHookDebug(os.Args[2:])
 	case "version", "--version", "-v":
@@ -146,7 +152,16 @@ func load() (*spec.Spec, *store.Store, error) {
 
 // ---------- hook ----------
 
-func cmdHook(args []string) error {
+func cmdHook(args []string) (retErr error) {
+	// A hook runs on every tool call. A panic here — a nil deref, a bad type assertion on a
+	// payload shape we didn't expect — would paint a Go stack trace across the user's session.
+	// Principle #2: degrade, never break. Swallow it and exit clean; the tool call proceeds.
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = nil
+		}
+	}()
+
 	if len(args) < 1 {
 		return errors.New("hook: need an event name")
 	}
@@ -542,6 +557,217 @@ func abs(f float64) float64 {
 		return -f
 	}
 	return f
+}
+
+// ---------- close: end a run so its claims release (R1) ----------
+
+func cmdClose(args []string) error {
+	sp, st, err := load()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	unit, status := "", "ok"
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--status":
+			if i+1 < len(args) {
+				status = args[i+1]
+				i++
+			}
+		default:
+			if !strings.HasPrefix(args[i], "--") {
+				unit = args[i]
+			}
+		}
+	}
+	if unit == "" {
+		if b, err := gitBranch(); err == nil {
+			unit = sp.MatchUnit(b)
+		}
+	}
+	if unit == "" {
+		return errors.New("close: batten close <unit> [--status ok|failed|rolled_back]")
+	}
+	switch status {
+	case "ok", "failed", "rolled_back":
+	default:
+		return fmt.Errorf("--status must be ok|failed|rolled_back, got %q", status)
+	}
+	run, err := st.ActiveRun(sp.Project, unit)
+	if err != nil {
+		return fmt.Errorf("no open run for %s", unit)
+	}
+
+	// Closing as ok obeys the same rule as the commit gate: no clean close without a verdict
+	// (or an override). failed/rolled_back close freely — a run that went wrong should always
+	// be closeable, or its claims would be stuck forever.
+	if status == "ok" {
+		if err := gateReadyToClose(sp, st, run); err != nil {
+			return err
+		}
+	}
+	if err := st.CloseRun(run.RunID, status); err != nil {
+		return err
+	}
+	fmt.Printf("%s closed (%s). Write-set claims released — files it held are free again.\n", unit, status)
+	if sp.Capabilities.Obsidian.Vault != "" {
+		_, _ = export.Run(sp, st, unit) // note now reflects the final state
+	}
+	return nil
+}
+
+// gateReadyToClose enforces the close precondition (mirrors the commit gate) so `batten close`
+// and a gated `git commit` cannot disagree about what "done" means.
+func gateReadyToClose(sp *spec.Spec, st *store.Store, run *store.Run) error {
+	closing, ok := sp.ClosingPhase()
+	if !ok {
+		return nil
+	}
+	if o, _ := st.HasOverride(run.RunID, closing.Gate); o {
+		return nil
+	}
+	v, err := st.LatestVerdict(run.RunID, closing.Gate)
+	if err != nil || v.Result != "ok" || len(v.Evidence) == 0 {
+		return fmt.Errorf("cannot close %s as ok: needs a verdict with result=ok and cited evidence "+
+			"(run `batten check %s`, or the verify phase). Use --status failed to close a run that went wrong",
+			run.UnitID, run.UnitID)
+	}
+	return nil
+}
+
+// ---------- check: generate evidence by running the gate's own checks (R2) ----------
+
+func cmdCheck(args []string) error {
+	sp, st, err := load()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	unit, gateName := "", ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--gate":
+			if i+1 < len(args) {
+				gateName = args[i+1]
+				i++
+			}
+		default:
+			if !strings.HasPrefix(args[i], "--") {
+				unit = args[i]
+			}
+		}
+	}
+	if unit == "" {
+		if b, err := gitBranch(); err == nil {
+			unit = sp.MatchUnit(b)
+		}
+	}
+	if unit == "" {
+		return errors.New("check: batten check <unit> [--gate <name>]")
+	}
+	if gateName == "" {
+		if c, ok := sp.ClosingPhase(); ok && c.Gate != "" {
+			gateName = c.Gate
+		} else {
+			for _, p := range sp.Phases {
+				if p.Gate != "" {
+					gateName = p.Gate
+				}
+			}
+		}
+	}
+	gate, ok := sp.Gates[gateName]
+	if !ok {
+		return fmt.Errorf("no gate %q in %s", gateName, spec.Filename)
+	}
+	if len(gate.Checks) == 0 {
+		return fmt.Errorf("gate %q declares no checks to run", gateName)
+	}
+	run, err := st.EnsureRun(sp.Project, unit, "")
+	if err != nil {
+		return err
+	}
+
+	// Run each check for real. This is the whole point: the evidence is GENERATED, not a string
+	// the model typed. "verified" now means batten watched it pass.
+	var evidence []string
+	allPass := true
+	for _, c := range gate.Checks {
+		out, code, took := runCheck(sp.Root, c, 5*time.Minute)
+		if code == 0 {
+			evidence = append(evidence, fmt.Sprintf("%s: PASS (exit 0, %s)", c, took))
+			fmt.Printf("  ✓ %s\n", c)
+		} else {
+			allPass = false
+			tail := lastLines(out, 8)
+			evidence = append(evidence, fmt.Sprintf("%s: FAIL (exit %d)\n%s", c, code, tail))
+			fmt.Printf("  ✗ %s (exit %d)\n%s\n", c, code, indent(tail))
+		}
+	}
+
+	result := "blocked"
+	why := "one or more gate checks failed"
+	next := "fix the failures, then run batten check again"
+	if allPass {
+		result, why, next = "ok", "all gate checks passed (batten ran them)", "add your acceptance-criteria judgment, then close"
+	}
+	v := store.Verdict{
+		RunID: run.RunID, Gate: gateName, CheckID: unit + "-" + gateName + "-batten",
+		Result: result, Evidence: evidence, Why: why, SafeNextStep: next, Source: "batten",
+	}
+	if err := st.SaveVerdict(v, gate.EvidenceRequired()); err != nil {
+		return err
+	}
+	fmt.Printf("\n%s: %s (batten-verified). %s\n", unit, strings.ToUpper(result), why)
+	if result != "ok" {
+		fmt.Println("the commit gate will deny until this passes.")
+	}
+	return nil
+}
+
+// runCheck executes one gate command via the OS shell, capturing combined output. A per-command
+// timeout keeps a hung test from wedging the gate.
+func runCheck(dir, command string, timeout time.Duration) (out string, code int, took string) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	var cmd *exec.Cmd
+	if runtime.GOOS == "windows" {
+		cmd = exec.CommandContext(ctx, "cmd", "/C", command)
+	} else {
+		cmd = exec.CommandContext(ctx, "sh", "-c", command)
+	}
+	cmd.Dir = dir
+	start := time.Now()
+	b, err := cmd.CombinedOutput()
+	took = time.Since(start).Round(time.Millisecond).String()
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(b), 124, took + " TIMED OUT"
+	}
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return string(b), ee.ExitCode(), took
+		}
+		return err.Error(), 1, took
+	}
+	return string(b), 0, took
+}
+
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func indent(s string) string {
+	if s == "" {
+		return ""
+	}
+	return "    " + strings.ReplaceAll(s, "\n", "\n    ")
 }
 
 // ---------- hook-debug: resolve the agent_id question (E0 step 2) ----------
@@ -984,6 +1210,15 @@ func cmdDoctor() error {
 		} else {
 			fmt.Println("⚠ budget.quota_pct_per_run is set but the statusline is not installed — that " +
 				"ceiling is NOT enforced. Run: batten statusline --install")
+		}
+	}
+
+	// A run nobody closed keeps its write-set claims alive and muddies session attribution.
+	// Surface the stale ones so they don't rot: 48h with no event means abandoned or forgotten.
+	if stale, err := st.StaleRuns(sp.Project, 48*time.Hour); err == nil && len(stale) > 0 {
+		fmt.Printf("⚠ %d run(s) open >48h with no activity — close or resume them:\n", len(stale))
+		for _, r := range stale {
+			fmt.Printf("    %s (phase %s): batten close %s [--status ok|failed]\n", r.UnitID, r.Phase, r.UnitID)
 		}
 	}
 	return nil

@@ -208,16 +208,30 @@ func (h *Handler) postToolUse(in Input) (*Output, error) {
 	if json.Unmarshal(in.ToolInput, &bi) != nil {
 		return nil, nil
 	}
-	m := phaseRe.FindStringSubmatch(bi.Command)
-	if m == nil {
+	if m := phaseRe.FindStringSubmatch(bi.Command); m != nil {
+		if unit := h.Spec.MatchUnit(m[1]); unit != "" {
+			if r, err := h.Store.ActiveRun(h.Spec.Project, unit); err == nil {
+				_ = h.Store.AdoptSession(r.RunID, in.SessionID)
+			}
+		}
 		return nil, nil
 	}
-	unit := h.Spec.MatchUnit(m[1])
-	if unit == "" {
-		return nil, nil
-	}
-	if r, err := h.Store.ActiveRun(h.Spec.Project, unit); err == nil {
-		_ = h.Store.AdoptSession(r.RunID, in.SessionID)
+
+	// A successful commit is the natural end of a run: close it so its write-set claims release
+	// instead of lingering and denying edits forever. The PreToolUse gate already let this commit
+	// through, so if we reach here the verdict was ok (or overridden) — either way it's done.
+	if commitRe.MatchString(bi.Command) {
+		unit := h.activeUnit(in)
+		if unit == "" {
+			return nil, nil
+		}
+		closing, ok := h.Spec.ClosingPhase()
+		if !ok {
+			return nil, nil
+		}
+		if r, err := h.Store.ActiveRun(h.Spec.Project, unit); err == nil && r.Phase == closing.ID {
+			_ = h.Store.CloseRun(r.RunID, "ok")
+		}
 	}
 	return nil, nil
 }
@@ -306,6 +320,20 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 			"batten: %s verdict is %q, not %q. %s\nsafe_next_step: %s\n"+
 				"To proceed anyway (recorded): batten override %s --reason \"...\"",
 			unit, v.Result, closing.RequiresVerdict, v.Why, v.SafeNextStep, unit)), nil
+	}
+
+	// If the gate declares checks, an agent's word is not enough: demand a verdict that BATTEN
+	// produced by running those checks. This is what closes the "I typed 'tests pass' without
+	// running them" hole — the mechanical part of the gate becomes true by construction.
+	if g, ok := h.Spec.Gates[gateName]; ok && len(g.Checks) > 0 {
+		bv, err := h.Store.LatestVerdictBySource(run.RunID, gateName, "batten")
+		if err != nil || bv.Result != "ok" {
+			return h.gate("PreToolUse", fmt.Sprintf(
+				"batten: %s has no batten-verified pass. The gate's checks must be RUN, not asserted.\n"+
+					"Run: batten check %s\n"+
+					"To proceed anyway (recorded): batten override %s --reason \"...\"",
+				unit, unit, unit)), nil
+		}
 	}
 
 	// Budget is also a closing condition: a run that blew its ceiling should not quietly land.
