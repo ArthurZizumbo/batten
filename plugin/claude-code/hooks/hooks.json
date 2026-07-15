@@ -7,6 +7,12 @@
         "hooks": [
           {
             "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}\"/scripts/bootstrap.sh",
+            "timeout": 30,
+            "statusMessage": "batten: checking binary..."
+          },
+          {
+            "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/bin/batten",
             "args": ["hook", "SessionStart"],
             "timeout": 10,

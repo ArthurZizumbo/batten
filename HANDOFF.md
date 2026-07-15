@@ -4,7 +4,7 @@
 > Última actualización: 2026-07-14, inicio de la ejecución v2.
 
 ## Dónde retomar
-**Próximo paso**: P2.5 — multi-sesión (binding sesión↔run, write-set guard entre runs, ambigüedad visible).
+**Próximo paso**: P3 — distribución del binario (goreleaser, bootstrap, .gitignore del bin, README).
 
 ## Fases y estado
 - [x] E0 — artefactos de dogfooding LISTOS. Arthur debe correr `docs/E0-DOGFOOD.md` (5 pasos) e
@@ -16,7 +16,9 @@
 - [x] P2 — vault AUTO (internal/export, dispara en Stop hook + tras veredicto — verificado),
       engram reinyectado en commands, graphify staleness en doctor, headroom measure real
       (migración user_version + `batten measure`). Commit incluido.
-- [ ] P2.5 — multi-sesión (binding sesión↔run, guard entre runs)
+- [x] P2.5 — multi-sesión. binding sesión↔run (RunBySession + PostToolUse hook), write-set guard
+      ENTRE runs abiertos, ambigüedad visible en sessionStart. Verificado: US-034/sessA vs
+      US-051/sessB; sessB pisando archivo de US-034 → DENY. Commit incluido.
 - [ ] P3 — distribución del binario
 - [ ] P4 — verificación end-to-end
 
