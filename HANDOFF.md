@@ -4,12 +4,23 @@
 > Última actualización: 2026-07-14, inicio de la ejecución v2.
 
 ## Dónde retomar
-**Próximo paso**: TODAS las fases de código terminadas. Falta SOLO E0 (Arthur instala el plugin
-y corre `docs/E0-DOGFOOD.md`). Los 2 resultados que pueden cambiar diseño: el `.exe` en hooks
-de Windows, y si `agent_id` llega en PreToolUse de subagente (si no, el guard ya cae a advisory).
+**Código terminado**: MVP + v2 (E0/P1/P2/P2.5/P3/P4) + hardening (fix 0bee413) + v3
+(R1/R2/R3/R4/M1). Falta SOLO E0 (Arthur instala el plugin y corre `docs/E0-DOGFOOD.md`).
+
+Los 2 resultados de E0 que pueden cambiar diseño: el `.exe` en hooks de Windows, y si `agent_id`
+llega en PreToolUse de subagente (si no, el guard YA cae a advisory automáticamente — corregido
+en 0bee413, ya no bloquea el fan-out).
 
 **Antes del primer release**: fijar el repo real (`arthu/batten` es placeholder) en
 `scripts/bootstrap.sh` y `.goreleaser.yaml`, y decidir el module path definitivo.
+
+## v3 (robustez pre-pruebas) — HECHO
+- R1 ciclo de vida: `batten close`, auto-close al commitear, doctor avisa runs stale >48h.
+- R2 `batten check`: corre los checks del gate DE VERDAD, graba veredicto source='batten'; el
+  commit gate exige ese veredicto (mata "escribí que pasa sin correrlo").
+- R3 panic fence en cmdHook. R4 case-fold de paths en Windows.
+- M1 ruteo de modelos: `models.tiers`/`phases` + `domains[].model`; `batten show` marca desviación
+  declarado-vs-real; `batten measure` desglosa por modelo. Verificado todo.
 
 ## Fases y estado
 - [x] E0 — artefactos de dogfooding LISTOS. Arthur debe correr `docs/E0-DOGFOOD.md` (5 pasos) e

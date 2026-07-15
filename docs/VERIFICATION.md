@@ -61,3 +61,23 @@ Ver `docs/E0-DOGFOOD.md`. Los dos que pueden cambiar diseño:
 
 Los otros tres (MCP con cliente real, TUI interactiva, statusline en terminal real) son
 confirmaciones, no riesgos de diseño.
+
+---
+
+## v3 — robustez pre-pruebas (R1-R4 + M1)
+
+| Prueba | Resultado |
+|---|---|
+| R1 auto-close: commit pasa gate → run cierra → otro run reclama el archivo liberado | ✓ |
+| R1 `batten close --status ok` sin veredicto | ✓ rechazado |
+| R1 doctor avisa run open >48h sin eventos | ✓ |
+| R2 `batten check` corre checks reales; uno falla → blocked citando el error de git | ✓ |
+| R2 commit con checks declarados exige veredicto source='batten' | ✓ agent-only "ok" → DENY "run batten check" |
+| R3 payload JSON malformado / tipos incorrectos a hook | ✓ exit 0, sin stack trace |
+| R4 escribir `ML/F.PY` contra claim de `ml/f.py` en Windows | ✓ DENY (case-fold) |
+| M1 `batten show` marca nodo con modelo real ≠ declarado | ✓ "declared opus" cuando corrió haiku |
+| M1 `batten measure` desglosa spend por modelo | ✓ |
+| M1 validación: `models.phases` con fase inexistente | ✓ spec inválido |
+| Migración user_version 1→2 (columna verdicts.source) | ✓ en sitio |
+
+Suite completa (`go build/vet/test ./...`) verde tras cada bloque.
