@@ -439,18 +439,29 @@ func cmdShow(args []string) error {
 			humanTokens(run.TokensSpent), run.ImputedUSD)
 	}
 	nodes, _ := st.Nodes(run.RunID)
+	models, _ := st.ModelsByNode(run.RunID) // what each node actually ran on, from the ledger
 	for _, n := range nodes {
 		ws, _ := st.WriteSet(run.RunID, n.NodeID)
 		fmt.Printf("  [%s] %-24s %-8s", n.Kind, n.Label, n.Status)
 		if len(ws) > 0 {
 			fmt.Printf(" owns %d file(s)", len(ws))
 		}
+		// Show the real model, and flag it when the domain declared a different one — this is
+		// the routing VERIFICATION: "declared haiku, ran opus" is a silent overspend otherwise.
+		if ran := models[n.NodeID]; len(ran) > 0 {
+			fmt.Printf(" ran %s", strings.Join(ran, ","))
+			if n.Domain != "" {
+				if d, ok := sp.Domains[n.Domain]; ok && d.Model != "" && !modelMatches(d.Model, ran) {
+					fmt.Printf("  ⚠ declared %s", d.Model)
+				}
+			}
+		}
 		fmt.Println()
 	}
 	if v, err := st.LatestVerdict(run.RunID, ""); err == nil {
-		fmt.Printf("\nverdict %s=%s: %s\n", v.Gate, v.Result, v.Why)
+		fmt.Printf("\nverdict %s=%s (%s): %s\n", v.Gate, v.Result, v.Source, v.Why)
 		for _, e := range v.Evidence {
-			fmt.Println("  -", e)
+			fmt.Println("  -", firstLineOf(e))
 		}
 		if len(v.Evidence) == 0 {
 			fmt.Println("  (no evidence — this cannot be an approval)")
@@ -459,6 +470,25 @@ func cmdShow(args []string) error {
 		fmt.Println("\nno verdict: the close gate will deny a commit")
 	}
 	return nil
+}
+
+// modelMatches reports whether the declared model (an alias like "haiku") appears in what
+// actually ran (full ids like "claude-haiku-4-5-20251001"). Substring match, since the spec
+// uses short aliases and the ledger stores the concrete id.
+func modelMatches(declared string, ran []string) bool {
+	for _, r := range ran {
+		if strings.Contains(strings.ToLower(r), strings.ToLower(declared)) {
+			return true
+		}
+	}
+	return false
+}
+
+func firstLineOf(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i] + " …"
+	}
+	return s
 }
 
 func cmdCanvas(args []string) error {
@@ -516,12 +546,27 @@ func cmdMeasure() error {
 		return err
 	}
 	defer st.Close()
+
+	// Model routing: where the tokens actually went, by model. This makes the whole point of
+	// routing visible — is the cheap tier actually carrying the mechanical work? — with real
+	// numbers, not a promise.
+	if byModel, err := st.MeasureByModel(sp.Project); err == nil && len(byModel) > 0 {
+		fmt.Println("spend by model (imputed, not billed):")
+		for _, m := range byModel {
+			name := m.Model
+			if name == "" {
+				name = "(unknown)"
+			}
+			fmt.Printf("  %-28s %d req, %s tokens, $%.2f\n", name, m.Requests, humanTokens(m.Tokens), m.ImputedUSD)
+		}
+		fmt.Println()
+	}
+
 	groups, err := st.MeasureByHeadroom(sp.Project)
 	if err != nil {
 		return err
 	}
 	if len(groups) == 0 {
-		fmt.Println("no finished runs with usage yet — nothing to compare")
 		return nil
 	}
 	fmt.Println("headroom effect on THIS project's runs (imputed, not billed):")

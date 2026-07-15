@@ -135,3 +135,15 @@ When the agents return:
 - `git status --short`.
 
 Do not commit. The gate phase runs next, and it is what decides whether this is finished.
+
+## Model per agent (if `models` is set)
+
+Launch each subagent on the model the plan assigned it. Precedence: the domain's `model:` (if
+set) > the sub-task's tier from the plan > the session default. Pass it as the Agent tool's
+`model` parameter; if the domain names a custom `agent:`, that agent's own frontmatter model
+applies unless you override it. This is where the routing actually saves tokens — the mechanical
+sub-tasks must not silently run on the planning model.
+
+batten records the model each subagent really used (from the transcript). After the run,
+`batten show <unit>` flags any node whose real model differs from what its domain declared, and
+`batten measure` breaks spend down by model — so the routing is verified, not just intended.

@@ -463,7 +463,14 @@ func (h *Handler) subagentStart(in Input) (*Output, error) {
 		return nil, nil
 	}
 	nodeID := "n-" + in.AgentID
-	domain, _ := h.Spec.DomainFor(in.AgentType) // best-effort
+	// The agent_type is usually the domain's own name (the fan-out launches "one agent per
+	// domain"), so match it directly first; fall back to path-prefix only if it isn't a domain.
+	domain := ""
+	if _, ok := h.Spec.Domains[in.AgentType]; ok {
+		domain = in.AgentType
+	} else {
+		domain, _ = h.Spec.DomainFor(in.AgentType)
+	}
 	_ = h.Store.AddNode(store.Node{
 		NodeID: nodeID, RunID: run.RunID, Kind: "subagent",
 		Label: in.AgentType, Domain: domain, Status: "running",

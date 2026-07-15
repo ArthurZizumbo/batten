@@ -112,3 +112,17 @@ Before planning, **search past work**: `mem_search "<unit title / the technology
 like this may have been solved before; batten governs the process, but the decisions live in engram.
 Pull anything relevant into the plan rather than re-deriving it. batten does NOT store this itself —
 it interoperates; episodic memory is engram's job, structural memory is graphify's.
+
+## Model routing (if `models` is set in batten.yaml)
+
+Classify each sub-task by difficulty so the build phase runs it on the right-sized model — a
+color change does not need the model that plans architecture. Use three questions:
+
+- touches >2 files, or crosses a module boundary? → higher tier
+- requires a design decision (not just carrying one out)? → higher tier
+- can it fail in a subtle, hard-to-notice way (ML, concurrency, auth)? → higher tier
+
+Zero yes → `mechanical`; one → `moderate`; two or three → `complex`. Map each to its model via
+`models.tiers`, and note the tier + model beside each sub-task's write-set in the plan artifact.
+A domain with its own `model:` overrides the tier. Phases in `models.phases` (usually plan and
+verify) always use their pinned model regardless of tier.

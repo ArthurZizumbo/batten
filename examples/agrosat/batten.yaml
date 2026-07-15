@@ -71,6 +71,7 @@ domains:
   frontend:
     path: frontend/
     rules: frontend/AGENTS.md
+    model: sonnet   # override por dominio: UI casi nunca necesita Opus (gana sobre el tier del plan)
     check: ['pnpm lint', 'pnpm typecheck', 'pnpm test']
     coverage: 50
     skills: [agrosat-frontend-components, agrosat-frontend-composables, agrosat-maplibre-geo, ui-ux-pro-max]
@@ -186,6 +187,18 @@ budget:
   max_iterations: 3         # vueltas de fix -> reverify antes de parar. Sin esto, un run nocturno
                             # muele el mismo check rojo hasta que se acaba la ventana.
   on_exceed: block          # block | warn | downgrade_effort
+
+# Ruteo de modelos por dificultad: planear merece Opus, cambiar un color no. batten no puede
+# cambiar el modelo del loop principal (eso es el /model del usuario), pero SÍ rutea subagentes
+# y verifica que el ruteo pasó (el ledger guarda el modelo real de cada nodo).
+models:
+  tiers:
+    mechanical: haiku   # renombres, i18n, config, un color
+    moderate: sonnet    # una feature normal
+    complex: opus       # arquitectura, debugging duro, ML/FarSLIP
+  phases:
+    plan: opus          # el juicio de descomposición merece el modelo fuerte
+    verify: opus        # el gate razona sobre criterios de aceptación
 
 capabilities:
   graph:
