@@ -41,6 +41,20 @@
         ]
       }
     ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/batten",
+            "args": ["hook", "PostToolUse"],
+            "timeout": 10,
+            "async": true
+          }
+        ]
+      }
+    ],
     "SubagentStart": [
       {
         "hooks": [

@@ -159,6 +159,8 @@ func (h *Handler) Dispatch(event string, raw []byte) (*Output, error) {
 	switch event {
 	case "PreToolUse":
 		return h.preToolUse(in)
+	case "PostToolUse":
+		return h.postToolUse(in)
 	case "SubagentStart":
 		return h.subagentStart(in)
 	case "SubagentStop":
@@ -167,6 +169,35 @@ func (h *Handler) Dispatch(event string, raw []byte) (*Output, error) {
 		return h.sessionStart(in)
 	case "Stop":
 		return h.stop(in)
+	}
+	return nil, nil
+}
+
+// phaseRe catches `batten phase <UNIT> ...` in a shell command, so the session that ran it can
+// be bound to that unit's run. The CLI subprocess never sees session_id; this hook does.
+var phaseRe = regexp.MustCompile(`\bbatten(?:\.exe)?\s+phase\s+(\S+)`)
+
+// postToolUse binds a session to the unit it just started working. This is the load-bearing
+// step for multi-session: once `batten phase US-034` runs, THIS session owns that run, and
+// activeUnit resolves it decisively for every later gate — no more guessing from a shared branch.
+func (h *Handler) postToolUse(in Input) (*Output, error) {
+	if in.ToolName != "Bash" || in.SessionID == "" {
+		return nil, nil
+	}
+	var bi bashInput
+	if json.Unmarshal(in.ToolInput, &bi) != nil {
+		return nil, nil
+	}
+	m := phaseRe.FindStringSubmatch(bi.Command)
+	if m == nil {
+		return nil, nil
+	}
+	unit := h.Spec.MatchUnit(m[1])
+	if unit == "" {
+		return nil, nil
+	}
+	if r, err := h.Store.ActiveRun(h.Spec.Project, unit); err == nil {
+		_ = h.Store.AdoptSession(r.RunID, in.SessionID)
 	}
 	return nil, nil
 }
@@ -306,14 +337,11 @@ func gateGuess(s *spec.Spec) string {
 // writeSetGuard is wedge #2. "Two agents never write the same file" is the workflow's
 // most important and most fragile rule, because today it is only discipline. A distracted
 // agent breaks it and you find out at merge time. Here the file has an owner, and a
-// non-owner is denied.
+// non-owner is denied — both WITHIN a run (one agent vs another) and ACROSS open runs
+// (session B editing a file session A's agent claimed).
 func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
-	if path == "" || in.AgentID == "" {
-		return nil, nil // the orchestrator itself is not fenced; only fanned-out agents are
-	}
-	node, err := h.Store.NodeByAgent(in.AgentID)
-	if err != nil {
-		return nil, nil // this agent has no declared write-set: nothing to enforce
+	if path == "" {
+		return nil, nil
 	}
 	rel, err := filepath.Rel(h.Spec.Root, path)
 	if err != nil {
@@ -324,18 +352,50 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 		return nil, nil // outside the repo
 	}
 
-	owner, err := h.Store.WriteSetOwner(node.RunID, rel)
-	if err != nil || owner == "" || owner == node.NodeID {
-		return nil, nil // unclaimed, or claimed by this very agent
+	// Resolve which run and node this write belongs to. A fanned-out agent has an agent_id;
+	// the main loop of a bound session has none but still belongs to a run.
+	myRun, myNode := "", ""
+	if in.AgentID != "" {
+		if node, err := h.Store.NodeByAgent(in.AgentID); err == nil {
+			myRun, myNode = node.RunID, node.NodeID
+		}
+	}
+	if myRun == "" {
+		if u := h.activeUnit(in); u != "" {
+			if r, err := h.Store.ActiveRun(h.Spec.Project, u); err == nil {
+				myRun = r.RunID
+			}
+		}
 	}
 
-	mine, _ := h.Store.WriteSet(node.RunID, node.NodeID)
-	return h.gate("PreToolUse", fmt.Sprintf(
-		"batten: write-set collision. %s belongs to another agent's write-set (%s); you are %s.\n"+
-			"Two agents must never write the same file — that is what makes the fan-out safe.\n"+
-			"Your write-set:\n  %s\n"+
-			"If this file genuinely belongs to you, the plan is wrong: fix the plan, do not cross the fence.",
-		rel, owner, node.NodeID, strings.Join(mine, "\n  "))), nil
+	// Within-run collision (agent vs agent).
+	if myRun != "" {
+		if owner, err := h.Store.WriteSetOwner(myRun, rel); err == nil && owner != "" && owner != myNode {
+			mine, _ := h.Store.WriteSet(myRun, myNode)
+			return h.gate("PreToolUse", fmt.Sprintf(
+				"batten: write-set collision. %s belongs to another agent's write-set (%s); you are %s.\n"+
+					"Two agents must never write the same file — that is what makes the fan-out safe.\n"+
+					"Your write-set:\n  %s\n"+
+					"If this file genuinely belongs to you, the plan is wrong: fix the plan, do not cross the fence.",
+				rel, owner, orSelf(myNode), strings.Join(mine, "\n  "))), nil
+		}
+	}
+
+	// Cross-run collision (another session is working this file right now).
+	if cross, err := h.Store.WriteSetOwnerAcrossOpenRuns(h.Spec.Project, rel, myRun); err == nil && cross != nil {
+		return h.gate("PreToolUse", fmt.Sprintf(
+			"batten: %s is being worked by %s in another open session (run %s).\n"+
+				"Editing it now races that work. Coordinate, or use a worktree per unit so each has its own branch.",
+			rel, cross.UnitID, cross.RunID)), nil
+	}
+	return nil, nil
+}
+
+func orSelf(node string) string {
+	if node == "" {
+		return "this session's main loop"
+	}
+	return node
 }
 
 // ---------- graph ingestion ----------
@@ -450,6 +510,27 @@ func (h *Handler) sessionStart(in Input) (*Output, error) {
 		}
 		b.WriteString("\n")
 	}
+	// Tell THIS session which unit it's bound to — the whole point when two sessions share a
+	// repo. If it's bound, say so. If it's ambiguous, say THAT plainly, because an unbound
+	// session means the gates can't act, and a silent non-gate is worse than a loud one.
+	mine := h.activeUnit(in)
+	switch {
+	case mine != "":
+		fmt.Fprintf(&b, "\n→ this session is working **%s**.\n", mine)
+	default:
+		open, _ := h.Store.OpenRuns(h.Spec.Project)
+		if len(open) > 1 {
+			var names []string
+			for _, r := range open {
+				names = append(names, r.UnitID)
+			}
+			fmt.Fprintf(&b, "\n⚠ %d units are open (%s) and this session isn't bound to one.\n"+
+				"   The gates can't act until you bind it: run `batten phase <unit> <phase>`.\n"+
+				"   For parallel work, a worktree per unit keeps each on its own branch.\n",
+				len(open), strings.Join(names, ", "))
+		}
+	}
+
 	out := b.String()
 	if !strings.Contains(out, "- **") {
 		return nil, nil
@@ -459,32 +540,57 @@ func (h *Handler) sessionStart(in Input) (*Output, error) {
 
 // ---------- unit resolution ----------
 
-// activeUnit figures out which work item we are in: the current git branch usually
-// names it (feature/E7-US-034-slug), otherwise fall back to the single open run.
+// activeUnit figures out which work item THIS session is in. Priority, in order:
+//
+//  1. a run already bound to my session_id — decisive, and the only thing that makes two
+//     Claude Code sessions on one repo not collide.
+//  2. the git branch names a unit — and if so, adopt the session onto that run, so #1 wins
+//     from then on.
+//  3. exactly one open run with no owning session — use it, and adopt it.
+//  4. ambiguous (2+ open, none mine) — return "" (no gate), but the caller surfaces this so
+//     the silence is visible, not a mystery.
 func (h *Handler) activeUnit(in Input) string {
+	// 1. my session already owns a run.
+	if in.SessionID != "" {
+		if r, err := h.Store.RunBySession(h.Spec.Project, in.SessionID); err == nil {
+			return r.UnitID
+		}
+	}
+
+	// 2. the branch names a unit -> that's mine; bind the session to it.
 	dir := in.CWD
 	if dir == "" {
 		dir = h.Spec.Root
 	}
 	if br, err := gitBranch(dir); err == nil {
 		if u := h.Spec.MatchUnit(br); u != "" {
+			if in.SessionID != "" {
+				if r, err := h.Store.ActiveRun(h.Spec.Project, u); err == nil {
+					_ = h.Store.AdoptSession(r.RunID, in.SessionID)
+				}
+			}
 			return u
 		}
 	}
-	runs, err := h.Store.ListRuns(h.Spec.Project, 10)
+
+	// 3/4. fall back to open runs, distinguishing "one unowned" from "ambiguous".
+	open, err := h.Store.OpenRuns(h.Spec.Project)
 	if err != nil {
 		return ""
 	}
-	var open []string
-	for _, r := range runs {
-		if r.Status == "running" {
-			open = append(open, r.UnitID)
+	var unowned []store.Run
+	for _, r := range open {
+		if r.SessionID == "" {
+			unowned = append(unowned, r)
 		}
 	}
-	if len(open) == 1 {
-		return open[0] // unambiguous
+	if len(unowned) == 1 {
+		if in.SessionID != "" {
+			_ = h.Store.AdoptSession(unowned[0].RunID, in.SessionID)
+		}
+		return unowned[0].UnitID
 	}
-	return "" // ambiguous: refuse to guess, and therefore refuse to block
+	return "" // ambiguous: refuse to guess, and refuse to block (sessionStart makes this visible)
 }
 
 func gitBranch(dir string) (string, error) {

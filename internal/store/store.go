@@ -866,3 +866,65 @@ func (s *Store) MeasureByHeadroom(project string) ([]MeasureGroup, error) {
 	}
 	return out, rows.Err()
 }
+
+// ---------- multi-session: which session owns which run ----------
+
+// RunBySession returns the open run bound to a session, if any. This is the anchor of
+// multi-session correctness: when two Claude Code sessions work the same repo, each finds ITS
+// unit by its own session id rather than guessing from a shared branch.
+func (s *Store) RunBySession(project, sessionID string) (*Run, error) {
+	if sessionID == "" {
+		return nil, sql.ErrNoRows
+	}
+	row := s.db.QueryRow(`SELECT `+runCols+`
+	   FROM runs WHERE project=? AND session_id=? AND status='running'
+	   ORDER BY started_at DESC LIMIT 1`, project, sessionID)
+	return scanRun(row.Scan)
+}
+
+// OpenRuns lists every running run in a project — used to detect ambiguity (2+ open) and to
+// search write-sets across sessions.
+func (s *Store) OpenRuns(project string) ([]Run, error) {
+	rows, err := s.db.Query(`SELECT `+runCols+`
+	   FROM runs WHERE project=? AND status='running' ORDER BY started_at`, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Run
+	for rows.Next() {
+		r, err := scanRun(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *r)
+	}
+	return out, rows.Err()
+}
+
+// CrossOwner is a file's owner found in some OTHER open run of the project.
+type CrossOwner struct {
+	RunID  string
+	UnitID string
+	NodeID string
+}
+
+// WriteSetOwnerAcrossOpenRuns finds who owns a path in any open run other than excludeRun.
+// This is what defends the fan-out ACROSS sessions: session B editing a file that session A's
+// agent claimed gets stopped, with A's unit named. The per-run writesets PK only defends within
+// one run; this widens the check to the whole project's live work.
+func (s *Store) WriteSetOwnerAcrossOpenRuns(project, path, excludeRun string) (*CrossOwner, error) {
+	row := s.db.QueryRow(`SELECT w.run_id, r.unit_id, w.node_id
+	   FROM writesets w JOIN runs r ON r.run_id = w.run_id
+	   WHERE r.project=? AND r.status='running' AND w.path=? AND w.run_id != ?
+	   LIMIT 1`, project, normPath(path), excludeRun)
+	var c CrossOwner
+	err := row.Scan(&c.RunID, &c.UnitID, &c.NodeID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}

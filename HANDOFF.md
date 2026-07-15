@@ -4,7 +4,7 @@
 > Última actualización: 2026-07-14, inicio de la ejecución v2.
 
 ## Dónde retomar
-**Próximo paso**: P2 — vault automático (internal/export), engram en commands, graphify doctor, headroom measure.
+**Próximo paso**: P2.5 — multi-sesión (binding sesión↔run, write-set guard entre runs, ambigüedad visible).
 
 ## Fases y estado
 - [x] E0 — artefactos de dogfooding LISTOS. Arthur debe correr `docs/E0-DOGFOOD.md` (5 pasos) e
@@ -13,7 +13,9 @@
       **Pendiente de Arthur**: los 5 resultados del spike (solo #1 .exe y #2 agent_id cambian diseño).
 - [x] P1 — `batten init` real (internal/scan) + `enforcement: report`. Verificado en repo TS.
       Commit incluido. init deriva unidad/dominios/checks reales; report mode advierte en vez de bloquear.
-- [ ] P2 — integraciones (vault auto, engram, graphify, headroom measure)
+- [x] P2 — vault AUTO (internal/export, dispara en Stop hook + tras veredicto — verificado),
+      engram reinyectado en commands, graphify staleness en doctor, headroom measure real
+      (migración user_version + `batten measure`). Commit incluido.
 - [ ] P2.5 — multi-sesión (binding sesión↔run, guard entre runs)
 - [ ] P3 — distribución del binario
 - [ ] P4 — verificación end-to-end
