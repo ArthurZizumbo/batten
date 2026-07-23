@@ -118,14 +118,15 @@ func printUsage() {
 
 // ---------- wiring ----------
 
-// dbPath keeps state where it survives a plugin update. ${CLAUDE_PLUGIN_ROOT} is
-// wiped on every update — the docs say so explicitly — so state must never live there.
+// dbPath keeps state where it survives a plugin update AND where every process agrees it is.
+// Always ~/.batten, never ${CLAUDE_PLUGIN_DATA}: hook processes have that env var set but the
+// user's terminal does not, so an env-dependent path splits the state into two databases — the
+// TUI shows "no runs" while the hooks are happily writing runs somewhere else. Found live in
+// E0 (twice: first the tap, then this). ${CLAUDE_PLUGIN_ROOT} stays forbidden regardless: it
+// is wiped on every plugin update.
 func dbPath() string {
 	if d := os.Getenv("BATTEN_DB"); d != "" {
 		return d
-	}
-	if d := os.Getenv("CLAUDE_PLUGIN_DATA"); d != "" {
-		return filepath.Join(d, "batten.db")
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
