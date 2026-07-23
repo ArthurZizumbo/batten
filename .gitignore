@@ -5,3 +5,4 @@
 *.db-shm
 /.batten/
 graphify-out/cache/
+graphify-out/.graphify_*
