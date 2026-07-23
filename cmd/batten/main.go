@@ -395,10 +395,17 @@ func cmdRuns() error {
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "UNIT\tSTATUS\tPHASE\tVERDICT\tTOKENS\tIMPUTED")
+	verified := false
 	for _, r := range runs {
 		verdict := "—"
 		if v, err := st.LatestVerdict(r.RunID, ""); err == nil {
-			verdict = fmt.Sprintf("%s(%d)", v.Result, len(v.Evidence))
+			verdict = v.Result
+			// A batten-sourced verdict means the gate's checks actually ran; mark it
+			// so a verified pass is distinguishable from an agent claim at a glance.
+			if v.Source == "batten" {
+				verdict += "*"
+				verified = true
+			}
 		}
 		tok, usd := "—", "—"
 		if r.TokensSpent > 0 {
@@ -407,7 +414,13 @@ func cmdRuns() error {
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.UnitID, r.Status, r.Phase, verdict, tok, usd)
 	}
-	return w.Flush()
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	if verified {
+		fmt.Println("* batten-verified: the gate's checks were actually run")
+	}
+	return nil
 }
 
 func humanTokens(n int64) string {

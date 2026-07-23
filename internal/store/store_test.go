@@ -1,0 +1,147 @@
+package store
+
+import (
+	"errors"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+)
+
+// TestNormPathCaseFold pins the platform contract of normPath: slashes are always
+// normalized, and casing folds exactly where the default filesystem is case-insensitive
+// (Windows, macOS) while staying exact on Linux. The expectation is computed per
+// platform rather than skipped, so every CI leg asserts ITS OWN correct behavior.
+func TestNormPathCaseFold(t *testing.T) {
+	fold := runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+
+	expect := func(cleaned string) string {
+		if fold {
+			return strings.ToLower(cleaned)
+		}
+		return cleaned
+	}
+
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"mixed case stays or folds per GOOS", "ml/F.py", expect("ml/F.py")},
+		{"already lower is untouched everywhere", "ml/f.py", "ml/f.py"},
+		{"backslashes normalize to slashes", `Internal\Store\Store.go`, expect("Internal/Store/Store.go")},
+	}
+	for _, c := range cases {
+		if got := normPath(c.in); got != c.want {
+			t.Errorf("%s: normPath(%q) = %q, want %q (GOOS=%s)", c.name, c.in, got, c.want, runtime.GOOS)
+		}
+	}
+
+	// The fold decision itself, stated once: folded and unfolded inputs must collide
+	// exactly on the case-insensitive platforms and only there.
+	same := normPath("ml/F.py") == normPath("ml/f.py")
+	if same != fold {
+		t.Errorf("case collision on %s: got %v, want %v", runtime.GOOS, same, fold)
+	}
+
+	// filepath.Clean is part of the contract: ./a/../b canonicalizes before comparison.
+	if got, want := normPath("./ml/../ml/f.py"), "ml/f.py"; got != want {
+		t.Errorf("normPath cleaning: got %q, want %q", got, want)
+	}
+}
+
+// TestMigrationAddsVerdictSource opens the same database twice — migrations must
+// upgrade in place and be idempotent — then round-trips one verdict per source and
+// asserts LatestVerdictBySource separates the agent's claim from batten's evidence.
+func TestMigrationAddsVerdictSource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "batten.db")
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("first Open: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	s, err = Open(path) // second open replays migrate() against an already-migrated file
+	if err != nil {
+		t.Fatalf("second Open: %v", err)
+	}
+	defer s.Close()
+
+	r, err := s.EnsureRun("p", "U-1", "")
+	if err != nil {
+		t.Fatalf("EnsureRun: %v", err)
+	}
+
+	if err := s.SaveVerdict(Verdict{
+		RunID:    r.RunID,
+		Gate:     "verify",
+		CheckID:  "claim",
+		Result:   "ok",
+		Evidence: []string{"agent says so"},
+		// Source left empty on purpose: SaveVerdict must default it to "agent".
+	}, true); err != nil {
+		t.Fatalf("SaveVerdict (empty source): %v", err)
+	}
+	if err := s.SaveVerdict(Verdict{
+		RunID:    r.RunID,
+		Gate:     "verify",
+		CheckID:  "checked",
+		Result:   "ok",
+		Evidence: []string{"go test ./...: ok"},
+		Source:   "batten",
+	}, true); err != nil {
+		t.Fatalf("SaveVerdict (batten): %v", err)
+	}
+
+	agent, err := s.LatestVerdictBySource(r.RunID, "", "agent")
+	if err != nil {
+		t.Fatalf("LatestVerdictBySource(agent): %v", err)
+	}
+	if agent.Source != "agent" || agent.CheckID != "claim" {
+		t.Errorf("agent verdict: got source=%q check_id=%q, want source=%q check_id=%q",
+			agent.Source, agent.CheckID, "agent", "claim")
+	}
+	if len(agent.Evidence) != 1 || agent.Evidence[0] != "agent says so" {
+		t.Errorf("agent evidence round-trip: got %#v", agent.Evidence)
+	}
+
+	batten, err := s.LatestVerdictBySource(r.RunID, "", "batten")
+	if err != nil {
+		t.Fatalf("LatestVerdictBySource(batten): %v", err)
+	}
+	if batten.Source != "batten" || batten.CheckID != "checked" {
+		t.Errorf("batten verdict: got source=%q check_id=%q, want source=%q check_id=%q",
+			batten.Source, batten.CheckID, "batten", "checked")
+	}
+	if len(batten.Evidence) != 1 || batten.Evidence[0] != "go test ./...: ok" {
+		t.Errorf("batten evidence round-trip: got %#v", batten.Evidence)
+	}
+}
+
+// TestSaveVerdictRejectsOkWithoutEvidence is the golden rule under test: an "ok"
+// with an empty evidence[] must be refused with ErrNoEvidence when evidence is required.
+func TestSaveVerdictRejectsOkWithoutEvidence(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "batten.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	r, err := s.EnsureRun("p", "U-1", "")
+	if err != nil {
+		t.Fatalf("EnsureRun: %v", err)
+	}
+
+	err = s.SaveVerdict(Verdict{
+		RunID:   r.RunID,
+		Gate:    "verify",
+		CheckID: "empty-ok",
+		Result:  "ok",
+	}, true)
+	if !errors.Is(err, ErrNoEvidence) {
+		t.Fatalf("SaveVerdict(ok, no evidence, required): got %v, want ErrNoEvidence", err)
+	}
+}
