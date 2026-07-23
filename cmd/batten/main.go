@@ -528,9 +528,10 @@ func cmdCanvas(args []string) error {
 	// --out is the escape hatch for "just give me the canvas here"; without it, export.Run
 	// does the full thing (canvas + vault note + dashboards) — the same path the Stop hook fires.
 	if out != "" {
-		run, err := st.ActiveRun(sp.Project, unit)
+		// Latest, not active: exporting the DAG of a run you just closed is the normal case.
+		run, err := st.LatestRun(sp.Project, unit)
 		if err != nil {
-			return fmt.Errorf("no active run for %s", unit)
+			return fmt.Errorf("no run recorded for %s", unit)
 		}
 		nodes, _ := st.Nodes(run.RunID)
 		edges, _ := st.Edges(run.RunID)

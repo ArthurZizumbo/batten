@@ -629,12 +629,28 @@ func (u Usage) Tokens() int64 {
 // RecordUsage ingests parsed transcript rows. Idempotent by (request_id, run_id): a
 // transcript can be re-parsed any number of times without double-counting, which matters
 // because resumes and retries genuinely do replay lines.
+//
+// Time-fenced per run: a session transcript spans the session's WHOLE life, but a run that
+// adopts the session must only own the usage that happened while it was open. Without the
+// fence, a run opened in hour 30 of a long session inherits 30 hours of history — found live
+// in E0 when a fresh demo run showed 176M tokens it never spent.
 func (s *Store) RecordUsage(us []Usage) (added int, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, err
 	}
 	defer tx.Rollback()
+
+	startedAt := map[string]int64{}
+	fenceFor := func(runID string) int64 {
+		if v, ok := startedAt[runID]; ok {
+			return v
+		}
+		var v int64
+		_ = tx.QueryRow(`SELECT started_at FROM runs WHERE run_id=?`, runID).Scan(&v)
+		startedAt[runID] = v
+		return v
+	}
 
 	ins, err := tx.Prepare(`INSERT OR IGNORE INTO usage
 	  (request_id, run_id, node_id, agent_id, model, speed, ts,
@@ -647,6 +663,9 @@ func (s *Store) RecordUsage(us []Usage) (added int, err error) {
 
 	touched := map[string]bool{}
 	for _, u := range us {
+		if u.TS < fenceFor(u.RunID) {
+			continue // predates the run: this usage belongs to the session, not to this run
+		}
 		res, err := ins.Exec(u.RequestID, u.RunID, nullable(u.NodeID), nullable(u.AgentID),
 			u.Model, u.Speed, u.TS, u.InputTokens, u.OutputTokens,
 			u.CacheWrite5m, u.CacheWrite1h, u.CacheRead, u.WebSearches, u.ImputedUSD)
