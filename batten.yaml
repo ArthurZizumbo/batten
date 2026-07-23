@@ -54,6 +54,9 @@ budget:
 capabilities:
   memory:
     provider: engram
+  graph:
+    provider: graphify   # el grafo del CÓDIGO; los agentes preguntan antes de escribir
+    lessons: false       # engram es dueño de lo episódico
   obsidian:
     vault: 'C:/Users/arthu/OneDrive/Documents/Obsidian Vault'
     export: [runs, verdicts, canvas]

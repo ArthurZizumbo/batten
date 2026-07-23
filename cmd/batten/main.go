@@ -1214,10 +1214,9 @@ func cmdDoctor() error {
 			fmt.Println("  ⚠ graph.lessons is on; it overlaps engram's job. Prefer lessons: false")
 		}
 		graphStaleness(sp) // a stale code graph gives wrong answers silently; warn loudly
-		if sp.Capabilities.Obsidian.Vault != "" {
-			fmt.Printf("  → for one graph of all three memories, export graphify into the same vault:\n"+
-				"    graphify . --obsidian --obsidian-dir %s\n", expandHome(sp.Capabilities.Obsidian.Vault))
-		}
+		// (graphify dropped its --obsidian export in 0.9.x; the visual graph is now
+		// graphify-out/graph.html. Do not suggest flags that no longer exist.)
+		fmt.Println("  → visual graph: open graphify-out/graph.html in a browser")
 	}
 	if sp.Capabilities.Memory.Provider != "" && sp.Capabilities.Memory.Provider != "none" {
 		fmt.Printf("· memory: %s (via MCP; batten does not store episodic memory)\n",
