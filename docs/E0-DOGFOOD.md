@@ -59,7 +59,7 @@ batten tui
 ```
 Debe pintar la lista de runs + panel de detalle. `j/k` mueve, `r` refresca, `q` sale.
 
-**Resultado:** _______________
+**Resultado:** ✓ (2026-07-23) TUI pinta lista + detalle con datos reales: TASK-1 running/build, anchor, barra de tokens 0/5.0M, y el panel rojo NO VERDICT / commit will be DENIED. j/k/r/q funcionan.
 
 ## 5. statusline en tu terminal real
 
@@ -68,7 +68,7 @@ batten statusline --install
 ```
 Reinicia la sesión. El status line debe mostrar la unidad activa + cuota (si eres Max/Pro).
 
-**Resultado:** _______________
+**Resultado:** ✓ (2026-07-23) `statusline --install` escribió .claude/settings.json y reporta que muestrea la cuota. (Hallazgo aparte del arranque: hooks.json declaraba scripts/bootstrap.sh que no viajaba dentro del paquete — cada SessionStart imprimía 'No such file or directory'. Corregido: el build lo copia adentro.)
 
 ---
 
