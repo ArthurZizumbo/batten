@@ -358,6 +358,11 @@ func cmdPhase(args []string) error {
 	if sp.Capabilities.CompressionEnabled() && sp.Capabilities.Compression.Measure {
 		_ = st.SetHeadroom(run.RunID, headroomAlive())
 	}
+	// Same treatment for the code graph: does having one actually cut orientation cost?
+	if sp.Capabilities.GraphEnabled() {
+		_, fresh := codeGraphFresh(sp)
+		_ = st.SetCodeGraph(run.RunID, fresh)
+	}
 	_ = st.AddNode(store.Node{
 		NodeID: "p-" + phaseID, RunID: run.RunID, Kind: "phase", Label: phaseID, Status: "running",
 	})
@@ -579,39 +584,46 @@ func cmdMeasure() error {
 		fmt.Println()
 	}
 
-	groups, err := st.MeasureByHeadroom(sp.Project)
-	if err != nil {
-		return err
+	if groups, err := st.MeasureByHeadroom(sp.Project); err == nil {
+		printFlagComparison(groups, "headroom")
 	}
+	if groups, err := st.MeasureByCodeGraph(sp.Project); err == nil {
+		printFlagComparison(groups, "code graph")
+	}
+	return nil
+}
+
+// printFlagComparison renders one with/without comparison (headroom, code graph). It refuses
+// to present a small sample as a conclusion: units differ in size, so the noise swamps the
+// signal below ~3 runs per side.
+func printFlagComparison(groups []store.MeasureGroup, name string) {
 	if len(groups) == 0 {
-		return nil
+		return
 	}
-	fmt.Println("headroom effect on THIS project's runs (imputed, not billed):")
+	fmt.Printf("%s effect on THIS project's runs (imputed, not billed):\n", name)
 	var with, without *store.MeasureGroup
 	for i := range groups {
 		g := groups[i]
 		note := ""
-		// Never present a 2-run sample as a conclusion: units differ in size, so the noise
-		// swamps the signal. Say "insufficient" rather than imply a finding.
 		if g.Runs < 3 {
 			note = "  (insufficient — need ≥3 runs to compare meaningfully)"
 		}
-		fmt.Printf("  %-18s %d run(s): %s tokens, $%.2f imputed (mean)%s\n",
+		fmt.Printf("  %-20s %d run(s): %s tokens, $%.2f imputed (mean)%s\n",
 			g.Label, g.Runs, humanTokens(int64(g.MeanTokens)), g.MeanUSD, note)
-		if g.Label == "with headroom" {
+		if g.Label == "with "+name {
 			with = &groups[i]
 		}
-		if g.Label == "without headroom" {
+		if g.Label == "without "+name {
 			without = &groups[i]
 		}
 	}
 	if with != nil && without != nil && with.Runs >= 3 && without.Runs >= 3 && without.MeanTokens > 0 {
 		delta := (1 - with.MeanTokens/without.MeanTokens) * 100
-		fmt.Printf("\n  → with headroom used %.1f%% %s tokens on average\n",
-			abs(delta), map[bool]string{true: "fewer", false: "more"}[delta >= 0])
+		fmt.Printf("\n  → with %s used %.1f%% %s tokens on average\n",
+			name, abs(delta), map[bool]string{true: "fewer", false: "more"}[delta >= 0])
 		fmt.Println("  (still noisy — runs are not identical work; treat as directional, not exact)")
 	}
-	return nil
+	fmt.Println()
 }
 
 func abs(f float64) float64 {
@@ -1305,23 +1317,33 @@ func have(bin string) bool {
 
 // graphStaleness compares the code graph's age against HEAD. A graph N commits behind answers
 // "what already exists?" with yesterday's code — a silent way to mislead the plan phase.
-func graphStaleness(sp *spec.Spec) {
+// codeGraphFresh reports whether graphify-out/graph.json exists and is no more than an hour
+// behind HEAD. Used by doctor (to warn) and by run-open tagging (to measure the graph's
+// effect on run cost, headroom-style).
+func codeGraphFresh(sp *spec.Spec) (exists, fresh bool) {
 	gj := filepath.Join(sp.Root, "graphify-out", "graph.json")
 	fi, err := os.Stat(gj)
 	if err != nil {
-		fmt.Println("  ⚠ no graphify-out/graph.json yet — run: graphify .")
-		return
+		return false, false
 	}
 	out, err := exec.Command("git", "-C", sp.Root, "log", "-1", "--format=%ct").Output()
 	if err != nil {
-		return
+		return true, true // no git history to compare against; existing graph counts as fresh
 	}
 	var headUnix int64
 	fmt.Sscanf(strings.TrimSpace(string(out)), "%d", &headUnix)
-	if headUnix > fi.ModTime().Unix()+3600 { // more than an hour behind HEAD
+	return true, headUnix <= fi.ModTime().Unix()+3600
+}
+
+func graphStaleness(sp *spec.Spec) {
+	exists, fresh := codeGraphFresh(sp)
+	switch {
+	case !exists:
+		fmt.Println("  ⚠ no graphify-out/graph.json yet — run: graphify .")
+	case !fresh:
 		fmt.Println("  ⚠ the code graph is older than HEAD — it may answer with stale code.")
 		fmt.Println("    refresh: graphify . --update   (or once: graphify hook install)")
-	} else {
+	default:
 		fmt.Println("  ✓ code graph is current")
 	}
 }

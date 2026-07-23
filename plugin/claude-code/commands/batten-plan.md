@@ -126,3 +126,11 @@ Zero yes → `mechanical`; one → `moderate`; two or three → `complex`. Map e
 `models.tiers`, and note the tier + model beside each sub-task's write-set in the plan artifact.
 A domain with its own `model:` overrides the tier. Phases in `models.phases` (usually plan and
 verify) always use their pinned model regardless of tier.
+
+## God nodes raise the tier (if a code graph exists)
+
+If `graphify-out/GRAPH_REPORT.md` exists, read its God Nodes section before assigning tiers.
+A sub-task whose write-set touches a god node (one of the most-connected symbols in the code
+graph) is NEVER `mechanical`, whatever the three questions said: its blast radius is the whole
+graph, so bump it one tier and mention which god node triggered the bump in the plan artifact.
+Cheap check, expensive mistake avoided — a "rename" inside a god node is not a rename.
