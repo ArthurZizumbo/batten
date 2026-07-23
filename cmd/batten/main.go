@@ -820,12 +820,17 @@ func indent(s string) string {
 // tapPath is where hooks dump their raw payload while a tap is active. The whole point is
 // E0's load-bearing unknown: does a PreToolUse fired INSIDE a subagent carry agent_id?
 // We answer it by capturing the real thing rather than guessing.
+//
+// Always ~/.batten, NEVER ${CLAUDE_PLUGIN_DATA}: the tap is toggled from the user's terminal
+// (where that env var is unset) but written by hook processes (where it is set). If the path
+// depended on the env, the two sides would disagree and the tap would silently capture nothing
+// — which is exactly the bug this comment is the tombstone of.
 func tapPath() string {
-	dir := os.Getenv("CLAUDE_PLUGIN_DATA")
-	if dir == "" {
-		dir = filepath.Dir(dbPath())
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "hook-taps.jsonl"
 	}
-	return filepath.Join(dir, "hook-taps.jsonl")
+	return filepath.Join(home, ".batten", "hook-taps.jsonl")
 }
 
 func tapFlagPath() string { return tapPath() + ".on" }

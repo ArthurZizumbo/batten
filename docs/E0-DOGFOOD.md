@@ -24,7 +24,7 @@ o `batten doctor` responde, el hook arrancó. Si NO:
   `"${CLAUDE_PLUGIN_ROOT}/bin/batten.exe"`, reinstalar, reprobar.
 - si aún no: pasar a shell-form (estilo engram, corre bajo Git Bash). Anotar cuál funcionó.
 
-**Resultado:** _______________
+**Resultado:** ✓ (2026-07-23) El exec-form `${CLAUDE_PLUGIN_ROOT}/bin/batten` SIN `.exe` resolvió en Windows 11 — evento SessionStart en la DB del plugin al primer arranque. No hubo que tocar hooks.json.
 
 ## 2. ¿`PreToolUse` dentro de un subagente trae `agent_id`?  (LA incógnita crítica)
 
@@ -43,14 +43,14 @@ Esto instala temporalmente un hook que vuelca cada payload de `PreToolUse` a
 - Si NO → el guard cae a modo advisory automáticamente (ya implementado en P2.5): en vez de
   `deny` emite `additionalContext` con la advertencia de colisión. Documentar la limitación.
 
-**Resultado:** _______________
+**Resultado:** ✓ (2026-07-23) SÍ trae `agent_id`. Capturado real: Edit/Write dentro de un subagente llegan con `agent_id` (coincide con el id que devuelve la Agent tool), `agent_type`, `session_id`, `tool_use_id`. SubagentStart/Stop también disparan. El write-set guard opera en modo deny completo. (Fix de paso: el tap ahora vive SIEMPRE en ~/.batten — antes el flag y el hook divergían según CLAUDE_PLUGIN_DATA y el tap capturaba nada.)
 
 ## 3. ¿El servidor MCP responde a un cliente real?
 
 Tras instalar, en la sesión: las tools `batten_runs`, `batten_verdict_status`, `batten_spec`,
 etc. deben aparecer. Pídele al agente que llame `batten_verdict_status` para una unidad.
 
-**Resultado:** _______________
+**Resultado:** ✓ (2026-07-23) `/mcp` lista el server batten con las 6 tools; los slash commands `/batten:*` autocompletan; los skills aparecen en la sesión.
 
 ## 4. TUI interactiva
 
