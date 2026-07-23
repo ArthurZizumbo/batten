@@ -429,9 +429,11 @@ func cmdShow(args []string) error {
 		return err
 	}
 	defer st.Close()
-	run, err := st.ActiveRun(sp.Project, args[0])
+	// Latest run regardless of status: the run you just closed is the one you most
+	// want to inspect, and "no active run" right after a clean close reads like a bug.
+	run, err := st.LatestRun(sp.Project, args[0])
 	if err != nil {
-		return fmt.Errorf("no active run for %s", args[0])
+		return fmt.Errorf("no run recorded for %s", args[0])
 	}
 	fmt.Printf("%s  run=%s  status=%s  phase=%s  base=%s\n",
 		run.UnitID, run.RunID, run.Status, run.Phase, run.BaseSHA)

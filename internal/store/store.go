@@ -297,6 +297,15 @@ func (s *Store) Run(runID string) (*Run, error) {
 	return scanRun(row.Scan)
 }
 
+// LatestRun is ActiveRun without the status filter: the unit's most recent run, open or not.
+// Inspection commands want this — a run you just closed is the one you most want to look at.
+func (s *Store) LatestRun(project, unitID string) (*Run, error) {
+	row := s.db.QueryRow(`SELECT `+runCols+`
+	   FROM runs WHERE project=? AND unit_id=? ORDER BY started_at DESC LIMIT 1`,
+		project, unitID)
+	return scanRun(row.Scan)
+}
+
 func scanRun(scan func(...any) error) (*Run, error) {
 	var r Run
 	err := scan(&r.RunID, &r.Project, &r.UnitID, &r.SessionID, &r.Phase, &r.Status,
