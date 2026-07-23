@@ -55,4 +55,5 @@ capabilities:
   memory:
     provider: engram
   obsidian:
-    vault: ''   # set to a real vault path to see run notes appear
+    vault: 'C:/Users/arthu/OneDrive/Documents/Obsidian Vault'
+    export: [runs, verdicts, canvas]

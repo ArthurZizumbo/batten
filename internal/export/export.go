@@ -41,7 +41,9 @@ type Result struct {
 // canvas in .batten/. Best-effort by contract: callers on the hook path must ignore the error,
 // because export must never be able to break a session.
 func Run(sp *spec.Spec, st *store.Store, unitID string) (*Result, error) {
-	run, err := st.ActiveRun(sp.Project, unitID)
+	// Latest, not active: the Stop hook exports AFTER work concludes, and a just-closed run
+	// is exactly the one whose note and canvas the vault should reflect.
+	run, err := st.LatestRun(sp.Project, unitID)
 	if err != nil {
 		return nil, err
 	}
