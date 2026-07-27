@@ -1199,8 +1199,15 @@ func cmdDoctor() error {
 		path, sp.Project, sp.Unit.Name, len(sp.Phases), len(sp.Domains))
 
 	if c, ok := sp.ClosingPhase(); ok {
-		fmt.Printf("✓ close gate: phase %q requires verdict %q on gate %q\n",
-			c.ID, c.RequiresVerdict, c.Gate)
+		// An empty Gate is not a nameless gate — the store reads it as "any gate"
+		// (`?='' OR gate=?`). Printing `on gate ""` made a real, working config look like a
+		// misconfiguration.
+		gate := "any gate"
+		if c.Gate != "" {
+			gate = fmt.Sprintf("gate %q", c.Gate)
+		}
+		fmt.Printf("✓ close gate: phase %q requires verdict %q on %s\n",
+			c.ID, c.RequiresVerdict, gate)
 	} else {
 		fmt.Println("⚠ no phase sets requires_verdict — nothing gates a commit")
 	}

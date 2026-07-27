@@ -58,5 +58,7 @@ capabilities:
     provider: graphify   # el grafo del CÓDIGO; los agentes preguntan antes de escribir
     lessons: false       # engram es dueño de lo episódico
   obsidian:
-    vault: 'C:/Users/arthu/OneDrive/Documents/Obsidian Vault'
+    # A leading ~ expands to your home directory. Absolute paths work too, but this file is
+    # public — an absolute path here would publish a username and someone's folder layout.
+    vault: '~/OneDrive/Documents/Obsidian Vault'
     export: [runs, verdicts, canvas]
