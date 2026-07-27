@@ -1,0 +1,85 @@
+# A two-domain TypeScript app — the middle depth.
+#
+# This is where most repos land: an API and a web client, each with its own checks and its own
+# rules, worked on in parallel. The two domains are the FAN-OUT AXES: when a work item touches
+# both, batten launches one subagent per domain and fences each to a disjoint write-set, so they
+# cannot collide on the same file.
+#
+# Everything project-specific here is data. The engine has no idea what pnpm or vitest are.
+# yaml-language-server: $schema=../../batten.schema.json
+
+version: 1
+project: acme
+
+unit:
+  name: TCK
+  pattern: 'TCK-\d+'
+  plan: docs/backlog.md      # where the work items are written down
+  locator: '## {id}'         # how to find one inside that file
+
+artifacts:
+  planning: docs/planning/{id}.md
+  resolved: docs/resolved/{id}.md
+  # {id} is required in these paths. Without it every unit overwrites the same file.
+
+phases:
+  - id: plan
+    graph_query: true        # ask the code graph "what already exists?" before designing.
+                             # No graph installed? The phase greps instead and says so.
+  - id: build
+    fanout: true             # one subagent per domain, each with a disjoint write-set
+    reads: [planning]
+    anchor: git_sha
+  - id: verify
+    gate: qa
+    diff_from: anchor
+  - id: close
+    requires_verdict: ok
+
+domains:
+  api:
+    path: server/
+    rules: server/AGENTS.md  # the agent reads this FIRST, before touching anything
+    check: ['pnpm --filter server lint', 'pnpm --filter server test']
+    coverage: 70
+    invariants:
+      # These ride VERBATIM into every agent's prompt. Each one is a rule a reviewer would
+      # catch and a distracted agent would break.
+      - every handler validates its input with zod before touching the db
+      - business logic lives in services/, never in routes/
+      - no raw SQL outside repositories/
+  web:
+    path: client/
+    rules: client/AGENTS.md
+    model: sonnet            # per-domain override: UI work rarely needs the top tier
+    check: ['pnpm --filter client lint', 'pnpm --filter client typecheck']
+    invariants:
+      - server state goes through the query client, never useEffect + fetch
+      - no color literals; use the design tokens
+
+gates:
+  qa:
+    checks: ['pnpm lint', 'pnpm test', 'pnpm build']
+    verdict: required
+    evidence: required
+
+provenance:
+  format: '{id} @ {git_sha7}'
+
+budget:
+  # On a subscription the marginal cost of a token is zero, so "dollars" is the wrong ceiling.
+  # These three are honest. Any one batten cannot measure reports NOT MEASURABLE, never zero.
+  tokens_per_run: 2_000_000
+  imputed_usd_per_run: 5.00
+  max_iterations: 3
+  on_exceed: warn
+
+capabilities:
+  # Every one of these is optional and degrades on its own. Declare only what is installed —
+  # a declared-but-absent capability is noise in `batten doctor`.
+  graph:
+    provider: graphify
+  memory:
+    provider: engram
+
+enforcement: report

@@ -203,17 +203,23 @@ is worse than no budget at all, because it will be believed.
 /plugin install batten
 ```
 
-The binary ships **inside** the plugin, at `bin/batten`. Claude Code adds a plugin's `bin/` to PATH
-automatically, so the hooks and the MCP server resolve it with no out-of-band install step.
+**The binary arrives on its own.** A `SessionStart` hook runs `bootstrap.sh`, which fetches the
+static binary for your platform from the GitHub Release into `${CLAUDE_PLUGIN_DATA}/bin` — a
+location that survives plugin updates. A dev build (`scripts/build-plugin.sh`) puts it in the
+plugin's own `bin/` instead, and bootstrap sees it and exits. Either way the hooks and the MCP
+server resolve it with no out-of-band install step. The repo itself ships `bin/` **empty**;
+committed binaries bloat a repo and go stale.
 
-This is worth one sentence of explanation, because the alternative is a real and common bug: a
-plugin whose `.mcp.json` invokes a **bare command name**, expecting the user to have installed the
-binary separately via brew or `go install`. When they haven't, the MCP server fails *silently*, and
-the hooks fail *silently*, and the gate that was supposed to protect you simply isn't there. batten
-ships the binary and points at it absolutely (`${CLAUDE_PLUGIN_ROOT}/bin/batten`).
+This is worth explaining, because the alternative is a real and common bug: a plugin whose
+`.mcp.json` invokes a **bare command name**, expecting you to have installed the binary separately
+via brew or `go install`. When you haven't, the MCP server fails *silently*, the hooks fail
+*silently*, and the gate that was supposed to protect you simply isn't there. batten points at the
+binary absolutely (`${CLAUDE_PLUGIN_ROOT}/bin/batten`) and, if the download fails, says so and
+no-ops rather than pretending to guard you.
 
 The hooks are **exec form** — the binary reads the hook JSON on stdin. No `bash`, no `jq`, no
-`curl`. **Windows is a first-class target**, not an afterthought.
+`curl`. **Windows is a first-class target**, not an afterthought: exec-form resolution without the
+`.exe` extension is verified working on Windows 11.
 
 Then, in your repo:
 
@@ -223,8 +229,14 @@ $ batten init --from docs/workflow.md      # ...or migrates a workflow you alrea
 $ batten doctor                            # validates the spec; reports which capabilities are live
 ```
 
+`init` derives what can be honestly derived — your unit pattern from branch names, your domains from
+the layout, your `check` commands **verbatim** from your build files — and leaves the rest as
+explicit TODOs rather than guessing. It refuses to overwrite a `batten.yaml` that already exists.
+
 `--from` matters more than it looks: a spec is only "general" if migrating to it is cheap. If
 adopting batten costs an afternoon, nobody adopts it.
+
+Worked specs at three depths, from 30 lines to 220, are in [`examples/`](examples/).
 
 ## The commands
 
@@ -304,10 +316,24 @@ absent or broken. A missing optional dependency should cost you a fallback, neve
 
 ## Status
 
-Pre-1.0. The gates are verified working — a commit without cited evidence is denied, and a subagent
-writing another agent's file is denied — and the surfaces around them (statusline, TUI, MCP, vault
-export) are landing. The transcript format batten reads for token accounting is **not a public API**
-and can change without notice; if parsing breaks, batten reports the count as unavailable rather than
-guessing at it.
+**Pre-1.0, and dogfooded.** batten is installed in this repo and governs its own development: the
+last work item here was planned, fanned out to two subagents with disjoint write-sets, verified, and
+closed through batten's own gate. Using it that way is what found the last seven bugs.
+
+The gates are verified working — a commit without cited evidence is denied, a subagent writing
+another agent's file is denied — as is the part that was an open design risk: Windows hook
+resolution, and whether `agent_id` reaches `PreToolUse` at all (the write-set guard hangs off that
+field, and degrades to advisory *out loud* when it is absent).
+
+What has **not** happened yet, stated plainly: no release has been tagged, and batten has never been
+installed on a repo other than this one. Neutrality is verified across two very different specs, but
+the five-step install into a project already mid-development is still the firing test.
+
+The transcript format batten reads for token accounting is **not a public API** and can change
+without notice; if parsing breaks, batten reports the count as unavailable rather than guessing.
+
+The full inventory — what is proven, what is merely built, what is missing, and the naming decisions
+still open — is in [ROADMAP.md](ROADMAP.md). What has landed so far is in
+[CHANGELOG.md](CHANGELOG.md).
 
 MIT.

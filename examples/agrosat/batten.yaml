@@ -1,9 +1,10 @@
-# AgroSatCopilot — el primer adapter.
+# AgroSatCopilot — el primer adapter, y un ejemplo REAL: así se ve un batten.yaml
+# de un proyecto en desarrollo activo, no una plantilla.
 #
-# Esto ES `prompts_optimizers_v2.local.md` (700 líneas de prosa) reducido a su parte
-# ejecutable. Lo que quedó fuera no se perdió: se quedó en prosa porque no es ejecutable
-# (los prompts largos, las explicaciones, los ejemplos). La regla es §10 del DESIGN:
-# si no lo puede hacer cumplir un hook o ejecutar un comando, no va aquí.
+# Esto es un documento de proceso de ~700 líneas de prosa reducido a su parte ejecutable.
+# Lo que quedó fuera no se perdió: se quedó en prosa porque no es ejecutable (los prompts
+# largos, las explicaciones, los ejemplos). La regla es §10 del DESIGN: si no lo puede
+# hacer cumplir un hook o ejecutar un comando, no va aquí.
 #
 # El motor no sabe qué es FarSLIP, ni una H100, ni una US. Todo eso es dato.
 

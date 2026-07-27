@@ -1,0 +1,35 @@
+# The smallest spec that still earns its keep.
+#
+# No domains, no fan-out, no budget, no capabilities. Just: name your work items, name your
+# phases, and put ONE hard gate in front of the commit. That single gate is the whole product —
+# everything else in batten exists to serve it.
+#
+# Start here. Add a section only when you feel its absence.
+# yaml-language-server: $schema=../../batten.schema.json
+
+version: 1
+project: my-app
+
+unit:
+  name: TASK              # the work-item noun you already use: TASK, US, TICKET, ISSUE...
+  pattern: 'TASK-\d+'     # `batten init` derives this from your branch names
+
+phases:
+  - id: build
+    anchor: git_sha       # record the base SHA. Every later phase diffs from HERE, never HEAD~N,
+                          # so a phase cannot be fooled by commits that landed in between.
+  - id: verify
+    gate: qa
+    diff_from: anchor
+  - id: close
+    requires_verdict: ok  # THE GATE. A hook denies `git commit` without a verdict.
+
+gates:
+  qa:
+    checks: ['npm test']  # take these verbatim from your own build files. Never invent one.
+    verdict: required
+    evidence: required    # an "ok" with an empty evidence[] is refused by the binary itself.
+                          # This line is the reason the file exists — do not soften it.
+
+# Gates warn instead of denying while you get used to them. Flip to `enforce` deliberately.
+enforcement: report
