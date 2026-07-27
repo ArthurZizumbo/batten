@@ -9,6 +9,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 ## [Unreleased]
 
 ### Added
+- **CI, which did not exist.** `release.yml` fired on a tag and went straight to building
+  binaries, so a tag could publish over a red suite. There is now a `ci.yml` on every push and
+  pull request, and the release will not start GoReleaser until it passes. The matrix is Linux,
+  macOS and Windows because batten branches on `runtime.GOOS` in three places that decide whether
+  a guard holds — most of all `store.normPath`, which case-folds where the filesystem is
+  case-insensitive so an agent cannot cross the write-set fence by changing a letter's case.
+  CI also pins the contracts that had already drifted: the plugin's generated copy of
+  `bootstrap.sh` matching its source, the download name matching the archive template, every
+  example validating against the schema *and* loading in the real parser, plus `gofmt` and
+  `go mod tidy`.
+- **`LICENSE`.** The README, the plugin manifest and the release archive all claimed MIT; without
+  the text the default is all-rights-reserved.
+- **`.gitattributes`.** A `bootstrap.sh` committed with CRLF has a shebang of
+  `#!/usr/bin/env bash\r`, which fails on every non-Windows machine with "bad interpreter" —
+  binary never downloaded, hooks silently no-opping. It worked only because one machine happened
+  to have `core.autocrlf=true`. The repo decides now, not each developer's config.
+- Tests for `internal/spec` (0% → 94.9%), `internal/canvas` (0% → 86%), `internal/hooks` and
+  `internal/scan`, all of which had none.
+
+### Changed
+- **The repo is releasable.** Everything points at `ArthurZizumbo/batten` — the Go module path
+  and every import, both bootstrap scripts, the plugin manifest, the marketplace entry, the schema
+  `$id`, the install docs. The module path is the expensive one to change after publishing.
+
+### Fixed
+- **Three things that would have broken the first release**, found by reading the release path end
+  to end rather than running it. GoReleaser built `batten_0.1.0_linux_amd64.tar.gz` while
+  `bootstrap.sh` fetched `batten_linux_amd64.tar.gz` from `releases/latest/download` — every
+  platform would have 404'd, since that endpoint can only resolve a name predictable without the
+  tag. Windows got a `.zip` while bootstrap ran `tar -xzf`, and bootstrap runs under Git Bash,
+  whose tar does not read zip. And `bootstrap.sh` printed "installed" whether or not the move
+  succeeded; it now verifies each step, runs the binary once, and on failure removes the
+  half-installed file and says plainly that nothing is being gated.
+- `docs/INSTALL.md` said state lives in `${CLAUDE_PLUGIN_DATA}/batten.db` — the exact divergence
+  that caused two E0 bugs, since hook processes have that variable and the user's terminal does
+  not, splitting state across two databases. It is `~/.batten`, always.
 - **`batten init` reads the process a repo already has.** The scan now reports `harness[]` (agent
   rules per directory, `CONTRIBUTING.md`, other editor harnesses, build files, prose workflow docs,
   an existing spec), `stack[]` (languages and tooling from marker files that exist — package

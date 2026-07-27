@@ -1,0 +1,38 @@
+# Line endings are a correctness issue here, not a style one.
+#
+# This repo is authored on Windows and its shell scripts run on Linux and macOS. A bootstrap.sh
+# committed with CRLF has a shebang of `#!/usr/bin/env bash\r`, and every non-Windows user gets
+# "bad interpreter" on first run — with the binary never downloaded and the hooks silently
+# no-opping. Today that does not happen only because this machine has core.autocrlf=true; a
+# contributor without it would break the release and see nothing wrong locally.
+#
+# So the repo decides, not each developer's git config.
+
+* text=auto
+
+# Must be LF in the repo AND in the working tree: these are executed, not just read.
+*.sh        text eol=lf
+*.bash      text eol=lf
+
+# Go tooling and CI expect LF; gofmt output is LF and the `gofmt -l` gate would fight CRLF.
+*.go        text eol=lf
+go.mod      text eol=lf
+go.sum      text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.json      text eol=lf
+
+# PowerShell is the mirror case: it is run by Windows, and CRLF is its native form.
+*.ps1       text eol=crlf
+
+# Binary, never touched.
+*.png       binary
+*.jpg       binary
+*.pdf       binary
+*.exe       binary
+
+# graphify's generated artifacts are committed but not reviewed — keep them out of diffs so a
+# rebuild does not bury a real change under thousands of lines.
+graphify-out/graph.json     -diff linguist-generated
+graphify-out/graph.html     -diff linguist-generated
+graphify-out/manifest.json  -diff linguist-generated
