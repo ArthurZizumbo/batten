@@ -95,6 +95,23 @@ jobs:
             bash -n "$f" || exit 1
           done
 
+      # This repo is public and was authored on one machine. Absolute home paths and private
+      # working files have both reached git here before; four private files had to be purged
+      # from the whole history once. Catch the next one at the pull request instead.
+      - name: no personal paths or private files are tracked
+        run: |
+          fail=0
+          if git grep -In -e 'C:[/\\]Users[/\\][a-zA-Z0-9._-]*[/\\]' -e '/home/[a-zA-Z0-9._-]*/' \
+               -- . ':!go.sum' ':!graphify-out' ':!.github/workflows/ci.yml'; then
+            echo "^ an absolute home path is tracked; use ~ or a placeholder"
+            fail=1
+          fi
+          if git ls-files | grep -E '\.(local\.md|pdf)$|^[^/]*\.canvas$'; then
+            echo "^ private working material is tracked; it belongs in .gitignore"
+            fail=1
+          fi
+          exit $fail
+
       # The download name in bootstrap.sh and the archive name GoReleaser builds are one contract
       # written in two files. When they drifted, every platform's first-run install 404'd.
       - name: bootstrap and goreleaser agree on the archive name

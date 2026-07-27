@@ -1364,13 +1364,53 @@ func graphStaleness(sp *spec.Spec) {
 	exists, fresh := codeGraphFresh(sp)
 	switch {
 	case !exists:
-		fmt.Println("  ⚠ no graphify-out/graph.json yet — run: graphify .")
+		fmt.Println("  ⚠ no graphify-out/graph.json yet — run: graphify . --code-only")
 	case !fresh:
 		fmt.Println("  ⚠ the code graph is older than HEAD — it may answer with stale code.")
-		fmt.Println("    refresh: graphify . --update   (or once: graphify hook install)")
+		// `graphify update .`, NOT `graphify . --update`: the latter is not a flag, so graphify
+		// silently ignores it and runs a FULL extraction, which then fails on a missing LLM API
+		// key. Suggesting a command that walks the user into an error is worse than suggesting
+		// nothing. (This is the second time a hint here outlived graphify's CLI; the first was
+		// --obsidian, dropped in 0.9.x.)
+		fmt.Println("    refresh: graphify update .   (re-extracts code only, no API key needed)")
 	default:
 		fmt.Println("  ✓ code graph is current")
 	}
+	graphHooks(sp)
+}
+
+// graphHooks reports graphify's git integration, which matters more here than it looks.
+//
+// graph.json is committed on purpose — it is a shared artifact, the whole point of a team graph.
+// It is also a megabyte of generated JSON, so two branches that both touch code produce a
+// guaranteed, unmergeable conflict. `graphify hook install` registers a union merge driver for
+// exactly that, and adds post-commit/post-checkout hooks so the graph does not silently rot
+// between rebuilds. A repo that commits the graph without the merge driver has a conflict
+// waiting for its second contributor.
+func graphHooks(sp *spec.Spec) {
+	out, err := exec.Command("graphify", "hook", "status").Output()
+	if err != nil {
+		return // graphify absent or too old for `hook status`: say nothing rather than guess
+	}
+	s := string(out)
+	missingDriver := strings.Contains(s, "merge driver: not registered")
+	missingHooks := strings.Contains(s, "post-commit: not installed")
+	if !missingDriver && !missingHooks {
+		fmt.Println("  ✓ graphify git hooks installed (auto-rebuild + graph.json merge driver)")
+		return
+	}
+	if missingDriver && trackedInGit(sp.Root, filepath.Join("graphify-out", "graph.json")) {
+		fmt.Println("  ⚠ graph.json is committed but graphify's merge driver is NOT registered —")
+		fmt.Println("    two branches touching code will conflict on it. Fix once: graphify hook install")
+	} else if missingHooks {
+		fmt.Println("  → auto-rebuild the graph on commit: graphify hook install")
+	}
+}
+
+// trackedInGit reports whether git has rel under version control in root.
+func trackedInGit(root, rel string) bool {
+	cmd := exec.Command("git", "-C", root, "ls-files", "--error-unmatch", filepath.ToSlash(rel))
+	return cmd.Run() == nil
 }
 
 // headroomAlive probes the local compression proxy without blocking doctor for long.

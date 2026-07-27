@@ -12,7 +12,7 @@ powershell -File scripts/build-plugin.ps1
 ```
 Deja `plugin/claude-code/bin/batten.exe` fresco. Luego, en Claude Code:
 ```
-/plugin marketplace add C:/Users/arthu/Proyectos/Public/LoopWorkFlow
+/plugin marketplace add <ruta-absoluta-a-este-repo>
 /plugin install batten@batten
 ```
 

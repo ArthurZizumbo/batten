@@ -129,9 +129,9 @@ None of these are settled.
   That is the most opinionated thing in the whole product, and it is the least enforceable.
 - **Should `batten.yaml` support per-domain budgets?** An ML domain and a docs domain do not deserve
   the same ceiling. Against: every knob added to the spec is a knob someone must maintain.
-- **Should the dogfood spec live in the repo at all?** `batten.yaml` at the root carries a hardcoded
-  personal vault path (`C:/Users/arthu/...`). It is a real example, which is useful, and it is
-  someone's machine, which is not.
+- **Should the dogfood spec live in the repo at all?** `batten.yaml` at the root declares a vault
+  under `~`, which is portable enough to publish, but it is still one person's setup presented as
+  the project's. It is a real example, which is useful, and it is someone's machine, which is not.
 
 ---
 

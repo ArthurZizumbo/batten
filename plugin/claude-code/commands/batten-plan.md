@@ -129,8 +129,23 @@ verify) always use their pinned model regardless of tier.
 
 ## God nodes raise the tier (if a code graph exists)
 
-If `graphify-out/GRAPH_REPORT.md` exists, read its God Nodes section before assigning tiers.
-A sub-task whose write-set touches a god node (one of the most-connected symbols in the code
-graph) is NEVER `mechanical`, whatever the three questions said: its blast radius is the whole
-graph, so bump it one tier and mention which god node triggered the bump in the plan artifact.
-Cheap check, expensive mistake avoided — a "rename" inside a god node is not a rename.
+Ask the graph directly rather than reading its prose report — the report is written for humans and
+its wording changes between graphify versions, while these two commands are stable interfaces:
+
+```bash
+graphify god-nodes --json --top 15      # the most connected symbols: [{id, label, degree}]
+graphify affected "PaymentService"      # reverse traversal: what breaks if this changes
+```
+
+A sub-task whose write-set touches a **god node** is NEVER `mechanical`, whatever the three
+questions said: its blast radius is the whole graph, so bump it one tier and name the god node
+that triggered the bump in the plan artifact. A "rename" inside a god node is not a rename.
+
+`affected` is the sharper tool of the two, and it is worth one call per non-trivial sub-task.
+The three questions ask what the *change* looks like; `affected` answers what the change *reaches*.
+When it returns a set that crosses a domain boundary the plan did not account for, the plan is
+wrong — either the write-sets are not actually disjoint, or a domain is missing from the fan-out.
+Fix the plan; do not discover it at merge time.
+
+If graphify is not installed, skip all of this and say so in the artifact rather than guessing at
+blast radius. Degrading is fine; pretending you checked is not.
