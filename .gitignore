@@ -1,8 +1,30 @@
-/plugin/claude-code/bin/batten
-/plugin/claude-code/bin/batten.exe
+# The binary never ships in git. A marketplace install gets it from the GoReleaser
+# release via scripts/bootstrap.sh; a dev build writes it here. The whole directory is
+# ignored rather than the two names it usually has, because it was the THIRD name that
+# got committed: the Windows hot-swap trick renames the locked exe to `batten.exe~`
+# before copying the new one, and a 14 MB build artifact rode into the repo that way.
+/plugin/claude-code/bin/*
+!/plugin/claude-code/bin/.gitkeep
+
+# Local state. batten's database lives in ~/.batten; these are strays from tests and
+# from BATTEN_DB overrides.
 *.db
 *.db-wal
 *.db-shm
 /.batten/
+
+# graphify: the graph and its report are committed on purpose (graphify's team
+# workflow — the graph is a shared artifact). The cache and the sidecars are
+# machine-local and are not.
 graphify-out/cache/
 graphify-out/.graphify_*
+
+# Canvas exports. Real ones go to the Obsidian vault or .batten/; anything that
+# lands at the repo root is a stray from a manual `batten canvas`.
+/*.canvas
+
+# Personal working material — research, private prompt libraries, notes. This repo is
+# public; `.local.md` is the convention for "mine, not the project's". The blanket
+# *.pdf is deliberate: a third-party article was committed here once.
+*.local.md
+*.pdf
