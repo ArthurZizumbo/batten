@@ -88,12 +88,15 @@ process that already works. See the open question on `batten-init` below.
 
 ## Ordered next steps
 
-1. **`batten-init` must complement, not impose.** Today it is a one-shot generator. It reads
-   `AGENTS.md`/`CLAUDE.md` and takes checks verbatim from build files — good — but it never learns
-   the **tech stack**, never learns **what the project is for**, and never **asks the human
-   anything**, despite its own description saying "interview". For a repo that already governs
-   itself, the questions are the entire value.
-2. **Prove the firing test on `proyecto_ui`.**
+1. ~~**`batten-init` must complement, not impose.**~~ **Done.** The scan reports the harness already
+   in place, the stack from marker files, and where the repo describes itself; the command reads
+   those first and then interviews the human instead of guessing quietly. Running it against
+   `proyecto_ui` — a repo planned in full but not yet built — is what found two bugs: a domain list
+   that came back empty because it demanded code, and a note claiming checks came from build files
+   that did not exist.
+2. **Prove the firing test on `proyecto_ui`.** The scan now reads it correctly: 4 domains from
+   their `AGENTS.md`, the planning doc, and an honest "no check command was found — the gate
+   currently verifies nothing". What remains is the actual install and a first work item through it.
 3. **First public release.** Blocked on the naming decisions below, and on the placeholder
    `arthu/batten` in `scripts/bootstrap.sh`, `.goreleaser.yaml`, `plugin.json`, `batten.schema.json`
    and `docs/INSTALL.md`.

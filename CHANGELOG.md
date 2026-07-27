@@ -9,6 +9,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 ## [Unreleased]
 
 ### Added
+- **`batten init` reads the process a repo already has.** The scan now reports `harness[]` (agent
+  rules per directory, `CONTRIBUTING.md`, other editor harnesses, build files, prose workflow docs,
+  an existing spec), `stack[]` (languages and tooling from marker files that exist — package
+  managers from the lockfile, never inferred from directory names), and `purpose[]` (where the repo
+  says what it is for). `/batten-init` gained the interview it always claimed to have: read those
+  first, then ask about the purpose, the real fan-out axes, the tracker pattern, the commands that
+  must pass, and what is scarce enough to force serialization.
+  - A directory with an `AGENTS.md` is now a domain even with no code under it. A repo that has
+    been planned but not built returned an **empty** domain list before, which is backwards: those
+    are exactly the repos where the axes are already decided and nothing else reveals them.
+  - The notes claimed checks "were taken from your build files" even when none were found and the
+    gate was empty. An empty gate verifies nothing, and it now says so.
+  - First tests for `internal/scan`, which had none.
 - **Code graph as a first-class capability.** graphify 0.9.25 wired in — 1043 nodes, 2100 edges,
   65 communities. Every run is stamped at open with whether a fresh graph existed, and
   `batten measure` compares runs with and against without, refusing to conclude anything below
