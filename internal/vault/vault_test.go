@@ -400,6 +400,7 @@ func TestWriteBasesIsIdempotent(t *testing.T) {
 	}
 	second := snapshotDir(t, w.projectDir())
 
+	// snapshotDir looks at .base files only; the index note is covered separately.
 	if len(first) != 3 {
 		t.Fatalf("want 3 dashboards, got %d: %v", len(first), keys(first))
 	}
@@ -589,4 +590,38 @@ func keys(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// TestIndexNoteExplainsTheFolder: a vault folder with three .base files and a runs/ directory
+// says nothing about itself, and two of its columns are easy to misread in ways that matter.
+// The index is where a reader actually looks, so the caveats live there rather than in a README.
+func TestIndexNoteExplainsTheFolder(t *testing.T) {
+	w := newVault(t)
+	if err := w.WriteBases(); err != nil {
+		t.Fatal(err)
+	}
+
+	b, err := os.ReadFile(filepath.Join(w.projectDir(), "batten.md"))
+	if err != nil {
+		t.Fatalf("the index note must be named after the project: %v", err)
+	}
+	body := string(b)
+
+	// Every dashboard must be reachable from it — an unlinked .base is one nobody opens.
+	for _, want := range []string{"open-runs.base", "blocked-verdicts.base", "imputed-cost-by-unit.base"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the index does not link %s:\n%s", want, body)
+		}
+	}
+
+	// The two claims that stop a reader acting on the wrong thing.
+	if !strings.Contains(body, "not a bill") {
+		t.Error("the index must say imputed dollars are not a bill; on a subscription no token has a marginal cost")
+	}
+	if !strings.Contains(body, "SQLite is canonical") {
+		t.Error("the index must say these notes are projections, not the source of truth")
+	}
+	if !strings.Contains(body, "type: batten-index") {
+		t.Error("the index needs frontmatter identifying it, so a vault-wide query can find it")
+	}
 }

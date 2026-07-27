@@ -43,6 +43,28 @@ The governing constraint, which decides every scope argument:
 | **Built by its own flow** | TASK-2 was planned, fanned out to 2 subagents with disjoint write-sets, verified and closed through batten's own gate — `abea1ff` |
 | **Code graph live** | graphify 0.9.25 wired in: 1043 nodes / 2100 edges / 65 communities. God nodes from the report raise the plan phase's difficulty tier — touching a god node is never "mechanical" |
 
+## Test coverage, honestly
+
+Every package has tests except `internal/tui`, a read-only Bubbletea viewer. Total **52.7%**, and
+the distribution matters more than the number:
+
+| package | coverage | why this level |
+|---|---|---|
+| `internal/spec` | 94.9% | the parser every other package depends on, and the thing an unfamiliar repo feeds unfamiliar YAML |
+| `internal/usage` | 94.2% | subagent token accounting — a naive parser loses 71% |
+| `internal/vault` | 92.1% | |
+| `internal/canvas` | 86% | the format's reader is Obsidian, which fails silently |
+| `internal/mcp` | 86% | |
+| `internal/export` | 84.8% | |
+| `internal/store` | 62.5% | the guarantees are covered; the reporting queries are not |
+| `internal/hooks` | 29.5% | the two denials and the guard's asymmetry are covered; the event plumbing is not |
+| `cmd/batten` | 8% | mostly flag parsing and console output; the decisions in it are covered |
+| `internal/tui` | 0% | a terminal viewer that reads the store and renders it |
+
+Writing these found four real bugs, which is the argument for them: a run-id collision on Windows,
+a non-deterministic "latest run", a gate that passed in silence when it could not verify anything,
+and a `doctor` hint pointing at a command that no longer exists.
+
 ## Built, not yet proven
 
 Honest status: the code exists and its unit tests pass, but no run outside this repo has exercised it.

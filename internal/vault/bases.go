@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strconv"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -77,7 +78,46 @@ func (w *Writer) WriteBases() error {
 			return err
 		}
 	}
-	return nil
+	return w.writeIndex()
+}
+
+// writeIndex gives the folder a front door.
+//
+// Without it, opening this directory in Obsidian shows three .base files and a runs/ folder with
+// nothing to say what any of them are — and two of the columns are easy to misread in ways that
+// matter. "Imputed $" is not a bill, and a note is a projection rather than a source of truth.
+// A reader who does not know that will act on the wrong thing, so the answer lives where they
+// are looking rather than in a README they will not open.
+func (w *Writer) writeIndex() error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "---\nproject: %s\ntype: batten-index\n---\n\n", w.Project)
+	fmt.Fprintf(&b, "# %s — run log\n\n", w.Project)
+	b.WriteString("Every work item batten governed in this project, as it actually happened: the phases, " +
+		"the fan-out, the retries, and the verdict that let the commit through.\n\n")
+
+	b.WriteString("## Dashboards\n\n")
+	b.WriteString("- [[open-runs.base|Open runs]] — what is in flight right now\n")
+	b.WriteString("- [[blocked-verdicts.base|Blocked verdicts]] — the runs that need a human. " +
+		"`blocked` and `none` sit together because they are the same operational fact: the close gate will deny the commit\n")
+	b.WriteString("- [[imputed-cost-by-unit.base|Imputed cost by unit]] — most expensive first\n\n")
+
+	b.WriteString("Individual runs live in `runs/`, one note and one canvas per unit. Open a canvas to " +
+		"see the path the work actually took rather than the one the plan hoped for.\n\n")
+
+	b.WriteString("## Reading these numbers\n\n")
+	b.WriteString("**Tokens** are exact, and they count the parent *and* every subagent — a fan-out counted " +
+		"from the parent transcript alone loses most of its own cost.\n\n")
+	b.WriteString("**Imputed $** is what those tokens would have cost on the API. It is **not a bill**. " +
+		"On a subscription the marginal cost of a token is zero; this column measures the value being " +
+		"pulled out of the subscription, not money that left an account.\n\n")
+	b.WriteString("A ceiling batten could not measure is reported as unmeasurable rather than as zero. " +
+		"If a number is missing here, it is missing because it was never observed.\n\n")
+
+	b.WriteString("---\n\n")
+	b.WriteString("_Written by batten. SQLite is canonical; everything in this folder is a projection of it " +
+		"and is regenerated. Hand edits are overwritten._\n")
+
+	return writeIfChanged(filepath.Join(w.projectDir(), safeName(w.Project)+".md"), []byte(b.String()))
 }
 
 type namedBase struct {

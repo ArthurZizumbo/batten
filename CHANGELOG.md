@@ -9,6 +9,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 ## [Unreleased]
 
 ### Added
+- **The vault folder explains itself.** A `<project>.md` index note now sits beside the dashboards,
+  linking each one and stating the two things a reader has to know before acting on the numbers:
+  imputed dollars are **not a bill** (on a subscription no token has a marginal cost), and every
+  note is a projection — SQLite is canonical.
+- **`batten doctor` reports graphify's git integration.** `graph.json` is committed on purpose as a
+  shared artifact and is a megabyte of generated JSON, so two branches touching code conflict on it
+  unavoidably. `graphify hook install` registers a union merge driver for exactly that, and doctor
+  now says so when the graph is tracked without it.
+- **`/batten-plan` asks the graph through `god-nodes --json` and `affected`** instead of reading
+  `GRAPH_REPORT.md`, whose wording is written for humans and changes between versions. `affected`
+  is the sharper of the two: a blast radius crossing a domain the plan did not account for means
+  the write-sets are not actually disjoint — better found at plan time than at merge time.
+- Tests for every package except `internal/tui` (a read-only viewer): `internal/spec` 94.9%,
+  `internal/vault` 92.1%, `internal/canvas` 86%, `internal/export` 84.8%, `internal/store` 62.5%,
+  `internal/hooks` 29.5%. Total 52.7%, from 0% in six of them.
+
+### Fixed
+- **Run ids collided on Windows.** `EnsureRun` built its id from `time.Now().UnixNano()`, which is
+  unique only if two calls never land in the same tick — and Windows' clock granularity is often
+  half a millisecond or worse. Closing a run and opening the next one for the same unit produced
+  the same nanosecond and failed on the primary key, from the hook path, where an error is a broken
+  session. Four random bytes now do the work the timestamp was assumed to.
+- **"The latest run" was a coin flip.** `started_at` is stored in seconds, so two runs for one unit
+  opened in the same second left `ORDER BY started_at DESC LIMIT 1` free to return either, and
+  `batten show` could inspect the older one. A rowid tiebreaker makes it deterministic.
+- **`batten doctor` suggested a graphify command that does not exist.** `graphify . --update` is
+  not a flag; graphify ignores it, runs a full extraction, and fails on a missing LLM API key. The
+  command is `graphify update .`. This is the second hint here to outlive graphify's CLI.
+- Two personal absolute paths were still tracked in the docs. CI now fails on any tracked absolute
+  home path or private working file.
 - **CI, which did not exist.** `release.yml` fired on a tag and went straight to building
   binaries, so a tag could publish over a red suite. There is now a `ci.yml` on every push and
   pull request, and the release will not start GoReleaser until it passes. The matrix is Linux,
