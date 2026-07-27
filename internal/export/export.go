@@ -63,6 +63,10 @@ func Run(sp *spec.Spec, st *store.Store, unitID string) (*Result, error) {
 
 	if vlt := sp.Capabilities.Obsidian.Vault; vlt != "" {
 		w := VaultWriter(sp)
+		// The claims the fan-out actually made. Best-effort like the usage read below: a failure
+		// here leaves WriteSets nil, and the note then says "not recorded" — which is the honest
+		// reading of a query that did not answer.
+		w.WriteSets, _ = st.WriteSetsByRun(run.RunID)
 		res.CanvasPath = w.CanvasPath(unitID)
 		if err := c.WriteFile(res.CanvasPath); err != nil {
 			return res, err

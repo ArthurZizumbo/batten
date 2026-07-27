@@ -507,6 +507,33 @@ func (s *Store) WriteSet(runID, nodeID string) ([]string, error) {
 	return out, rows.Err()
 }
 
+// WriteSetsByRun returns every claim in a run, keyed by owning node — one query instead of one
+// per node, the same shape as UsageByNode.
+//
+// A run with NO claims at all returns a nil map, and that nil is load-bearing: it is the
+// difference between "the write-set was never recorded" and "this agent owned nothing", and a
+// caller rendering the second as the first would be inventing a fact. An empty non-nil map would
+// erase that distinction, so this returns nil rather than map[string][]string{}.
+func (s *Store) WriteSetsByRun(runID string) (map[string][]string, error) {
+	rows, err := s.db.Query(`SELECT node_id, path FROM writesets WHERE run_id=? ORDER BY node_id, path`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out map[string][]string
+	for rows.Next() {
+		var node, path string
+		if err := rows.Scan(&node, &path); err != nil {
+			return nil, err
+		}
+		if out == nil {
+			out = map[string][]string{}
+		}
+		out[node] = append(out[node], path)
+	}
+	return out, rows.Err()
+}
+
 // normPath canonicalizes a repo-relative path for write-set comparison. On Windows AND macOS
 // it also case-folds: NTFS and default APFS are both case-insensitive, so ml/F.py and ml/f.py
 // are the SAME file there, and a guard that treated them as two would let an agent cross the

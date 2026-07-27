@@ -145,3 +145,60 @@ func TestSaveVerdictRejectsOkWithoutEvidence(t *testing.T) {
 		t.Fatalf("SaveVerdict(ok, no evidence, required): got %v, want ErrNoEvidence", err)
 	}
 }
+
+// TestWriteSetsByRunKeepsNilDistinct pins the three states the vault note renders from, and
+// especially the nil: "nobody recorded a write-set" and "this agent owned nothing" are different
+// facts, and returning an empty map for the first would let a caller print the second.
+func TestWriteSetsByRunKeepsNilDistinct(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "batten.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer s.Close()
+
+	r, err := s.EnsureRun("p", "U-1", "")
+	if err != nil {
+		t.Fatalf("EnsureRun: %v", err)
+	}
+
+	// State 1 — a run whose fan-out claimed nothing at all.
+	ws, err := s.WriteSetsByRun(r.RunID)
+	if err != nil {
+		t.Fatalf("WriteSetsByRun (no claims): %v", err)
+	}
+	if ws != nil {
+		t.Fatalf("a run with zero claims must return a nil map, got %#v", ws)
+	}
+
+	for _, id := range []string{"n-a", "n-b"} {
+		if err := s.AddNode(Node{NodeID: id, RunID: r.RunID, Kind: "subagent", Label: id}); err != nil {
+			t.Fatalf("AddNode(%s): %v", id, err)
+		}
+	}
+	if err := s.ClaimWriteSet(r.RunID, "n-a", []string{"internal/ml/train.go", "internal/ml/eval.go"}); err != nil {
+		t.Fatalf("ClaimWriteSet(n-a): %v", err)
+	}
+
+	// States 2 and 3 — claims exist, so a node without them owned nothing rather than went unrecorded.
+	ws, err = s.WriteSetsByRun(r.RunID)
+	if err != nil {
+		t.Fatalf("WriteSetsByRun (with claims): %v", err)
+	}
+	if ws == nil {
+		t.Fatal("a run with claims must return a non-nil map")
+	}
+	if got, want := len(ws["n-a"]), 2; got != want {
+		t.Errorf("n-a write-set: got %d files %v, want %d", got, ws["n-a"], want)
+	}
+	if got := len(ws["n-b"]); got != 0 {
+		t.Errorf("n-b claimed nothing, got %d files %v", got, ws["n-b"])
+	}
+
+	// Paths come back normalized and sorted — the note renders them verbatim.
+	want := []string{normPath("internal/ml/eval.go"), normPath("internal/ml/train.go")}
+	for i, w := range want {
+		if ws["n-a"][i] != w {
+			t.Errorf("n-a[%d]: got %q, want %q (sorted, normalized)", i, ws["n-a"][i], w)
+		}
+	}
+}

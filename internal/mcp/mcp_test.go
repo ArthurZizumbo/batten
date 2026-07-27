@@ -113,11 +113,21 @@ func seed(t *testing.T, q *queries) *store.Run {
 	if err := q.st.ClaimWriteSet(r.RunID, "n-b1", []string{"web/src/app.ts"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.st.RecordUsage([]store.Usage{{
-		RequestID: "req-1", RunID: r.RunID, NodeID: "n-a2", Model: "opus", TS: 1,
+	// The timestamp must fall INSIDE the run's lifetime. RecordUsage fences out anything older
+	// than started_at — usage that predates the run belongs to the session, not to this run — so
+	// a fixture stamped at the epoch would be silently dropped and every assertion below it would
+	// fail for a reason that has nothing to do with what it tests.
+	added, err := q.st.RecordUsage([]store.Usage{{
+		RequestID: "req-1", RunID: r.RunID, NodeID: "n-a2", Model: "opus", TS: r.StartedAt,
 		InputTokens: 1000, OutputTokens: 500, CacheRead: 200, ImputedUSD: 0.25,
-	}}); err != nil {
+	}})
+	if err != nil {
 		t.Fatal(err)
+	}
+	// Assert the row landed. RecordUsage skips silently by design, and a seed that quietly seeds
+	// nothing is how three tests came to fail on a change that never touched them.
+	if added != 1 {
+		t.Fatalf("seed recorded %d usage rows, want 1 — the time fence dropped the fixture", added)
 	}
 	got, err := q.st.Run(r.RunID)
 	if err != nil {
