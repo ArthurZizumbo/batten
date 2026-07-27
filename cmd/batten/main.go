@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -1211,6 +1212,23 @@ func cmdDoctor() error {
 	} else {
 		fmt.Println("⚠ no phase sets requires_verdict — nothing gates a commit")
 	}
+
+	// A gate with no checks cannot verify anything: batten has nothing to run, so the commit
+	// rides on the agent's own claim. That is legitimate in a repo that has not written its
+	// checks yet, but it must be visible HERE — the alternative is finding out at the commit,
+	// having believed all along that the gate meant something.
+	var unchecked []string
+	for name, g := range sp.Gates {
+		if len(g.Checks) == 0 {
+			unchecked = append(unchecked, name)
+		}
+	}
+	sort.Strings(unchecked)
+	for _, name := range unchecked {
+		fmt.Printf("⚠ gate %q declares no checks — it verifies NOTHING and approves on the "+
+			"agent's word. Add gates.%s.checks (take them verbatim from your build files).\n", name, name)
+	}
+
 	if sp.ReportOnly() {
 		fmt.Println("● enforcement: REPORT — gates WARN, they do not block yet. " +
 			"Set enforcement: enforce (or remove it) when the team trusts the gates.")

@@ -334,6 +334,20 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 					"To proceed anyway (recorded): batten override %s --reason \"...\"",
 				unit, unit, unit)), nil
 		}
+	} else {
+		// A gate with no checks cannot be verified by construction — batten has nothing to run,
+		// so the only thing standing between this commit and main is the agent's own word, which
+		// is exactly the failure this gate exists to kill. It still passes: refusing every commit
+		// in a repo that has not declared its checks yet would just get batten uninstalled.
+		//
+		// But it passes OUT LOUD. Principle #3 is "fail open only with a warning", and a gate
+		// that silently degrades to trusting the model is worse than no gate, because it will be
+		// believed. This is an advise() even under `enforcement: enforce` — the situation is a
+		// missing declaration, not a violation, and denying is not the user's fix for it.
+		return advise("PreToolUse", fmt.Sprintf(
+			"batten: gate %q declares no checks, so %s was approved on the agent's word alone — "+
+				"nothing was run to verify it. Add gates.%s.checks to make this gate mean something.",
+			gateName, unit, gateName)), nil
 	}
 
 	// Budget is also a closing condition: a run that blew its ceiling should not quietly land.
