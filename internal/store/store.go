@@ -5,7 +5,9 @@
 package store
 
 import (
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -272,7 +274,7 @@ func (s *Store) EnsureRun(project, unitID, sessionID string) (*Run, error) {
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
-	id := fmt.Sprintf("%s-%d", unitID, time.Now().UnixNano())
+	id := newRunID(unitID)
 	// Anchor the quota baseline at birth: a run's share of the 5h window is the delta
 	// from here, since the window itself is account-global and shared with everything else.
 	var q any
@@ -289,9 +291,30 @@ func (s *Store) EnsureRun(project, unitID, sessionID string) (*Run, error) {
 	return s.ActiveRun(project, unitID)
 }
 
+// newRunID builds a run id that stays unique even when the clock does not move.
+//
+// This was `unitID + time.Now().UnixNano()`, which is unique only if two calls never land in the
+// same tick. On Windows the system clock's granularity is coarse — often half a millisecond or
+// worse — so closing a run and opening the next one for the same unit produced the SAME
+// nanosecond and collided on the primary key. EnsureRun then returned an error, and EnsureRun is
+// on the hook path, where an error is a broken session. Windows is this tool's primary target,
+// which makes a clock-resolution assumption exactly the wrong thing to depend on.
+//
+// The timestamp stays because it makes ids sortable and legible when reading the database by
+// hand; the random suffix is what actually guarantees uniqueness.
+func newRunID(unitID string) string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// crypto/rand failing is close to impossible; degrade to the timestamp alone rather
+		// than refuse to open a run, and let the primary key catch the remaining case.
+		return fmt.Sprintf("%s-%d", unitID, time.Now().UnixNano())
+	}
+	return fmt.Sprintf("%s-%d-%s", unitID, time.Now().UnixNano(), hex.EncodeToString(b[:]))
+}
+
 func (s *Store) ActiveRun(project, unitID string) (*Run, error) {
 	row := s.db.QueryRow(`SELECT `+runCols+`
-	   FROM runs WHERE project=? AND unit_id=? AND status='running' ORDER BY started_at DESC LIMIT 1`,
+	   FROM runs WHERE project=? AND unit_id=? AND status='running' ORDER BY started_at DESC, rowid DESC LIMIT 1`,
 		project, unitID)
 	return scanRun(row.Scan)
 }
@@ -305,7 +328,7 @@ func (s *Store) Run(runID string) (*Run, error) {
 // Inspection commands want this — a run you just closed is the one you most want to look at.
 func (s *Store) LatestRun(project, unitID string) (*Run, error) {
 	row := s.db.QueryRow(`SELECT `+runCols+`
-	   FROM runs WHERE project=? AND unit_id=? ORDER BY started_at DESC LIMIT 1`,
+	   FROM runs WHERE project=? AND unit_id=? ORDER BY started_at DESC, rowid DESC LIMIT 1`,
 		project, unitID)
 	return scanRun(row.Scan)
 }
@@ -323,7 +346,7 @@ func scanRun(scan func(...any) error) (*Run, error) {
 
 func (s *Store) ListRuns(project string, limit int) ([]Run, error) {
 	rows, err := s.db.Query(`SELECT `+runCols+`
-	   FROM runs WHERE (?='' OR project=?) ORDER BY started_at DESC LIMIT ?`, project, project, limit)
+	   FROM runs WHERE (?='' OR project=?) ORDER BY started_at DESC, rowid DESC LIMIT ?`, project, project, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +418,7 @@ func (s *Store) FinishNode(nodeID, status string, cost float64) error {
 func (s *Store) NodeByAgent(agentID string) (*Node, error) {
 	row := s.db.QueryRow(`SELECT node_id, run_id, kind, label, COALESCE(domain,''), status,
 	   COALESCE(agent_id,''), COALESCE(agent_type,''), cost_usd, started_at, ended_at
-	   FROM nodes WHERE agent_id=? ORDER BY started_at DESC LIMIT 1`, agentID)
+	   FROM nodes WHERE agent_id=? ORDER BY started_at DESC, rowid DESC LIMIT 1`, agentID)
 	var n Node
 	err := row.Scan(&n.NodeID, &n.RunID, &n.Kind, &n.Label, &n.Domain, &n.Status,
 		&n.AgentID, &n.AgentType, &n.CostUSD, &n.StartedAt, &n.EndedAt)
@@ -1001,7 +1024,7 @@ func (s *Store) RunBySession(project, sessionID string) (*Run, error) {
 	}
 	row := s.db.QueryRow(`SELECT `+runCols+`
 	   FROM runs WHERE project=? AND session_id=? AND status='running'
-	   ORDER BY started_at DESC LIMIT 1`, project, sessionID)
+	   ORDER BY started_at DESC, rowid DESC LIMIT 1`, project, sessionID)
 	return scanRun(row.Scan)
 }
 
