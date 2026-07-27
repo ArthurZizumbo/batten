@@ -1,0 +1,270 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/ArthurZizumbo/batten/internal/spec"
+	"github.com/ArthurZizumbo/batten/internal/store"
+)
+
+// TestDBPathIsAlwaysUnderHome pins the decision that cost two bugs in E0.
+//
+// State must NOT live under ${CLAUDE_PLUGIN_DATA}: hook processes have that variable set and the
+// user's terminal does not, so an env-dependent path splits the state into two databases — the
+// TUI reports "no runs" while the hooks happily write runs somewhere else. ${CLAUDE_PLUGIN_ROOT}
+// is forbidden for a different reason: it is wiped on every plugin update.
+func TestDBPathIsAlwaysUnderHome(t *testing.T) {
+	t.Setenv("CLAUDE_PLUGIN_DATA", filepath.Join(t.TempDir(), "plugin-data"))
+	t.Setenv("CLAUDE_PLUGIN_ROOT", filepath.Join(t.TempDir(), "plugin-root"))
+	t.Setenv("BATTEN_DB", "")
+
+	got := dbPath()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory on this machine")
+	}
+	want := filepath.Join(home, ".batten", "batten.db")
+	if got != want {
+		t.Errorf("dbPath() = %q, want %q", got, want)
+	}
+	for _, forbidden := range []string{"plugin-data", "plugin-root"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("dbPath() leaked %s into the path: %q", forbidden, got)
+		}
+	}
+
+	// BATTEN_DB is the one supported override — tests and CI depend on it.
+	custom := filepath.Join(t.TempDir(), "custom.db")
+	t.Setenv("BATTEN_DB", custom)
+	if got := dbPath(); got != custom {
+		t.Errorf("BATTEN_DB override ignored: got %q, want %q", got, custom)
+	}
+}
+
+func TestHumanTokens(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0"},
+		{999, "999"},
+		{1_000, "1.0k"},
+		{1_500, "1.5k"},
+		{1_400_000, "1.4M"},
+	}
+	for _, c := range cases {
+		if got := humanTokens(c.in); got != c.want {
+			t.Errorf("humanTokens(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// modelMatches decides whether `batten show` flags a routing deviation. A false alarm here
+// trains people to ignore the column, so aliases must resolve: a spec saying "opus" is satisfied
+// by a run that actually used "claude-opus-4-20250514".
+func TestModelMatchesToleratesAliases(t *testing.T) {
+	cases := []struct {
+		declared string
+		ran      []string
+		want     bool
+		why      string
+	}{
+		// The caller only reaches this with a declared model AND at least one recorded run
+		// (main.go: `if ran := models[n.NodeID]; len(ran) > 0` guards it, and d.Model != ""),
+		// so those two empty cases are unreachable and are not asserted here.
+		{"opus", []string{"claude-opus-4-20250514"}, true, "an alias must match the full model id"},
+		{"sonnet", []string{"claude-sonnet-4-5"}, true, "same, for sonnet"},
+		{"opus", []string{"claude-haiku-4-5"}, false, "a genuinely different model is a deviation"},
+		{"opus", []string{"claude-haiku-4-5", "claude-opus-4"}, true, "one matching run is enough"},
+		{"haiku", []string{"claude-haiku-4-5"}, true, "the cheapest tier resolves like the others"},
+	}
+	for _, c := range cases {
+		if got := modelMatches(c.declared, c.ran); got != c.want {
+			t.Errorf("modelMatches(%q, %v) = %v, want %v — %s", c.declared, c.ran, got, c.want, c.why)
+		}
+	}
+}
+
+func TestFirstLineOfAndLastLines(t *testing.T) {
+	// Multi-line evidence is shown as its first line plus an ellipsis. The ellipsis is the
+	// point: a reader must be able to tell a one-line piece of evidence from a truncated one,
+	// or a citation that continues "…but 3 tests failed" reads as an unqualified pass.
+	if got := firstLineOf("one\ntwo\nthree"); got != "one …" {
+		t.Errorf("firstLineOf = %q, want %q", got, "one …")
+	}
+	if got := firstLineOf("single line"); got != "single line" {
+		t.Errorf("a single line must not gain an ellipsis; got %q", got)
+	}
+	if got := firstLineOf(""); got != "" {
+		t.Errorf("firstLineOf(empty) = %q", got)
+	}
+
+	// lastLines is what a failed check cites as evidence. Losing the tail would cite the wrong
+	// part of the output — the failure is at the end, not the beginning.
+	got := lastLines("a\nb\nc\nd\ne", 2)
+	if !strings.Contains(got, "e") || !strings.Contains(got, "d") {
+		t.Errorf("lastLines kept %q, want the final two lines", got)
+	}
+	if strings.Contains(got, "a") {
+		t.Errorf("lastLines returned the head instead of the tail: %q", got)
+	}
+	if got := lastLines("only", 5); got != "only" {
+		t.Errorf("asking for more lines than exist must return them all; got %q", got)
+	}
+}
+
+func TestBarNeverOverflowsItsTrack(t *testing.T) {
+	for _, frac := range []float64{-1, 0, 0.5, 1, 2} {
+		b := bar(frac)
+		if b == "" {
+			t.Errorf("bar(%v) is empty", frac)
+		}
+		// An over-budget run passes frac > 1. The bar must clamp rather than print a line that
+		// wraps the terminal.
+		if len([]rune(b)) > 40 {
+			t.Errorf("bar(%v) is %d runes wide; it must clamp", frac, len([]rune(b)))
+		}
+	}
+}
+
+func TestAbs(t *testing.T) {
+	if abs(-2.5) != 2.5 || abs(2.5) != 2.5 || abs(0) != 0 {
+		t.Error("abs is wrong")
+	}
+}
+
+// runCheck is how `batten check` turns a declared command into evidence. Its contract: report the
+// real exit code, capture output, and never hang forever.
+func TestRunCheckReportsTheRealExitCode(t *testing.T) {
+	dir := t.TempDir()
+
+	out, code, took := runCheck(dir, "exit 0", 10*time.Second)
+	if code != 0 {
+		t.Errorf("a passing command reported exit %d (output %q)", code, out)
+	}
+	if took == "" {
+		t.Error("runCheck must report how long it took; that is part of the evidence")
+	}
+
+	// A failing command must NOT be reported as passing — this is the whole point of batten
+	// check: evidence generated, not asserted.
+	if _, code, _ := runCheck(dir, "exit 3", 10*time.Second); code == 0 {
+		t.Error("a failing command was reported as exit 0")
+	}
+
+	// A command that does not exist is a failure, not a pass.
+	if _, code, _ := runCheck(dir, "this-command-does-not-exist-anywhere", 10*time.Second); code == 0 {
+		t.Error("a missing command must not report success")
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	if got := expandHome("/abs/path"); got != "/abs/path" {
+		t.Errorf("an absolute path must survive unchanged; got %q", got)
+	}
+	if got := expandHome(""); got != "" {
+		t.Errorf("empty stays empty; got %q", got)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home directory")
+	}
+	if got := expandHome("~/vault"); !strings.HasPrefix(got, home) || strings.Contains(got, "~") {
+		t.Errorf("~ did not expand: %q", got)
+	}
+}
+
+// gateReadyToClose is the same decision the commit hook makes, reached from the CLI. It must
+// agree with the hook, or `batten close` tells the user they are fine and the commit is denied.
+func TestGateReadyToCloseAgreesWithTheHook(t *testing.T) {
+	dir := t.TempDir()
+	y := "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
+		"phases:\n  - id: verify\n    gate: qa\n  - id: close\n    gate: qa\n    requires_verdict: ok\n" +
+		"gates:\n  qa:\n    verdict: required\n    evidence: required\n"
+	if err := os.WriteFile(filepath.Join(dir, "batten.yaml"), []byte(y), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sp, err := spec.LoadFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "batten.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	r, err := st.EnsureRun("p", "TASK-1", "sess-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := gateReadyToClose(sp, st, r); err == nil {
+		t.Error("with no verdict at all, the gate is not ready to close")
+	}
+
+	if err := st.SaveVerdict(store.Verdict{
+		RunID: r.RunID, Gate: "qa", CheckID: "qa", Result: "blocked",
+		Evidence: []string{"3 tests failing"}, Why: "the suite is red",
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateReadyToClose(sp, st, r); err == nil {
+		t.Error("a blocked verdict must not permit a close")
+	}
+
+	if err := st.SaveVerdict(store.Verdict{
+		RunID: r.RunID, Gate: "qa", CheckID: "qa", Result: "ok",
+		Evidence: []string{"go test ./...: PASS"},
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateReadyToClose(sp, st, r); err != nil {
+		t.Errorf("an ok verdict with evidence must permit the close: %v", err)
+	}
+
+	// An override is the audited escape hatch, and it must work from here too.
+	r2, _ := st.EnsureRun("p", "TASK-2", "sess-b")
+	if err := gateReadyToClose(sp, st, r2); err == nil {
+		t.Fatal("TASK-2 has no verdict")
+	}
+	if err := st.Override(r2.RunID, "qa", "incident 4412"); err != nil {
+		t.Fatal(err)
+	}
+	if err := gateReadyToClose(sp, st, r2); err != nil {
+		t.Errorf("a recorded override must open the gate: %v", err)
+	}
+}
+
+// codeGraphFresh feeds both the doctor warning and the run tagging that `batten measure` compares.
+// A missing graph must read as absent, not as fresh — tagging runs "graph: yes" when there is no
+// graph would poison the measurement it exists to support.
+func TestCodeGraphFreshReportsAbsenceHonestly(t *testing.T) {
+	dir := t.TempDir()
+	sp := &spec.Spec{Root: dir}
+
+	exists, fresh := codeGraphFresh(sp)
+	if exists || fresh {
+		t.Errorf("no graph exists; got exists=%v fresh=%v", exists, fresh)
+	}
+
+	if err := os.MkdirAll(filepath.Join(dir, "graphify-out"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "graphify-out", "graph.json"), []byte(`{"nodes":[]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exists, fresh = codeGraphFresh(sp)
+	if !exists {
+		t.Error("a graph.json on disk must be reported as existing")
+	}
+	// With no git history to compare against, an existing graph counts as fresh rather than
+	// nagging about staleness it cannot establish.
+	if !fresh {
+		t.Error("with no git history there is nothing to be stale against")
+	}
+}
