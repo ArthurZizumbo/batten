@@ -1,0 +1,144 @@
+# Every push and every pull request. The release workflow depends on this one passing, so a
+# tag cannot cut a release over a red suite.
+#
+# The matrix is not decoration. batten branches on runtime.GOOS in three places that decide
+# whether a guard holds:
+#
+#   - store.normPath case-folds on Windows and macOS, where the default filesystem is
+#     case-insensitive, and stays exact on Linux. A write-set guard that got this wrong would let
+#     an agent cross the fence by changing a letter's case.
+#   - the statusline and the hook command resolve executables differently on Windows.
+#
+# Windows is the primary target for this tool. A Linux-only CI would never run the code path that
+# matters most.
+name: ci
+on:
+  push:
+    branches: ['**']
+  pull_request:
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test -coverprofile=coverage.out ./...
+
+      - name: coverage summary
+        shell: bash
+        run: go tool cover -func=coverage.out | tail -1
+
+  # The race detector needs CGO and a C toolchain, which the shipped binaries deliberately do
+  # not (modernc.org/sqlite is pure Go, so releases build with CGO_ENABLED=0 and cross-compile).
+  # Rather than make every matrix leg depend on a C compiler, race runs once where it is
+  # cheapest and most reliable. It catches what a hook process would only hit under real
+  # concurrency, where the symptom is a corrupted verdict rather than a crash.
+  race:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./...
+
+  # gofmt and tidiness, once — they are platform-independent and do not need the matrix.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code go.mod go.sum
+
+      # plugin/claude-code/scripts/bootstrap.sh is a COPY that build-plugin.sh makes, and it is
+      # committed because a marketplace install needs it present. That makes it possible to edit
+      # the source and ship the stale copy, which is how the bootstrap came to be missing from
+      # the package once already.
+      - name: the plugin's bootstrap copy is in sync
+        run: diff scripts/bootstrap.sh plugin/claude-code/scripts/bootstrap.sh
+
+      - name: shell scripts parse
+        run: |
+          for f in scripts/*.sh plugin/claude-code/scripts/*.sh; do
+            bash -n "$f" || exit 1
+          done
+
+      # The download name in bootstrap.sh and the archive name GoReleaser builds are one contract
+      # written in two files. When they drifted, every platform's first-run install 404'd.
+      - name: bootstrap and goreleaser agree on the archive name
+        run: |
+          grep -q 'batten_${os}_${arch}.tar.gz' scripts/bootstrap.sh
+          grep -q '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}' .goreleaser.yaml
+          if grep -q '{{ .Version }}' .goreleaser.yaml; then
+            echo "archives.name_template carries a version; releases/latest/download cannot predict it"
+            exit 1
+          fi
+
+  # The spec is published for editors to validate against, so it must itself be valid — and
+  # every example must satisfy it. An example that does not load is worse than no example.
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: every example validates against the schema
+        run: |
+          python -m pip install --quiet jsonschema pyyaml
+          python - <<'PY'
+          import glob, json, sys, yaml
+          from jsonschema import Draft202012Validator
+          schema = json.load(open('batten.schema.json', encoding='utf-8'))
+          Draft202012Validator.check_schema(schema)
+          v, bad = Draft202012Validator(schema), False
+          for f in sorted(glob.glob('examples/*/batten.yaml')) + ['batten.yaml']:
+              errs = sorted(v.iter_errors(yaml.safe_load(open(f, encoding='utf-8'))), key=lambda e: list(e.path))
+              print(('FAIL ' if errs else 'ok   ') + f)
+              for e in errs[:5]:
+                  print('   ', list(e.path), e.message[:200])
+              bad |= bool(errs)
+          sys.exit(1 if bad else 0)
+          PY
+
+      - name: every example loads in the real parser
+        run: |
+          go build -o /tmp/batten ./cmd/batten
+          for f in examples/*/batten.yaml; do
+            d="$(mktemp -d)"; cp "$f" "$d/batten.yaml"
+            ( cd "$d" && /tmp/batten doctor ) || exit 1
+          done

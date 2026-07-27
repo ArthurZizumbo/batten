@@ -35,14 +35,21 @@ builds:
 archives:
   - id: batten
     ids: [batten]
-    # Windows gets .zip because tar.gz is a second-class citizen there and this project
-    # refuses to make Windows a second-class citizen.
+
+    # tar.gz on EVERY platform, Windows included, and the name carries no version. Both of
+    # those exist to serve one caller: scripts/bootstrap.sh fetches from
+    # releases/latest/download/<name>, which only works if the name is predictable without
+    # knowing the tag. A versioned name would 404 on every platform, and a Windows .zip would
+    # 404 again — bootstrap runs under Git Bash, whose tar does not read zip archives.
+    #
+    # Windows is not being treated as second-class by getting tar.gz: it has shipped bsdtar as
+    # tar.exe since Windows 10 1803, so a human double-clicking is fine too.
+    #
+    # If this template ever changes, change bootstrap.sh in the same commit. They are one
+    # contract written in two files.
     formats: [tar.gz]
-    format_overrides:
-      - goos: windows
-        formats: [zip]
     name_template: >-
-      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+      {{ .ProjectName }}_{{ .Os }}_{{ .Arch }}
     files:
       - README.md
       - LICENSE*

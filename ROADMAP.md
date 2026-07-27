@@ -97,9 +97,11 @@ process that already works. See the open question on `batten-init` below.
 2. **Prove the firing test on `proyecto_ui`.** The scan now reads it correctly: 4 domains from
    their `AGENTS.md`, the planning doc, and an honest "no check command was found — the gate
    currently verifies nothing". What remains is the actual install and a first work item through it.
-3. **First public release.** Blocked on the naming decisions below, and on the placeholder
-   `arthu/batten` in `scripts/bootstrap.sh`, `.goreleaser.yaml`, `plugin.json`, `batten.schema.json`
-   and `docs/INSTALL.md`.
+3. **First public release.** The placeholder is gone: the module path, both bootstrap scripts, the
+   plugin manifest, the marketplace entry, the schema `$id` and the install docs all point at
+   `ArthurZizumbo/batten`. What remains is creating the repo, pushing, and tagging `v0.1.0` —
+   GoReleaser builds every platform from there, and `release.yml` now refuses to start until the
+   suite passes on Linux, macOS and Windows.
 4. **headroom**, once there is a second real repo to measure it on. Measuring compression on one
    repo tells you about that repo.
 
@@ -114,7 +116,7 @@ None of these are settled.
 
 | Today | The tension | Options |
 |---|---|---|
-| **The repo directory is `LoopWorkFlow`, the product is `batten`** | The folder still carries the pre-rename working title. A public repo cannot be called one thing and ship another | rename the repo to `batten`; keep the module path `github.com/arthu/batten` either way |
+| **The local directory is `LoopWorkFlow`, the product is `batten`** | ~~Decided:~~ the module path, the plugin, the marketplace entry and every doc now say `ArthurZizumbo/batten`, so the GitHub repo must be named `batten`. The local folder can keep its working title; nothing reads it | — |
 | `unit` | The spec says `unit`, the CLI says `--unit`, the docs say "work item", and users say "ticket" or "US" | keep `unit` as the schema term and stop saying "work item" in prose; or rename to `item` |
 | `verdict envelope` | Precise and ours, but nobody arrives already knowing it | keep it — the precision is the point, and `gate result` invites the vagueness the gate exists to kill |
 | `capabilities.compression` | Named after the mechanism (compression), not the goal (headroom) | rename to `capabilities.headroom`? but then it is named after a vendor |

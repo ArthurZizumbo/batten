@@ -3612,7 +3612,7 @@
       "id": "cmd_batten_main_go_duration"
     },
     {
-      "label": "github.com/arthu/batten",
+      "label": "github.com/ArthurZizumbo/batten",
       "file_type": "code",
       "type": "package",
       "ecosystem": "go",
@@ -3620,8 +3620,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "community": 55,
-      "norm_label": "github.com/arthu/batten",
-      "community_name": "github.com/arthu/batten",
+      "norm_label": "github.com/ArthurZizumbo/batten",
+      "community_name": "github.com/ArthurZizumbo/batten",
       "id": "pkg_github_com_arthu_batten"
     },
     {

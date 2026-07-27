@@ -10,8 +10,8 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/arthu/batten/internal/spec"
-	"github.com/arthu/batten/internal/store"
+	"github.com/ArthurZizumbo/batten/internal/spec"
+	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
 const battenYAML = `

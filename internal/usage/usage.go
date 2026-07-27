@@ -25,7 +25,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arthu/batten/internal/store"
+	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
 // record is the slice of a transcript line we price. Fields we do not use are left undecoded

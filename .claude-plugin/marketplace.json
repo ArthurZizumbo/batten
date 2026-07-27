@@ -2,14 +2,14 @@
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "batten",
   "description": "Procedural memory as data — declare your agentic workflow, and have it enforced",
-  "owner": { "name": "Arthur" },
+  "owner": { "name": "Arthur Zizumbo" },
   "plugins": [
     {
       "name": "batten",
       "source": "./plugin/claude-code",
       "description": "Declare your workflow in batten.yaml. batten enforces it: no commit without cited evidence, no two fanned-out agents writing the same file, a dollar budget ceiling, and the run graph as a JSON Canvas you open in Obsidian.",
       "version": "0.1.0",
-      "author": { "name": "Arthur" },
+      "author": { "name": "Arthur Zizumbo" },
       "category": "workflow",
       "keywords": ["workflow", "verdict-gate", "fan-out", "obsidian", "budget"]
     }

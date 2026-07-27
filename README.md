@@ -199,7 +199,7 @@ is worse than no budget at all, because it will be believed.
 ## Install
 
 ```
-/plugin marketplace add arthu/batten
+/plugin marketplace add ArthurZizumbo/batten
 /plugin install batten
 ```
 

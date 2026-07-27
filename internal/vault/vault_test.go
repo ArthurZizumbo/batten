@@ -13,7 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/arthu/batten/internal/store"
+	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
 // ---------- fixtures ----------

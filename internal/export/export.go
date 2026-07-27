@@ -9,10 +9,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/arthu/batten/internal/canvas"
-	"github.com/arthu/batten/internal/spec"
-	"github.com/arthu/batten/internal/store"
-	"github.com/arthu/batten/internal/vault"
+	"github.com/ArthurZizumbo/batten/internal/canvas"
+	"github.com/ArthurZizumbo/batten/internal/spec"
+	"github.com/ArthurZizumbo/batten/internal/store"
+	"github.com/ArthurZizumbo/batten/internal/vault"
 )
 
 // VaultWriter builds a vault writer for a spec, expanding a leading ~ in the vault path.

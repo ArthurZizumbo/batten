@@ -21,10 +21,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/arthu/batten/internal/export"
-	"github.com/arthu/batten/internal/spec"
-	"github.com/arthu/batten/internal/store"
-	"github.com/arthu/batten/internal/usage"
+	"github.com/ArthurZizumbo/batten/internal/export"
+	"github.com/ArthurZizumbo/batten/internal/spec"
+	"github.com/ArthurZizumbo/batten/internal/store"
+	"github.com/ArthurZizumbo/batten/internal/usage"
 )
 
 // Input is the common hook payload. Fields absent for a given event stay zero.

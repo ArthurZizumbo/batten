@@ -1,15 +1,20 @@
 # Instalar batten en un proyecto
 
-batten se instala como plugin de Claude Code. El binario Go va dentro del plugin (Claude Code
-añade `bin/` de un plugin al PATH automáticamente), así que los hooks lo encuentran sin pasos
-fuera de banda.
+batten se instala como plugin de Claude Code, y **el binario llega solo**: un hook `SessionStart`
+corre `bootstrap.sh`, que en el primer arranque descarga el binario estático de tu plataforma
+desde el GitHub Release a `${CLAUDE_PLUGIN_DATA}/bin` (una ruta que sobrevive a las
+actualizaciones del plugin). Si compilaste en local, el binario ya está en el `bin/` del plugin —
+Claude Code añade ese directorio al PATH — y bootstrap lo detecta y no descarga nada.
+
+Si la descarga falla, lo dice y los hooks no-opean: **nada queda gobernado**, y batten prefiere
+avisarlo a fingir que te está protegiendo.
 
 ## Instalación (5 pasos)
 
 ```
 # 1. registrar el marketplace (una vez por máquina)
 #    - desde un release publicado:
-/plugin marketplace add arthu/batten
+/plugin marketplace add ArthurZizumbo/batten
 #    - o desde un checkout local (dev): primero compila el binario, luego:
 scripts/build-plugin.ps1            # Windows
 scripts/build-plugin.sh             # macOS/Linux
@@ -57,10 +62,18 @@ batten no se rompe con dos Claude Code trabajando el mismo repo:
 
 ## Dónde vive el estado
 
-`${CLAUDE_PLUGIN_DATA}/batten.db` (sobrevive a las actualizaciones del plugin;
-`${CLAUDE_PLUGIN_ROOT}` NO — se borra en cada update, por eso el estado nunca vive ahí).
-Override con `BATTEN_DB`.
+**`~/.batten/batten.db`**, siempre. Override con `BATTEN_DB`.
+
+Esa ruta es deliberada y vale la pena explicarla, porque costó dos bugs en el dogfood. El estado
+NO vive en `${CLAUDE_PLUGIN_DATA}`: los procesos de hook tienen esa variable, pero tu terminal no,
+así que una ruta que dependa del entorno parte el estado en dos bases de datos — la TUI dice "no
+hay runs" mientras los hooks escriben runs felizmente en otro lado. Y `${CLAUDE_PLUGIN_ROOT}`
+queda prohibido en cualquier caso: se borra en cada actualización del plugin.
+
+El binario descargado sí vive en `${CLAUDE_PLUGIN_DATA}/bin` — eso es caché, no estado, y
+perderlo solo cuesta una descarga.
 
 ## Desinstalar
 
-`/plugin uninstall batten@batten`. La DB queda salvo que borres `${CLAUDE_PLUGIN_DATA}`.
+`/plugin uninstall batten@batten`. La DB sobrevive: está en `~/.batten`, fuera del plugin. Bórrala
+a mano si de verdad quieres empezar de cero.

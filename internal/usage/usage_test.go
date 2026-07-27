@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/arthu/batten/internal/store"
+	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
 func approx(a, b float64) bool { return math.Abs(a-b) < 1e-9 }

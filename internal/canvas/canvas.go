@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/arthu/batten/internal/store"
+	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
 type Canvas struct {

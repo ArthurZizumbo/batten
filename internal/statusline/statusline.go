@@ -32,8 +32,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/arthu/batten/internal/spec"
-	"github.com/arthu/batten/internal/store"
+	"github.com/ArthurZizumbo/batten/internal/spec"
+	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
 // Input is the statusLine stdin payload. Absent quota fields stay nil — nil means

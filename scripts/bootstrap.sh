@@ -13,7 +13,7 @@
 # break a session. The batten hooks already no-op silently when the binary is absent.
 set -u
 
-REPO="arthu/batten"   # TODO: set to the real org/repo before the first release
+REPO="ArthurZizumbo/batten"
 ROOT="${CLAUDE_PLUGIN_ROOT:-.}"
 DATA="${CLAUDE_PLUGIN_DATA:-$HOME/.batten}"
 ext=""; case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) ext=".exe" ;; esac
@@ -30,13 +30,34 @@ arch="$(uname -m)"; case "$arch" in x86_64) arch="amd64" ;; aarch64|arm64) arch=
 
 echo "batten: fetching the binary for ${os}/${arch} (first run)..." >&2
 mkdir -p "$DATA/bin"
+
+# This name is a contract with .goreleaser.yaml's archives.name_template: tar.gz on every
+# platform, no version in the name, because releases/latest/download only resolves a name we can
+# predict without knowing the tag. Change one, change the other in the same commit.
 url="https://github.com/${REPO}/releases/latest/download/batten_${os}_${arch}.tar.gz"
 tmp="$(mktemp -d)"
-if curl -fsSL "$url" -o "$tmp/b.tgz" 2>/dev/null && tar -xzf "$tmp/b.tgz" -C "$tmp" 2>/dev/null; then
-  mv "$tmp/batten${ext}" "$DATA/bin/batten${ext}" 2>/dev/null && chmod +x "$DATA/bin/batten${ext}" 2>/dev/null
+
+# Every step is checked, and success is only claimed once the binary is actually in place and
+# runnable. A bootstrap that prints "installed" over a failed move teaches the user to trust a
+# gate that is not there.
+ok=0
+if curl -fsSL "$url" -o "$tmp/b.tgz" 2>/dev/null &&
+   tar -xzf "$tmp/b.tgz" -C "$tmp" 2>/dev/null &&
+   [ -f "$tmp/batten${ext}" ] &&
+   mv "$tmp/batten${ext}" "$DATA/bin/batten${ext}" 2>/dev/null; then
+  chmod +x "$DATA/bin/batten${ext}" 2>/dev/null
+  if "$DATA/bin/batten${ext}" version >/dev/null 2>&1; then
+    ok=1
+  fi
+fi
+
+if [ "$ok" = 1 ]; then
   echo "batten: installed to $DATA/bin" >&2
 else
-  echo "batten: could not download the binary. Build it once: $ROOT/scripts/build-plugin.sh" >&2
+  rm -f "$DATA/bin/batten${ext}" 2>/dev/null   # never leave a half-installed binary behind
+  echo "batten: could not install the binary from $url" >&2
+  echo "batten: build it once instead: $ROOT/scripts/build-plugin.sh" >&2
+  echo "batten: until then the hooks no-op — nothing is being gated." >&2
 fi
 rm -rf "$tmp"
 exit 0

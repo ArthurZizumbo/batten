@@ -33,7 +33,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/arthu/batten/internal/store"
+	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
 // ErrNoVault is returned when a Writer has no root. The caller should simply not export when

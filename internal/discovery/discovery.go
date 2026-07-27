@@ -42,7 +42,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/arthu/batten/internal/spec"
+	"github.com/ArthurZizumbo/batten/internal/spec"
 )
 
 type Source string

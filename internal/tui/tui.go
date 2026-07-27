@@ -16,8 +16,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"github.com/arthu/batten/internal/spec"
-	"github.com/arthu/batten/internal/store"
+	"github.com/ArthurZizumbo/batten/internal/spec"
+	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
 // Bubble Tea v2 changed the Model interface out from under v1 code: Init lost its model

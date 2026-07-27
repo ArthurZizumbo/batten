@@ -14,7 +14,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/arthu/batten/internal/discovery"
+	"github.com/ArthurZizumbo/batten/internal/discovery"
 )
 
 // Facts is everything the scanner could learn without a human.
@@ -23,9 +23,9 @@ type Facts struct {
 	UnitPattern string           `json:"unit_pattern"` // derived from branch names, or a sensible default
 	UnitName    string           `json:"unit_name"`
 	Domains     []DomainFact     `json:"domains"`
-	Stack       []string         `json:"stack"`   // languages and tooling, from marker files actually present
-	Purpose     []string         `json:"purpose"` // files where the repo describes what it is for
-	Harness     []HarnessFact    `json:"harness"` // the process already governing this repo
+	Stack       []string         `json:"stack"`    // languages and tooling, from marker files actually present
+	Purpose     []string         `json:"purpose"`  // files where the repo describes what it is for
+	Harness     []HarnessFact    `json:"harness"`  // the process already governing this repo
 	Graphify    bool             `json:"graphify"` // graphify on PATH or graphify-out/ present
 	Engram      bool             `json:"engram"`   // engram plugin/binary detectable
 	Skills      []discovery.Item `json:"skills"`

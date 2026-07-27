@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://raw.githubusercontent.com/arthu/batten/main/batten.schema.json",
+  "$id": "https://raw.githubusercontent.com/ArthurZizumbo/batten/main/batten.schema.json",
   "title": "batten.yaml",
   "description": "A project's procedural memory, declared as data: the phases it runs, the domains it fans out over, the checks that gate a close, and the ceilings an unattended run may not cross. The engine knows nothing about any project — it reads this file and executes it. Governing rule: if a hook cannot enforce it or a command cannot run it, it does not belong here. Over-declaring turns the spec into a DSL nobody maintains.",
   "type": "object",

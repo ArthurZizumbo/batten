@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/arthu/batten/internal/spec"
+	"github.com/ArthurZizumbo/batten/internal/spec"
 )
 
 // fixture builds a machine: a project with its own .claude, a user config dir (pointed at by

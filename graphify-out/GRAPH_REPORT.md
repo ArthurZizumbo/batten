@@ -68,7 +68,7 @@
 - Writer
 - CallToolResult
 - Context
-- github.com/arthu/batten
+- github.com/ArthurZizumbo/batten
 
 ## God Nodes (most connected - your core abstractions)
 1. `Store` - 69 edges
