@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -177,6 +178,149 @@ func TestExpandHome(t *testing.T) {
 	if got := expandHome("~/vault"); !strings.HasPrefix(got, home) || strings.Contains(got, "~") {
 		t.Errorf("~ did not expand: %q", got)
 	}
+}
+
+// runHook drives the real hook entry point end to end — stdin in, stdout captured — because the
+// thing under test IS the entry point's silence, and a test that called Dispatch directly would
+// step over every path that produces it.
+func runHook(t *testing.T, event, payload string) string {
+	t.Helper()
+
+	inR, inW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldIn, oldOut := os.Stdin, os.Stdout
+	os.Stdin, os.Stdout = inR, outW
+	defer func() { os.Stdin, os.Stdout = oldIn, oldOut }()
+
+	go func() { _, _ = inW.WriteString(payload); inW.Close() }()
+
+	done := make(chan string, 1)
+	go func() { b, _ := io.ReadAll(outR); done <- string(b) }()
+
+	if err := cmdHook([]string{event}); err != nil {
+		t.Fatalf("cmdHook returned an error, which would surface as a broken hook: %v", err)
+	}
+	outW.Close()
+	return <-done
+}
+
+// TestABrokenStoreSaysSoInsteadOfPassingInSilence is §4.3: fail open, but never quietly.
+//
+// The hook entry point funnelled every failure into `return nil` — no spec, unreadable store,
+// dispatch error, recovered panic. Exit 0 with no output is also what an ALLOW looks like, so a
+// batten whose gate was completely down was indistinguishable from a batten that had just
+// approved the commit. The user concludes the gate is working. It is not.
+//
+// It stays fail-OPEN on purpose. The likeliest cause is a busy SQLite file, and denying every
+// tool call while another process holds the write lock would brick the session.
+func TestABrokenStoreSaysSoInsteadOfPassingInSilence(t *testing.T) {
+	dir := t.TempDir()
+	y := "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
+		"phases:\n  - id: verify\n    gate: qa\n  - id: close\n    gate: qa\n    requires_verdict: ok\n" +
+		"gates:\n  qa:\n    verdict: required\n    evidence: required\n"
+	if err := os.WriteFile(filepath.Join(dir, "batten.yaml"), []byte(y), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A directory where the database file should be: store.Open cannot open it, and it fails the
+	// same way a locked or corrupt database does — before a Handler exists to report anything.
+	broken := filepath.Join(t.TempDir(), "batten.db")
+	if err := os.MkdirAll(broken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BATTEN_DB", broken)
+
+	payload := `{"session_id":"s","cwd":` + jsonString(dir) +
+		`,"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m \"x\""}}`
+
+	out := runHook(t, "PreToolUse", payload)
+	if strings.TrimSpace(out) == "" {
+		t.Fatal("the store could not be opened, so the commit gate did not run at all — and the " +
+			"hook said nothing, which the user reads as the gate approving")
+	}
+	for _, want := range []string{"did NOT run", "cause", "batten doctor"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the warning must say batten did not run, why, and what to do. Missing %q from:\n%s", want, out)
+		}
+	}
+	// Fail OPEN: a warning, never a denial. Denying on a busy database would deny every tool call.
+	if strings.Contains(out, `"permissionDecision":"deny"`) {
+		t.Errorf("a degraded batten must not deny — SQLITE_BUSY would then brick the session:\n%s", out)
+	}
+	// And it must reach the human, not only the model's context.
+	if !strings.Contains(out, "systemMessage") {
+		t.Errorf("the warning never reaches the user's screen:\n%s", out)
+	}
+}
+
+// The other half, and the reason this is not simply "warn on every failure": a plugin installed
+// globally fires its hooks in every repo the user opens. Where there is no batten.yaml, nobody
+// asked to be governed and silence is the correct answer — batten governs where it was invited.
+func TestNoBattenYamlStaysCompletelySilent(t *testing.T) {
+	dir := t.TempDir() // no batten.yaml anywhere above it
+	t.Setenv("BATTEN_DB", filepath.Join(t.TempDir(), "batten.db"))
+
+	payload := `{"session_id":"s","cwd":` + jsonString(dir) +
+		`,"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m \"x\""}}`
+
+	if out := runHook(t, "PreToolUse", payload); strings.TrimSpace(out) != "" {
+		t.Errorf("batten spoke up in a repo that never asked for it:\n%s", out)
+	}
+}
+
+// A malformed batten.yaml is the opposite case: this repo DID ask to be governed, and the gate
+// is down because its own config does not load. Silence there hides a broken installation.
+func TestAnUnloadableSpecIsReported(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "batten.yaml"), []byte("version: 1\nproject:\n  - not a string\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BATTEN_DB", filepath.Join(t.TempDir(), "batten.db"))
+
+	payload := `{"session_id":"s","cwd":` + jsonString(dir) +
+		`,"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"git commit -m \"x\""}}`
+
+	out := runHook(t, "PreToolUse", payload)
+	if strings.TrimSpace(out) == "" {
+		t.Fatal("batten.yaml exists and does not load, so no gate ran — and nothing said so")
+	}
+	if !strings.Contains(out, "batten.yaml") {
+		t.Errorf("the warning must name the file that failed to load:\n%s", out)
+	}
+}
+
+// Recording events is not enforcing them. Losing a SubagentStart costs a node in the graph; it
+// does not let an unverified commit through, so it must not put a warning in front of the user
+// on every tool call. The noise budget belongs to the events where silence means approval.
+func TestOnlyTheEnforcingEventWarnsWhenDegraded(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "batten.yaml"),
+		[]byte("version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\nphases:\n  - id: build\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	broken := filepath.Join(t.TempDir(), "batten.db")
+	if err := os.MkdirAll(broken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BATTEN_DB", broken)
+
+	payload := `{"session_id":"s","cwd":` + jsonString(dir) + `,"hook_event_name":"SubagentStart","agent_id":"a1"}`
+	if out := runHook(t, "SubagentStart", payload); strings.TrimSpace(out) != "" {
+		t.Errorf("a recording event warned about a degraded store; that fires on every subagent "+
+			"and trains the user to ignore the warning that matters:\n%s", out)
+	}
+}
+
+// jsonString quotes s as a JSON string, so Windows backslashes in a temp path do not turn the
+// payload into invalid JSON — which would make the hook fail for the wrong reason.
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 // gateReadyToClose is the same decision the commit hook makes, reached from the CLI. It must

@@ -102,6 +102,10 @@ func (h *Handler) gate(event, reason string) *Output {
 	return deny(event, reason)
 }
 
+// Advise is advise, exported for the one caller outside this package: cmd/batten's hook entry
+// point, which has to report that batten degraded BEFORE a Handler could be built at all.
+func Advise(event, reason string) *Output { return advise(event, reason) }
+
 // advise is the warning form: the tool call proceeds, but the reason lands both in front of
 // the user (systemMessage) and in the model's context. Used by report mode, and by any check
 // that cannot attribute blame well enough to justify a hard deny.
@@ -365,18 +369,35 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 
 	if unit == "" {
 		open, _ := h.Store.OpenRuns(h.Spec.Project)
-		if len(open) > 1 {
-			var names []string
-			for _, r := range open {
-				names = append(names, r.UnitID)
-			}
+		if len(open) == 0 {
+			// The literal first commit after adopting batten, and the most likely first thing
+			// anyone does with it. Nothing is open, the message names no unit, and no branch
+			// names one either — which is the normal state of a repo that is planned but not yet
+			// worked, and of trunk-based development generally.
+			//
+			// This used to return in silence, on the argument that SessionStart carries it. It
+			// half does: SessionStart says "the commit gate is not governing anything" — but it
+			// says it in additionalContext, which reaches the MODEL and not the user's screen,
+			// once, at the start of a session whose commit may be two hundred turns later. At the
+			// moment of the ungated commit, nobody was told anything, and this hook's silence is
+			// indistinguishable from an approval.
 			return advise("PreToolUse", fmt.Sprintf(
-				"batten: this commit is NOT gated. %d units are open (%s) and this session is bound "+
-					"to none of them, so batten cannot tell which one you are committing.\n"+
-					"Bind it with `batten phase <unit> <phase>`, or use a worktree per unit.",
-				len(open), strings.Join(names, ", "))), nil
+				"batten: this commit is NOT gated. No run is open and nothing identifies which unit "+
+					"this commit is for, so there was no verdict to check and nothing was verified.\n"+
+					"Open one with `batten phase <%s> %s` — the gate governs from there.",
+				h.Spec.Unit.Name, firstPhaseID(h.Spec))), nil
 		}
-		return nil, nil // nothing open and nothing to attribute: SessionStart carries this one
+		var names []string
+		for _, r := range open {
+			names = append(names, r.UnitID)
+		}
+		// One open run the session does not own is not less ambiguous than five — it is the same
+		// failure with a shorter list, and batten still cannot say this commit belongs to it.
+		return advise("PreToolUse", fmt.Sprintf(
+			"batten: this commit is NOT gated. %d unit(s) are open (%s) and this session is bound "+
+				"to none of them, so batten cannot tell which one you are committing.\n"+
+				"Bind it with `batten phase <unit> <phase>`, or use a worktree per unit.",
+			len(open), strings.Join(names, ", "))), nil
 	}
 	run, err := h.Store.ActiveRun(h.Spec.Project, unit)
 	if err != nil {

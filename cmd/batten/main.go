@@ -160,44 +160,95 @@ func load() (*spec.Spec, *store.Store, error) {
 
 // ---------- hook ----------
 
-func cmdHook(args []string) (retErr error) {
-	// A hook runs on every tool call. A panic here — a nil deref, a bad type assertion on a
-	// payload shape we didn't expect — would paint a Go stack trace across the user's session.
-	// Principle #2: degrade, never break. Swallow it and exit clean; the tool call proceeds.
-	defer func() {
-		if r := recover(); r != nil {
-			retErr = nil
-		}
-	}()
+// errNotGoverned means no batten.yaml was found above the hook's cwd. It is the ONE failure
+// that deserves silence: batten governs where it was invited and nowhere else, and a plugin
+// installed globally fires its hooks in every repo the user opens.
+//
+// Every other failure is the opposite case — there IS a batten.yaml, so this repo asked to be
+// governed, and batten just didn't govern it. That has to be said out loud.
+var errNotGoverned = errors.New("batten: no batten.yaml governs this directory")
 
+func cmdHook(args []string) (retErr error) {
 	if len(args) < 1 {
 		return errors.New("hook: need an event name")
 	}
 	event := args[0]
+	wrote := false
+
+	// A hook runs on every tool call. A panic here — a nil deref, a bad type assertion on a
+	// payload shape we didn't expect — would paint a Go stack trace across the user's session.
+	// Principle #2: degrade, never break. Swallow it and exit clean; the tool call proceeds.
+	//
+	// But principle #3 is that we only fail open OUT LOUD. A recovered panic used to leave
+	// nothing at all on stdout, and this hook's silence is indistinguishable from an allow —
+	// so the guard that just crashed reads exactly like a guard that just approved.
+	defer func() {
+		if r := recover(); r != nil {
+			if !wrote {
+				degraded(event, fmt.Sprintf("batten crashed while handling this event (%v)", r))
+			}
+			retErr = nil
+		}
+	}()
 
 	raw, err := hooks.ReadInput(os.Stdin)
 	if err != nil {
-		return err
+		degraded(event, fmt.Sprintf("could not read the hook payload (%v)", err))
+		return nil
 	}
 
-	// A hook must never break a session. If batten is not configured here, or anything
-	// goes wrong, exit clean and silent: we govern where we were invited, nowhere else.
 	sp, st, err := loadForHook(raw)
-	if err != nil {
+	switch {
+	case errors.Is(err, errNotGoverned):
+		return nil // correct silence: nobody asked us to govern here
+	case err != nil:
+		degraded(event, err.Error())
 		return nil
 	}
 	defer st.Close()
 
 	h := &hooks.Handler{Spec: sp, Store: st, TapPath: tapPath()}
 	out, err := h.Dispatch(event, raw)
-	if err != nil || out == nil {
+	if err != nil {
+		degraded(event, fmt.Sprintf("the %s handler failed (%v)", event, err))
 		return nil
 	}
+	if out == nil {
+		return nil
+	}
+	wrote = true
 	return json.NewEncoder(os.Stdout).Encode(out)
+}
+
+// degraded reports that batten did not do its job for this event, without blocking anything.
+//
+// It is deliberately NOT fail-closed. The most common cause is a busy SQLite file, and denying
+// every tool call while another process holds the write lock would brick the session — batten
+// would be uninstalled the first afternoon two agents ran at once. So the tool call proceeds and
+// the user is told that it proceeded ungoverned, which is the one thing they cannot infer
+// themselves: `batten hook` exits 0 with no output for at least six different reasons, and
+// "allowed" is only one of them.
+//
+// Only the ENFORCING events say anything. PreToolUse is where the commit gate and the write-set
+// guard live, so silence there is a false approval. SessionStart, Stop and the subagent events
+// only record; losing one costs a node in the graph, not a rule.
+func degraded(event, cause string) {
+	if event != "PreToolUse" {
+		return
+	}
+	_ = json.NewEncoder(os.Stdout).Encode(hooks.Advise(event, fmt.Sprintf(
+		"batten did NOT run for this tool call — neither the commit gate nor the write-set "+
+			"guard was applied, and nothing here was verified.\ncause: %s\n"+
+			"Retry, or diagnose it with `batten doctor`.", cause)))
 }
 
 // loadForHook resolves the spec from the hook's own cwd, not the process cwd —
 // a hook process may be started anywhere.
+//
+// The two failures are kept apart because they mean opposite things to the user. "There is no
+// batten.yaml" is not a problem; "there is a batten.yaml and it does not load" is the gate being
+// down in a repo that asked for one. Collapsing both into a bare error made them indistinguishable
+// at the call site, and the call site chose silence for both.
 func loadForHook(raw []byte) (*spec.Spec, *store.Store, error) {
 	var probe struct {
 		CWD string `json:"cwd"`
@@ -207,13 +258,18 @@ func loadForHook(raw []byte) (*spec.Spec, *store.Store, error) {
 	if dir == "" {
 		dir, _ = os.Getwd()
 	}
-	sp, err := spec.LoadFrom(dir)
+
+	path, err := spec.Find(dir)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, errNotGoverned
+	}
+	sp, err := spec.Load(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("%s did not load (%v)", spec.Filename, err)
 	}
 	st, err := store.Open(dbPath())
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("could not open the store at %s (%v)", dbPath(), err)
 	}
 	return sp, st, nil
 }

@@ -430,6 +430,90 @@ func TestAnAmbiguousCommitNamesTheUnitsItCannotChooseBetween(t *testing.T) {
 	}
 }
 
+// TestTheVeryFirstCommitAfterAdoptingIsNotSilent.
+//
+// Found by rebuilding the proyecto_ui replica (docs/field-test/REPLICA-UI.md, test 5) — the one
+// shape batten had never been exercised against: a repo that is planned but not yet built, with
+// no code, no build files and no git history at all.
+//
+// It is also the most likely first interaction anyone has with batten. They install it, they
+// commit something, and there is no run open, the message names no unit, and no branch names one
+// either. This returned nothing at all, on the argument that SessionStart carries it. SessionStart
+// does say it — into additionalContext, which reaches the model and not the user's screen, once,
+// at a session start that may be two hundred turns before the commit. At the commit itself nobody
+// was told anything, and `batten hook` exits 0 with no output for six different reasons, of which
+// "allowed" is only one.
+func TestTheVeryFirstCommitAfterAdoptingIsNotSilent(t *testing.T) {
+	h, run := gateFixture(t, nil, "enforce")
+	// gateFixture opens TASK-1 bound to sess-1. Close it: nothing is open, which is the state of
+	// a repo that just adopted batten.
+	if err := h.Store.CloseRun(run.RunID, "ok"); err != nil {
+		t.Fatal(err)
+	}
+
+	in := commitInput()
+	in.SessionID = "sess-brand-new"
+	in.CWD = h.Spec.Root // a temp dir, not a git repo: no branch can name a unit
+
+	out, err := h.verdictGate(in, `git commit -m "primer commit del equipo"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil {
+		t.Fatal("the first commit after adopting batten passed in COMPLETE SILENCE. That is " +
+			"indistinguishable from an approval by a gate that never ran, which is the exact " +
+			"failure batten exists to remove from other people's workflows")
+	}
+	if got := decision(out); got != "warn" {
+		t.Fatalf("an unattributable commit must warn, never deny — batten cannot deny what it "+
+			"cannot attribute, and denying here gets it uninstalled on day one; got %q", got)
+	}
+	msg := out.SystemMessage + " " + out.HookSpecific.AdditionalContext
+	for _, want := range []string{"NOT gated", "batten phase"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the warning must say the commit is not gated and how to start governing it. "+
+				"Missing %q from:\n%s", want, msg)
+		}
+	}
+	// And it must be visible to the HUMAN, not only to the model. The whole defect was a true
+	// statement delivered somewhere the person committing never looks.
+	if out.SystemMessage == "" {
+		t.Error("the warning reached additionalContext (the model) but not systemMessage (the " +
+			"user) — which is precisely the half-measure this replaces")
+	}
+}
+
+// The same rule with exactly one unit open that the session does not own. One candidate is not
+// less ambiguous than five: batten still cannot say this commit belongs to it. This fell into
+// the same silent return as the zero case, because the guard was `len(open) > 1`.
+func TestOneOpenUnitTheSessionDoesNotOwnIsStillUngated(t *testing.T) {
+	h, run := gateFixture(t, nil, "enforce")
+	if err := h.Store.CloseRun(run.RunID, "ok"); err != nil {
+		t.Fatal(err)
+	}
+	// Exactly one open run, owned by somebody else's session.
+	if _, err := h.Store.EnsureRun("p", "TASK-9", "sess-otra"); err != nil {
+		t.Fatal(err)
+	}
+
+	in := commitInput()
+	in.SessionID = "sess-brand-new"
+	in.CWD = h.Spec.Root
+
+	out, err := h.verdictGate(in, `git commit -m "arregla un typo"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil {
+		t.Fatal("one open run owned by another session left the commit ungated AND silent")
+	}
+	msg := out.SystemMessage + " " + out.HookSpecific.AdditionalContext
+	if !strings.Contains(msg, "NOT gated") || !strings.Contains(msg, "TASK-9") {
+		t.Errorf("the warning must say the commit is not gated and name the unit it could not "+
+			"attribute it to; got:\n%s", msg)
+	}
+}
+
 // TestBattenCheckAloneDoesNotCloseAUnit.
 //
 // `batten check` writes its own source='batten' verdict. That row was both the newest verdict
