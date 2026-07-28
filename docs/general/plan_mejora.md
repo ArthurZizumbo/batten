@@ -9,7 +9,9 @@
 >
 > Contexto del plugin: [`plugin_al_momento.md`](plugin_al_momento.md) ·
 > Field test: [`../FIELD-TEST.md`](../FIELD-TEST.md) ·
-> Recorrido de adopción: [`../QUICKSTART.md`](../QUICKSTART.md)
+> Recorrido de adopción: [`../QUICKSTART.md`](../QUICKSTART.md) ·
+> **Adopción y esencia:** [`adopcion_y_esencia.md`](adopcion_y_esencia.md) — evalúa un estudio de
+> mercado pesimista, y contiene el orden de trabajo FUSIONADO (técnico + adopción) en su §7
 
 ---
 
