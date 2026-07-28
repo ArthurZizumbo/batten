@@ -285,13 +285,36 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 		return nil, nil // spec does not gate closing
 	}
 
+	// Not blocking here is right — batten cannot deny what it cannot attribute, and denying
+	// on ambiguity would stop honest work. But principle #3 is "fail open only OUT LOUD", and
+	// both of the paths below used to return in silence. Silence from this hook is
+	// indistinguishable from approval, so the user concludes the gate is working. It is not.
 	unit := h.activeUnit(in)
 	if unit == "" {
-		return nil, nil // cannot attribute this commit to a unit: do not block
+		open, _ := h.Store.OpenRuns(h.Spec.Project)
+		if len(open) > 1 {
+			var names []string
+			for _, r := range open {
+				names = append(names, r.UnitID)
+			}
+			return advise("PreToolUse", fmt.Sprintf(
+				"batten: this commit is NOT gated. %d units are open (%s) and this session is bound "+
+					"to none of them, so batten cannot tell which one you are committing.\n"+
+					"Bind it with `batten phase <unit> <phase>`, or use a worktree per unit.",
+				len(open), strings.Join(names, ", "))), nil
+		}
+		return nil, nil // nothing open and nothing to attribute: SessionStart carries this one
 	}
 	run, err := h.Store.ActiveRun(h.Spec.Project, unit)
 	if err != nil {
-		return nil, nil // no run recorded: the gate has nothing to say
+		// The unit is known — the branch names it — but no run was ever opened for it. This is
+		// the first commit after adopting batten: the newcomer branches, codes, commits, sees it
+		// succeed, and reasonably concludes the gate is on.
+		return advise("PreToolUse", fmt.Sprintf(
+			"batten: this commit is NOT gated. %s has no run on record, so there is no verdict to "+
+				"check and nothing was verified.\n"+
+				"Open one with `batten phase %s %s` — the gate starts governing from there.",
+			unit, unit, firstPhaseID(h.Spec))), nil
 	}
 
 	if ok, _ := h.Store.HasOverride(run.RunID, closing.Gate); ok {
@@ -411,6 +434,15 @@ func gateGuess(s *spec.Spec) string {
 		}
 	}
 	return "verify"
+}
+
+// firstPhaseID names the phase a unit should be opened at, so an advisory can print a command
+// the reader can paste rather than a placeholder they have to resolve.
+func firstPhaseID(s *spec.Spec) string {
+	if len(s.Phases) > 0 {
+		return s.Phases[0].ID
+	}
+	return "build"
 }
 
 // writeSetGuard is wedge #2. "Two agents never write the same file" is the workflow's
@@ -588,7 +620,21 @@ func (h *Handler) ingest(in Input, runID string) {
 // by hand today.
 func (h *Handler) sessionStart(in Input) (*Output, error) {
 	runs, err := h.Store.ListRuns(h.Spec.Project, 5)
-	if err != nil || len(runs) == 0 {
+	if err != nil {
+		return nil, nil
+	}
+	// No runs at all is not "nothing to report" — it is the state where the commit gate has
+	// nothing to gate. Saying so once per session is the honest version of a hook that would
+	// otherwise stay quiet through the newcomer's whole first day and let them conclude the
+	// gate is on. Once per session, not per commit: this is orientation, not an alarm.
+	if len(runs) == 0 {
+		if closing, ok := h.Spec.ClosingPhase(); ok && closing.RequiresVerdict != "" {
+			return context("SessionStart", fmt.Sprintf(
+				"## batten — %s\n\nNo run has been opened yet, so **the commit gate is not "+
+					"governing anything**. A commit right now lands unverified.\n"+
+					"Start one with `batten phase <%s> %s`.\n",
+				h.Spec.Project, h.Spec.Unit.Name, firstPhaseID(h.Spec))), nil
+		}
 		return nil, nil
 	}
 	var b strings.Builder

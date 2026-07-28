@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -318,4 +319,113 @@ func TestCommitReCatchesTheSpellingsAnAgentActuallyUses(t *testing.T) {
 
 func writeFile(path, body string) error {
 	return os.WriteFile(path, []byte(body), 0o644)
+}
+
+// TestAnUngatedCommitSaysSoInsteadOfPassingSilently.
+//
+// The commit gate did not exist until some batten command had created a run, so the FIRST
+// commit after adopting batten went through in silence. That is the worst possible moment for
+// silence: the newcomer branches, codes, commits, watches it succeed, and concludes the gate
+// is working. It is not — there is nothing to check against.
+//
+// Not blocking is still right. batten cannot deny what it cannot attribute, and denying every
+// commit in a repo that has not opened a run would get it uninstalled the same day. But
+// principle #3 is "fail open only OUT LOUD", and this path had no voice at all.
+func TestAnUngatedCommitSaysSoInsteadOfPassingSilently(t *testing.T) {
+	h, run := gateFixture(t, []string{"go test ./..."}, "enforce")
+
+	// Positive control FIRST: silence from this hook has at least six innocent causes, so a
+	// later silence proves nothing unless the gate is shown to deny in the same fixture.
+	out, err := h.verdictGate(commitInput(), `git commit -m "feat: x"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got != "deny" {
+		t.Fatalf("control failed: a bound run with no verdict must DENY, got %q — "+
+			"the assertions below would prove nothing", got)
+	}
+
+	// Now the case under test, reproduced the way a newcomer meets it: a real repo on a
+	// branch that names a unit, and no run ever opened for it. gateFixture's own run is
+	// bound to sess-1 and to a different unit, so it cannot resolve this session.
+	if err := h.Store.CloseRun(run.RunID, "ok"); err != nil {
+		t.Fatal(err)
+	}
+	gitBranchAt(t, h.Spec.Root, "feature/TASK-002-add-export")
+
+	in := commitInput()
+	in.SessionID = "sess-unbound"
+	in.CWD = h.Spec.Root
+
+	out, err = h.verdictGate(in, `git commit -m "feat: x"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got == "deny" {
+		t.Fatalf("an unattributable commit must not be denied — batten cannot deny what it "+
+			"cannot attribute; got %q", got)
+	}
+	if out == nil {
+		t.Fatal("an ungated commit passed in complete silence, which reads to the user as " +
+			"approval by a gate that never ran")
+	}
+	msg := out.SystemMessage + " " + out.HookSpecific.AdditionalContext
+	for _, want := range []string{"NOT gated", "TASK-002", "batten phase"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the warning must say the commit is not gated, name the unit the branch "+
+				"points at, and say how to start governing it. Missing %q from:\n%s", want, msg)
+		}
+	}
+}
+
+// gitBranchAt makes dir a real repo sitting on branch, because activeUnit resolves the unit
+// from the branch name by shelling out to git. Faking that would test the fake.
+func gitBranchAt(t *testing.T, dir, branch string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"init", "-q", "."},
+		{"config", "user.email", "t@t.io"},
+		{"config", "user.name", "tester"},
+		{"commit", "-q", "--allow-empty", "-m", "base"},
+		{"checkout", "-q", "-b", branch},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git unavailable in this environment (%v): %s", err, out)
+		}
+	}
+}
+
+// The other unattributable shape: several units open and a session bound to none of them.
+// batten cannot tell which unit is being committed, so it cannot deny — but it must say that
+// the commit is ungated and name the units it is choosing between.
+func TestAnAmbiguousCommitNamesTheUnitsItCannotChooseBetween(t *testing.T) {
+	h, _ := gateFixture(t, []string{"go test ./..."}, "enforce")
+	for _, u := range []string{"TASK-2", "TASK-3"} {
+		if _, err := h.Store.EnsureRun("p", u, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	in := commitInput()
+	in.SessionID = "sess-unbound"
+	in.CWD = h.Spec.Root
+
+	out, err := h.verdictGate(in, `git commit -m "feat: x"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil {
+		t.Fatal("with several units open and none bound, the commit is ungated and silent")
+	}
+	msg := out.SystemMessage + " " + out.HookSpecific.AdditionalContext
+	if !strings.Contains(msg, "NOT gated") {
+		t.Errorf("the warning must say the commit is not gated; got:\n%s", msg)
+	}
+	for _, u := range []string{"TASK-2", "TASK-3"} {
+		if !strings.Contains(msg, u) {
+			t.Errorf("the warning must name the competing unit %s; got:\n%s", u, msg)
+		}
+	}
 }

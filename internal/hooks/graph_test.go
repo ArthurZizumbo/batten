@@ -146,13 +146,22 @@ func TestSubagentTakesItsDomainFromTheAgentType(t *testing.T) {
 func TestSessionStartTellsYouWhatTheGateWillDo(t *testing.T) {
 	h, _ := guardFixture(t)
 
-	// Nothing recorded: no banner at all rather than an empty heading.
+	// Nothing recorded is NOT nothing to report: it is the state in which the commit gate
+	// governs nothing at all. Staying quiet here is how a newcomer branches, codes, commits,
+	// watches it succeed, and concludes the gate is on.
 	out, err := h.sessionStart(hookInput("SessionStart", "sess-a"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != nil {
-		t.Errorf("with no runs there is nothing to report; got %+v", out)
+	if out == nil || out.HookSpecific == nil {
+		t.Fatal("with no runs the gate is governing nothing, and that must be said once")
+	}
+	if ctx := out.HookSpecific.AdditionalContext; !strings.Contains(ctx, "not\ngoverning anything") &&
+		!strings.Contains(ctx, "not governing anything") {
+		t.Errorf("the zero-run banner must say the gate is not governing anything; got:\n%s", ctx)
+	}
+	if !strings.Contains(out.HookSpecific.AdditionalContext, "batten phase") {
+		t.Errorf("it must also say how to start:\n%s", out.HookSpecific.AdditionalContext)
 	}
 
 	r, _ := h.Store.EnsureRun("p", "TASK-1", "sess-a")
