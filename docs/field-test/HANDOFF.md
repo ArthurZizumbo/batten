@@ -3,6 +3,36 @@
 > State of an in-progress field test of batten. Written so a session with **no prior context** can
 > pick it up. Last updated 2026-07-28.
 
+## ⏸ RESUME HERE — verification is 35/63 done
+
+A second session verified findings **0–34** adversarially, in batches of five, on a binary built
+from `HEAD`. Results are in **`verified.json`** (same schema for every entry: verdict, repro,
+verbatim evidence, the positive control that was run, `already_fixed_at_head`, an independently
+re-judged severity, and a `fix_hint` with file:line).
+
+| batch 1–7 result | count |
+|---|---|
+| CONFIRMED (reproduced on the HEAD binary) | 31 |
+| REFUTED | 4 — #2 already fixed at HEAD, #25 not a defect, #11 and #26 downgraded to polish |
+
+**Next action: verify findings 35–62** — the remaining 28, still five at a time, using the same
+brief (the two traps below, refute-by-default, mandatory positive control for every ALLOW claim).
+Then reconcile, then fix, then write `docs/FIELD-TEST.md`.
+
+Two things the verification changed about the plan below:
+
+- **Blocker #3 (`on_exceed: block` not enforced without `checks:`) is CONFIRMED with a clean A/B.**
+  A run 7.8× over its ceiling got only an advisory with `gates.qa.checks` empty; adding one check
+  line and replaying the byte-identical payload produced `permissionDecision: deny`. Fix is at
+  `internal/hooks/hooks.go:347` — capture the advisory instead of returning it, and return after
+  the budget block at 354–363.
+- **Two new gate holes surfaced that are blocker-grade and are not in the original six.**
+  Finding **#9**: `batten check` writes its own `source=batten` verdict, which satisfies *both*
+  halves of the commit gate, so `batten check` alone closes a unit on an empty diff with nothing
+  judging acceptance criteria. Finding **#22**: once *any* unit is batten-verified, a commit whose
+  message names a *different* unit is allowed — the commit text is never read. Treat both as
+  blockers when scheduling the fixes.
+
 ## What happened
 
 A multi-agent field test ran batten against an isolated replica of a real project
@@ -43,7 +73,8 @@ the real vault. Never `git push` from a sandbox, never add a remote.
 | file | what it is |
 |---|---|
 | `FINDINGS-RAW.md` | all 80 findings, sorted blocker-first, each with the command, verbatim output, expectation, and the verifier's verdict where one exists |
-| `unverified.json` | the 63 findings that still need an adversarial pass — this is the input for the next step |
+| `unverified.json` | the 63 findings that needed an adversarial pass — the input; findings 0–34 are done, 35–62 remain |
+| `verified.json` | the 35 verdicts produced so far, one per finding, with repro, evidence and positive control |
 | `dimensions.json` | the raw per-dimension returns, including the 90 `worked` entries |
 | `verdicts.json` | the 26 verification verdicts that did complete |
 | `TEST-MATRIX.md` | the designed test matrix: every claim × happy/degraded/adversarial/edge, with what is CLI-testable vs what needs a live Claude Code session |
