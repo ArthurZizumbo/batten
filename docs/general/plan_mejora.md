@@ -984,16 +984,35 @@ script.
 
 ## 11. Orden de trabajo
 
-### Bloque 1 — antes de construir nada encima
+### Bloque 1 — ✅ COMPLETO (2026-07-28)
 
-| | qué | § | costo |
+| | qué | § | commit |
 |---|---|---|---|
-| 1 | tercer sitio del un-solo-veredicto | 4.1 | 30 min |
-| 2 | validar los 8 fixes contra la réplica de proyecto_ui | 4.2 | ½ día |
-| 3 | fail-open ruidoso | 4.3 | ½ día |
-| 4 | **`doctor` clínico** — es lo primero que corre alguien cuando algo falla | 5.5 | 1 día |
-| 5 | **el guard de "declarado ⇒ implementado"** — antes que las nueve instancias, o entra la décima | 2.1 | 1 día |
-| 6 | rediseñar el payload MCP **+ inyección por fase** | 4.4 · 4.5 | 2 días |
+| 1 | ✅ tercer sitio del un-solo-veredicto | 4.1 | `e52d931` |
+| 2 | ✅ validar los 8 fixes contra la réplica de proyecto_ui | 4.2 | `fd86cc9` |
+| 3 | ✅ fail-open ruidoso | 4.3 | `5b02b0c` |
+| 4 | ✅ **`doctor` clínico** | 5.5 | `d850c23` |
+| 5 | ✅ **el guard de "declarado ⇒ implementado"** | 2.1 | `f1a4cae` |
+| 6 | ✅ rediseñar el payload MCP **+ inyección por fase** | 4.4 · 4.5 | `8a6fab3` |
+
+**Lo que cambió respecto de lo planeado**, todo por la réplica del ítem 2 (que era su trabajo:
+*"es lo único que puede invalidar trabajo ya hecho"*). No invalidó nada — los ocho fixes previos
+valen también en la forma sin código, sin git y sin build files — pero encontró tres cosas:
+
+- **el §4.3 era más grande de lo escrito.** El fail-open silencioso no vivía solo en
+  `main.go:163-197`: el `return nil, nil` de `verdictGate` dejaba mudo **el primer commit de
+  alguien que acaba de instalar batten**, que es la interacción más probable de todas.
+- **`doctor` daba un ✓ verde a hooks de graphify que no podían estar instalados**, por inferir
+  el éxito de la *ausencia* de dos cadenas de fallo. Mismo error de razonamiento que la regla del
+  silencio de `batten hook`, cometido por el comando que existe para atrapar ese error.
+- **el ancla que `init` declara y el repo no puede producir** — la décima instancia del patrón de
+  §2.1, y el que declaró fue init.
+
+Y el guard del ítem 5 encontró **su propia décima instancia** en la primera corrida que hizo:
+`capabilities.obsidian.export` (§8).
+
+**Siguiente:** bloque 2, empezando por la columna `decision` en `events` (ítem 7), que es
+prerrequisito de los contadores.
 
 ### Bloque 2 — adopción (paralelizable, no toca el motor)
 
