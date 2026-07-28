@@ -264,7 +264,15 @@ func (h *Handler) preToolUse(in Input) (*Output, error) {
 }
 
 // commitRe matches a git commit anywhere in a (possibly compound) shell command.
-var commitRe = regexp.MustCompile(`(^|[;&|]|\s)git\s+(-[^\s]+\s+)*commit\b`)
+//
+// The hard part is everything git allows between the binary and the subcommand. An option
+// whose value is glued on (`--git-dir=.git`) is one token, but `-c user.email=a@b.c` and
+// `-C /path` are two, and the first spelling is the standard non-interactive commit an agent
+// or CI issues. A pattern that stops at the value token stops seeing the commit — the gate
+// then opens for the exact caller it was built to govern, silently and with no audit record.
+// So each option may carry one separate value, and `git.exe` is spelled out because this is
+// a Windows-first tool and the sibling phaseRe already handles `batten.exe`.
+var commitRe = regexp.MustCompile(`(^|[;&|]|\s)git(\.exe)?\s+((-{1,2}[^\s=]+(=[^\s]*)?)(\s+[^\s-][^\s]*)?\s+)*commit\b`)
 
 // verdictGate is wedge #1. The golden rule of the workflow doc — "never approve with an
 // empty evidence[]" — is a request a model can ignore. Here it is a denial it cannot.
@@ -322,6 +330,11 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 			unit, v.Result, closing.RequiresVerdict, v.Why, v.SafeNextStep, unit)), nil
 	}
 
+	// A warning we owe the user even when nothing below denies. It is held rather than
+	// returned, because returning here would skip every condition after it — which is
+	// exactly how the budget stopped being enforced once this branch was added.
+	var pending *Output
+
 	// If the gate declares checks, an agent's word is not enough: demand a verdict that BATTEN
 	// produced by running those checks. This is what closes the "I typed 'tests pass' without
 	// running them" hole — the mechanical part of the gate becomes true by construction.
@@ -344,13 +357,17 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 		// that silently degrades to trusting the model is worse than no gate, because it will be
 		// believed. This is an advise() even under `enforcement: enforce` — the situation is a
 		// missing declaration, not a violation, and denying is not the user's fix for it.
-		return advise("PreToolUse", fmt.Sprintf(
+		//
+		// It is an advisory, so it must never outrank a denial. Hold it and fall through.
+		pending = advise("PreToolUse", fmt.Sprintf(
 			"batten: gate %q declares no checks, so %s was approved on the agent's word alone — "+
 				"nothing was run to verify it. Add gates.%s.checks to make this gate mean something.",
-			gateName, unit, gateName)), nil
+			gateName, unit, gateName))
 	}
 
 	// Budget is also a closing condition: a run that blew its ceiling should not quietly land.
+	// This is reached whether or not the gate declares checks — an undeclared gate is a reason
+	// to warn, never a reason to stop counting tokens.
 	if h.Spec.Budget.OnExceed == "block" && h.Spec.Budget.Set() {
 		b := h.Spec.Budget
 		over, cs, err := h.Store.OverBudget(run.RunID, b.TokensPerRun, b.ImputedUSDPerRun, b.QuotaPctPerRun)
@@ -361,7 +378,7 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 				unit, formatCeilings(cs), unit)), nil
 		}
 	}
-	return nil, nil
+	return pending, nil
 }
 
 // formatCeilings renders each declared ceiling. An unmeasurable ceiling says so rather
