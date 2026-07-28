@@ -875,6 +875,13 @@ Cinco campos con **cero consumidores**, medido grepeando:
 | `budget.max_iterations` | el tope de vueltas de un bucle desatendido | se declara, se muestra en la TUI, **nunca se incrementa ni se verifica** | **implementar** (§5.6) — es el peor caso de la tabla: gobierna el comando más peligroso |
 | `models.tiers` / `models.phases` | *"batten routes subagents and verifies it from the ledger"* | 0 | **sacar del spec generado** |
 | `provenance.format` | metadatos de procedencia | 0 | **sacar del spec generado** |
+| `capabilities.obsidian.export` | **cuáles** exports escribir (`runs` \| `verdicts` \| `canvas`) | 0 | **implementar** — es una condición de tres líneas en `export.Run` |
+
+**La décima instancia la encontró el guard, en la primera corrida que hizo.**
+`capabilities.obsidian.export` no estaba en ninguna de las rondas manuales: `export.Run` escribe la
+nota, los dashboards y el canvas **incondicionalmente**, así que quien pide `export: [canvas]`
+recibe los tres. Y `batten init` escribe el campo en el `batten.yaml` que genera, de modo que la
+promesa se publica por defecto. El argumento a favor del guard, hecho por el guard.
 
 Un campo que el usuario escribe creyendo que gobierna, y que no gobierna, es **peor que su
 ausencia**. Es el principio #1 aplicado al propio spec.
