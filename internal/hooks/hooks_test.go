@@ -429,3 +429,117 @@ func TestAnAmbiguousCommitNamesTheUnitsItCannotChooseBetween(t *testing.T) {
 		}
 	}
 }
+
+// TestBattenCheckAloneDoesNotCloseAUnit.
+//
+// `batten check` writes its own source='batten' verdict. That row was both the newest verdict
+// AND the batten-verified one, so it satisfied both of the gate's conditions by itself — and
+// `batten check` on an empty diff, still in the build phase, with nothing having judged the
+// acceptance criteria, cleared the way for a commit. The gate was one-sided: an agent verdict
+// alone denied, batten's own verdict alone passed.
+//
+// The two conditions only mean anything if they come from two different producers. The machine
+// says the checks ran; a reviewer says the work is right.
+func TestBattenCheckAloneDoesNotCloseAUnit(t *testing.T) {
+	h, run := gateFixture(t, []string{"go test ./..."}, "enforce")
+
+	// Exactly what `batten check` records, and nothing else.
+	if err := h.Store.SaveVerdict(store.Verdict{
+		RunID: run.RunID, Gate: "qa", CheckID: "qa", Result: "ok",
+		Evidence: []string{"go test ./...: PASS (exit 0)"}, Source: "batten",
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := h.verdictGate(commitInput(), `git commit -m "feat: x"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got != "deny" {
+		t.Fatalf("batten's own check result must not close a unit by itself — nothing has "+
+			"judged the acceptance criteria; got %q", got)
+	}
+	if !strings.Contains(out.HookSpecific.PermissionDecisionReason, "acceptance criteria") {
+		t.Errorf("the denial must say what is actually missing, not repeat 'run batten check' "+
+			"at someone who just did; got %q", out.HookSpecific.PermissionDecisionReason)
+	}
+
+	// Add the reviewer's verdict and the same commit goes through.
+	if err := h.Store.SaveVerdict(store.Verdict{
+		RunID: run.RunID, Gate: "qa", CheckID: "qa", Result: "ok",
+		Evidence: []string{"AC-1 covered by TestExport", "AC-2 covered by TestExportEmpty"},
+		Source:   "agent",
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	out, err = h.verdictGate(commitInput(), `git commit -m "feat: x"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got != "silent-allow" {
+		t.Fatalf("both verdicts present must allow, got %q (output %+v)", got, out)
+	}
+}
+
+// TestTheCommitMessageDecidesWhichUnitIsGated.
+//
+// activeUnit resolved the unit from the session binding and the branch name, and the commit
+// message — the most direct statement of what this commit is FOR — was never read. So a
+// session bound to a verified TASK-1 could land `feat(TASK-2): ...` while TASK-2 had no verdict
+// at all: one unit's review credited to another unit's work. Under trunk-based development,
+// where the branch names nothing, the message is the only signal there is.
+func TestTheCommitMessageDecidesWhichUnitIsGated(t *testing.T) {
+	h, run := gateFixture(t, []string{"go test ./..."}, "enforce")
+
+	// TASK-1 is fully verified: both verdicts, so a TASK-1 commit is allowed.
+	for _, src := range []string{"batten", "agent"} {
+		if err := h.Store.SaveVerdict(store.Verdict{
+			RunID: run.RunID, Gate: "qa", CheckID: "qa", Result: "ok",
+			Evidence: []string{"go test ./...: PASS (exit 0)"}, Source: src,
+		}, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ti, _ := json.Marshal(bashInput{Command: `git commit -m "feat(TASK-1): the reviewed work"`})
+	in := Input{HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: ti, SessionID: "sess-1"}
+	out, err := h.verdictGate(in, `git commit -m "feat(TASK-1): the reviewed work"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got != "silent-allow" {
+		t.Fatalf("control failed: a fully verified unit must commit; got %q", got)
+	}
+
+	// TASK-2 is open but has no verdict. The same session commits FOR TASK-2.
+	if _, err := h.Store.EnsureRun("p", "TASK-2", ""); err != nil {
+		t.Fatal(err)
+	}
+	cmd := `git commit -m "feat(TASK-2): unreviewed work"`
+	ti2, _ := json.Marshal(bashInput{Command: cmd})
+	in2 := Input{HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: ti2, SessionID: "sess-1"}
+	out, err = h.verdictGate(in2, cmd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got != "deny" {
+		t.Fatalf("a commit FOR an unverified unit must be denied even when the session is bound "+
+			"to a verified one; got %q", got)
+	}
+	if !strings.Contains(out.HookSpecific.PermissionDecisionReason, "TASK-2") {
+		t.Errorf("the denial must name the unit the commit is actually for; got %q",
+			out.HookSpecific.PermissionDecisionReason)
+	}
+
+	// And a message naming a unit with no run at all is refused rather than silently
+	// attributed to whatever the session happens to be bound to.
+	cmd3 := `git commit -m "feat(TASK-9): a unit nobody opened"`
+	ti3, _ := json.Marshal(bashInput{Command: cmd3})
+	in3 := Input{HookEventName: "PreToolUse", ToolName: "Bash", ToolInput: ti3, SessionID: "sess-1"}
+	out, err = h.verdictGate(in3, cmd3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got != "deny" {
+		t.Fatalf("a message naming an unopened unit must not ride on the session's verdict; got %q", got)
+	}
+}

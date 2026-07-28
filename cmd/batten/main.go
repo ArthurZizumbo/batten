@@ -709,6 +709,17 @@ func gateReadyToClose(sp *spec.Spec, st *store.Store, run *store.Run) error {
 	if o, _ := st.HasOverride(run.RunID, closing.Gate); o {
 		return nil
 	}
+	// When the gate declares checks, close must demand exactly what the commit gate demands.
+	// They diverged, and `batten close --status ok` accepted an agent-asserted verdict that the
+	// commit hook had denied moments earlier — a gate you can walk around is not a gate.
+	if g, ok := sp.Gates[closing.Gate]; ok && len(g.Checks) > 0 {
+		if reason := hooks.GateShortfall(st, run.RunID, closing.Gate, closing.RequiresVerdict); reason != "" {
+			return fmt.Errorf("cannot close %s as ok: %s\n"+
+				"Use --status failed to close a run that went wrong", run.UnitID, reason)
+		}
+		return nil
+	}
+
 	v, err := st.LatestVerdict(run.RunID, closing.Gate)
 	if err != nil || v.Result != "ok" || len(v.Evidence) == 0 {
 		return fmt.Errorf("cannot close %s as ok: needs a verdict with result=ok and cited evidence "+

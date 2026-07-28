@@ -274,6 +274,49 @@ func (h *Handler) preToolUse(in Input) (*Output, error) {
 // a Windows-first tool and the sibling phaseRe already handles `batten.exe`.
 var commitRe = regexp.MustCompile(`(^|[;&|]|\s)git(\.exe)?\s+((-{1,2}[^\s=]+(=[^\s]*)?)(\s+[^\s-][^\s]*)?\s+)*commit\b`)
 
+// GateShortfall reports what a gate with declared checks is still missing, or "" when it is
+// satisfied. It is exported because `batten close` must not be able to accept what the commit
+// gate refuses — the field test found close taking an agent-asserted verdict that the commit
+// hook denied seconds earlier, which turns the gate into a speed bump you walk around.
+//
+// Two verdicts are required, and they must come from two different producers:
+//
+//   - batten's own, proving the declared checks were RUN rather than asserted;
+//   - somebody else's, proving a reviewer judged the work against the acceptance criteria.
+//
+// `batten check` writes the first. It used to satisfy the second as well, simply by being the
+// newest row — so `batten check` on an empty diff closed a unit with nothing having reviewed
+// anything at all.
+func GateShortfall(st *store.Store, runID, gate, requires string) string {
+	bv, err := st.LatestVerdictBySource(runID, gate, "batten")
+	if err != nil || bv.Result != "ok" {
+		return "has no batten-verified pass. The gate's checks must be RUN, not asserted.\n" +
+			"Run: batten check " + shortUnit(st, runID)
+	}
+	av, err := st.LatestVerdictNotBySource(runID, gate, "batten")
+	switch {
+	case err != nil:
+		return "has only batten's own check result. `batten check` proves the checks ran; it does " +
+			"not judge whether the work meets its acceptance criteria.\n" +
+			"Record a verdict from the verify phase: batten verdict --file v.json"
+	case len(av.Evidence) == 0:
+		return "has a verdict with an empty evidence[]. An approval must cite something."
+	case av.Result != requires && av.Result != "ok":
+		return fmt.Sprintf("verdict is %q, not %q. %s\nsafe_next_step: %s",
+			av.Result, requires, av.Why, av.SafeNextStep)
+	}
+	return ""
+}
+
+// shortUnit resolves a run back to its unit for a message. Falls back to the run id, which is
+// worse to read but never wrong.
+func shortUnit(st *store.Store, runID string) string {
+	if r, err := st.Run(runID); err == nil {
+		return r.UnitID
+	}
+	return runID
+}
+
 // verdictGate is wedge #1. The golden rule of the workflow doc — "never approve with an
 // empty evidence[]" — is a request a model can ignore. Here it is a denial it cannot.
 func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
@@ -290,6 +333,26 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	// both of the paths below used to return in silence. Silence from this hook is
 	// indistinguishable from approval, so the user concludes the gate is working. It is not.
 	unit := h.activeUnit(in)
+
+	// The commit message is evidence about which unit this commit is FOR, and it was never
+	// read. So a session bound to a verified TASK-001 could land `feat(TASK-002): ...` — a
+	// unit with no verdict at all — because the gate only ever looked at the binding. Under
+	// trunk-based development, where the branch names nothing, the message is the only signal
+	// there is. batten.schema.json has promised this resolution the whole time.
+	if named := h.Spec.MatchUnit(cmd); named != "" && named != unit {
+		if r, err := h.Store.ActiveRun(h.Spec.Project, named); err == nil {
+			// The message names a real open unit. Gate THAT one — it is the more specific
+			// statement of intent, and it is the unit whose work is about to land.
+			unit = r.UnitID
+		} else if unit != "" {
+			return h.gate("PreToolUse", fmt.Sprintf(
+				"batten: this commit message names %s, but this session is working %s and %s has "+
+					"no open run.\nCommitting it under %s's verdict would credit one unit's review "+
+					"to another's work.\nOpen it (`batten phase %s %s`) or fix the commit message.",
+				named, unit, named, unit, named, firstPhaseID(h.Spec))), nil
+		}
+	}
+
 	if unit == "" {
 		open, _ := h.Store.OpenRuns(h.Spec.Project)
 		if len(open) > 1 {
@@ -362,13 +425,10 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	// produced by running those checks. This is what closes the "I typed 'tests pass' without
 	// running them" hole — the mechanical part of the gate becomes true by construction.
 	if g, ok := h.Spec.Gates[gateName]; ok && len(g.Checks) > 0 {
-		bv, err := h.Store.LatestVerdictBySource(run.RunID, gateName, "batten")
-		if err != nil || bv.Result != "ok" {
+		if reason := GateShortfall(h.Store, run.RunID, gateName, closing.RequiresVerdict); reason != "" {
 			return h.gate("PreToolUse", fmt.Sprintf(
-				"batten: %s has no batten-verified pass. The gate's checks must be RUN, not asserted.\n"+
-					"Run: batten check %s\n"+
-					"To proceed anyway (recorded): batten override %s --reason \"...\"",
-				unit, unit, unit)), nil
+				"batten: %s %s\nTo proceed anyway (recorded): batten override %s --reason \"...\"",
+				unit, reason, unit)), nil
 		}
 	} else {
 		// A gate with no checks cannot be verified by construction — batten has nothing to run,

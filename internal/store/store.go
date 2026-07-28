@@ -690,6 +690,19 @@ func (s *Store) LatestVerdictBySource(runID, gate, source string) (*Verdict, err
 	return scanVerdict(runID, row.Scan)
 }
 
+// LatestVerdictNotBySource is the other half of the pair. `batten check` writes its own
+// source='batten' verdict, and that row is both the newest verdict AND a batten-verified one —
+// so it used to satisfy both of the gate's conditions by itself, and `batten check` alone could
+// close a unit on an empty diff with nothing having judged the acceptance criteria. The two
+// conditions only mean something if they come from two different producers: the machine says
+// the checks ran, the reviewer says the work is right.
+func (s *Store) LatestVerdictNotBySource(runID, gate, source string) (*Verdict, error) {
+	row := s.db.QueryRow(`SELECT `+verdictCols+`
+	   FROM verdicts WHERE run_id=? AND (?='' OR gate=?) AND source<>? ORDER BY ts DESC, verdict_id DESC LIMIT 1`,
+		runID, gate, gate, source)
+	return scanVerdict(runID, row.Scan)
+}
+
 // ---------- usage & budget ----------
 
 // Usage is one API request's token buckets, already priced.
