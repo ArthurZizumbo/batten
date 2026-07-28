@@ -30,13 +30,21 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # shell: bash on every step, including the Windows leg. The default shell there is
+      # PowerShell, which splits a native command's `-flag=value` argument at the `=` — so
+      # `go test -coverprofile=coverage.out ./...` reached go as two arguments and it tried to
+      # build a package literally named ".out". Git Bash ships on all three runner images, so
+      # one shell for all of them is both the fix and one less thing to differ per platform.
       - name: build
+        shell: bash
         run: go build ./...
 
       - name: vet
+        shell: bash
         run: go vet ./...
 
       - name: test
+        shell: bash
         run: go test -coverprofile=coverage.out ./...
 
       - name: coverage summary

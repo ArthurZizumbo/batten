@@ -3,6 +3,7 @@ package spec
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -240,9 +241,20 @@ domains:
 		}
 	}
 
-	// Backslashes are normalized: the guard receives Windows paths and must resolve the same.
-	if got, ok := s.DomainFor(`src\api\handler.go`); !ok || got != "api" {
-		t.Errorf(`DomainFor with backslashes = %q (ok=%v), want "api"`, got, ok)
+	// Backslash handling is platform-specific, and deliberately so. filepath.ToSlash only
+	// converts on Windows, where a backslash IS the separator and the hook payload carries
+	// them. On Linux a backslash is a legal character in a filename, so converting it would
+	// invent a path the user never wrote — the current behaviour is correct on both, and the
+	// expectation has to be computed per platform rather than asserted from the machine that
+	// happened to author the test.
+	got, ok := s.DomainFor(`src\api\handler.go`)
+	if runtime.GOOS == "windows" {
+		if !ok || got != "api" {
+			t.Errorf(`on Windows a backslash path must resolve: DomainFor = %q (ok=%v), want "api"`, got, ok)
+		}
+	} else if ok {
+		t.Errorf(`on %s, src\api\handler.go is one filename containing backslashes, not a path; `+
+			`DomainFor claimed it belongs to %q`, runtime.GOOS, got)
 	}
 }
 

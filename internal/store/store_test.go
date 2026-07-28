@@ -29,7 +29,17 @@ func TestNormPathCaseFold(t *testing.T) {
 	}{
 		{"mixed case stays or folds per GOOS", "ml/F.py", expect("ml/F.py")},
 		{"already lower is untouched everywhere", "ml/f.py", "ml/f.py"},
-		{"backslashes normalize to slashes", `Internal\Store\Store.go`, expect("Internal/Store/Store.go")},
+		// Separator conversion is Windows-only, and that is the correct behaviour rather than an
+		// oversight: filepath.ToSlash converts where a backslash IS the separator, and on Linux a
+		// backslash is a legal character inside a filename. Rewriting it there would invent a path
+		// the user never wrote — and would make two genuinely different files compare equal in the
+		// write-set guard, which is the opposite of what the guard is for.
+		{"backslashes are separators only on Windows", `Internal\Store\Store.go`, func() string {
+			if runtime.GOOS == "windows" {
+				return "internal/store/store.go"
+			}
+			return expect(`Internal\Store\Store.go`)
+		}()},
 	}
 	for _, c := range cases {
 		if got := normPath(c.in); got != c.want {
