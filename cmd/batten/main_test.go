@@ -323,6 +323,161 @@ func jsonString(s string) string {
 	return string(b)
 }
 
+// captureStdout runs fn with stdout redirected and returns everything it printed.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stdout
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() { b, _ := io.ReadAll(r); done <- string(b) }()
+	fn()
+	os.Stdout = old
+	w.Close()
+	return <-done
+}
+
+// writeSpec drops a batten.yaml into a fresh dir and returns the dir.
+func writeSpec(t *testing.T, y string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "batten.yaml"), []byte(y), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+// inDir runs fn with the process cwd set to dir, because doctor diagnoses the repo you are in.
+func inDir(t *testing.T, dir string, fn func()) {
+	t.Helper()
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(old) }()
+	fn()
+}
+
+// TestDoctorReportsEverythingInOnePass is field-test finding #60.
+//
+// doctor returned at the first fatal, so a repo with two problems reported one, you fixed it,
+// reran, and met the next. People give up on the third round trip — and the whole point of the
+// command is to be the first thing you run when something is already broken.
+func TestDoctorReportsEverythingInOnePass(t *testing.T) {
+	dir := writeSpec(t, "version: 1\nproject:\n  - this is not a string\n") // spec: fatal
+	broken := filepath.Join(t.TempDir(), "batten.db")                       // store: also fatal
+	if err := os.MkdirAll(broken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BATTEN_DB", broken)
+
+	var err error
+	out := captureStdout(t, func() { inDir(t, dir, func() { err = cmdDoctor() }) })
+
+	if err == nil {
+		t.Error("a repo whose spec does not load must exit non-zero, or CI goes green on it")
+	}
+	if !strings.Contains(out, "batten.yaml") {
+		t.Errorf("the spec problem is missing:\n%s", out)
+	}
+	if !strings.Contains(out, "store") {
+		t.Errorf("doctor stopped at the spec and never reached the store, so the second problem "+
+			"only surfaces on the NEXT run. One diagnosis per invocation is how people give up:\n%s", out)
+	}
+}
+
+// TestDoctorCatchesAChecksCommandItCannotRun is field-test finding #58.
+//
+// `checks:` is copied verbatim from the build files of whoever ran `batten init`, so a command
+// the team's machine has and yours does not is the normal way this breaks. It does not fail
+// visibly: `batten check` reports exit 1 with "not recognized" buried in the evidence of a
+// BLOCKED verdict, and the reader concludes the code is at fault.
+func TestDoctorCatchesAChecksCommandItCannotRun(t *testing.T) {
+	dir := writeSpec(t, "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n"+
+		"phases:\n  - id: verify\n    gate: qa\n  - id: close\n    gate: qa\n    requires_verdict: ok\n"+
+		"gates:\n  qa:\n    verdict: required\n    evidence: required\n"+
+		"    checks: ['definitely-not-a-real-binary-xyz test ./...']\n")
+	t.Setenv("BATTEN_DB", filepath.Join(t.TempDir(), "batten.db"))
+
+	out := captureStdout(t, func() { inDir(t, dir, func() { _ = cmdDoctor() }) })
+
+	if !strings.Contains(out, "definitely-not-a-real-binary-xyz") {
+		t.Errorf("the gate declares a check this machine cannot run and doctor did not say so:\n%s", out)
+	}
+	if !strings.Contains(out, "cannot be run here") {
+		t.Errorf("the warning must say the command cannot be run, not merely mention it:\n%s", out)
+	}
+}
+
+// The other half: a check that CAN run must not be reported. A doctor that cries wolf about a
+// working configuration gets ignored, which costs more than the check was worth.
+func TestDoctorStaysQuietAboutChecksThatResolve(t *testing.T) {
+	dir := writeSpec(t, "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n"+
+		"phases:\n  - id: verify\n    gate: qa\n  - id: close\n    gate: qa\n    requires_verdict: ok\n"+
+		"gates:\n  qa:\n    verdict: required\n    evidence: required\n"+
+		"    checks: ['go build ./...']\n") // go is on PATH: these tests are running under it
+	t.Setenv("BATTEN_DB", filepath.Join(t.TempDir(), "batten.db"))
+
+	out := captureStdout(t, func() { inDir(t, dir, func() { _ = cmdDoctor() }) })
+
+	if strings.Contains(out, "cannot be run here") {
+		t.Errorf("doctor flagged a check that resolves perfectly well:\n%s", out)
+	}
+}
+
+// TestDoctorCatchesAnAnchorTheRepoCannotRecord came out of the proyecto_ui replica.
+//
+// `batten init` writes `anchor: git_sha` into the spec of a directory that is not a git repo,
+// `batten phase` then records an empty base_sha, and nothing says so — while `diff_from: anchor`
+// is documented as reading exactly that value.
+func TestDoctorCatchesAnAnchorTheRepoCannotRecord(t *testing.T) {
+	dir := writeSpec(t, "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n"+
+		"phases:\n  - id: build\n    anchor: git_sha\n  - id: close\n    requires_verdict: ok\n")
+	t.Setenv("BATTEN_DB", filepath.Join(t.TempDir(), "batten.db"))
+
+	out := captureStdout(t, func() { inDir(t, dir, func() { _ = cmdDoctor() }) })
+
+	if !strings.Contains(out, "not a git repository") {
+		t.Errorf("a phase declares an anchor the repo cannot produce and doctor was silent:\n%s", out)
+	}
+	if !strings.Contains(out, "build") {
+		t.Errorf("the warning must name the phase that declares it:\n%s", out)
+	}
+}
+
+func TestCommandHeadsFindsEveryExecutableInACompoundCommand(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"go test ./...", []string{"go"}},
+		{"go build ./... && go test ./...", []string{"go", "go"}},
+		{"npm run lint; npm test", []string{"npm", "npm"}},
+		{"CGO_ENABLED=0 go build ./...", []string{"go"}}, // env assignment is not the program
+		{"./scripts/check.sh", []string{"./scripts/check.sh"}},
+		{"make lint | tee out.txt", []string{"make", "tee"}},
+	}
+	for _, c := range cases {
+		got := commandHeads(c.in)
+		if len(got) != len(c.want) {
+			t.Errorf("commandHeads(%q) = %v, want %v", c.in, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("commandHeads(%q) = %v, want %v", c.in, got, c.want)
+				break
+			}
+		}
+	}
+}
+
 // gateReadyToClose is the same decision the commit hook makes, reached from the CLI. It must
 // agree with the hook, or `batten close` tells the user they are fine and the commit is denied.
 func TestGateReadyToCloseAgreesWithTheHook(t *testing.T) {

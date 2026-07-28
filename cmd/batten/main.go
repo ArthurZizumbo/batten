@@ -10,6 +10,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1323,22 +1324,56 @@ func cmdOverride(args []string) error {
 
 // ---------- doctor ----------
 
+// dx accumulates a diagnosis so doctor can emit EVERYTHING it knows in one pass.
+//
+// It used to `return errSilent` at the first fatal, so a repo with a broken spec AND an
+// unopenable store reported one of them, you fixed it, reran, and met the next — one at a time.
+// People give up on the third round trip. Nothing here returns early any more: a fatal marks the
+// exit code and the run continues through every check that does not depend on what just failed.
+type dx struct{ fatal bool }
+
+func (d *dx) fail(format string, a ...any) {
+	d.fatal = true
+	fmt.Printf("✗ "+format+"\n", a...)
+}
+func (d *dx) warn(format string, a ...any) { fmt.Printf("⚠ "+format+"\n", a...) }
+func (d *dx) ok(format string, a ...any)   { fmt.Printf("✓ "+format+"\n", a...) }
+
+// err returns what cmdDoctor should hand back: a non-zero exit if anything fatal was found.
+func (d *dx) err() error {
+	if d.fatal {
+		return errSilent
+	}
+	return nil
+}
+
 func cmdDoctor() error {
+	d := &dx{}
 	cwd, _ := os.Getwd()
+
+	// The installed copy and the database are checked whatever happens to the spec: they are
+	// how batten runs at all, and finding out about them only after fixing batten.yaml is the
+	// one-at-a-time diagnosis this rewrite exists to end.
+	defer func() {
+		checkInstall(d, cwd)
+	}()
+
 	path, err := spec.Find(cwd)
 	if err != nil {
-		fmt.Printf("✗ no %s found. Run: batten init\n", spec.Filename)
-		return errSilent
+		d.fail("no %s found. Run: batten init", spec.Filename)
+		checkStore(d, nil)
+		return d.err()
 	}
 	sp, err := spec.Load(path)
 	if err != nil {
 		// doctor's whole job is to say whether this repo is correctly governed. Printing
 		// "✗ invalid spec" and then exiting 0 tells a script the opposite of what it just told
 		// the human, so a CI step running `batten doctor` goes green on a broken spec.
-		fmt.Printf("✗ %v\n", err)
-		return errSilent
+		d.fail("%v", err)
+		checkStore(d, nil) // spec-independent, and just as likely to be the reason nothing works
+		return d.err()
 	}
-	fmt.Printf("✓ %s — project %q, unit %q, %d phases, %d domains\n",
+	d.ok("%s — project %q, unit %q, %d phases, %d domains",
 		path, sp.Project, sp.Unit.Name, len(sp.Phases), len(sp.Domains))
 
 	if c, ok := sp.ClosingPhase(); ok {
@@ -1367,25 +1402,49 @@ func cmdDoctor() error {
 	}
 	sort.Strings(unchecked)
 	for _, name := range unchecked {
-		fmt.Printf("⚠ gate %q declares no checks — it verifies NOTHING and approves on the "+
-			"agent's word. Add gates.%s.checks (take them verbatim from your build files).\n", name, name)
+		d.warn("gate %q declares no checks — it verifies NOTHING and approves on the "+
+			"agent's word. Add gates.%s.checks (take them verbatim from your build files).", name, name)
 	}
+
+	checkRunnable(d, sp)
+	checkAnchors(d, sp)
 
 	if sp.ReportOnly() {
 		fmt.Println("● enforcement: REPORT — gates WARN, they do not block yet. " +
 			"Set enforcement: enforce (or remove it) when the team trusts the gates.")
 	} else {
-		fmt.Println("✓ enforcement: enforce — gates block")
+		d.ok("enforcement: enforce — gates block")
 	}
 
 	st, err := store.Open(dbPath())
 	if err != nil {
-		fmt.Printf("✗ store: %v\n", err)
-		return errSilent
+		checkStore(d, nil)
+		// The store is how batten records anything, but the rest of this report — the vault, the
+		// domain rules, the skills the spec names — is spec-level and still worth having in the
+		// same pass. Only the checks that need st are skipped.
+		checkSpecOnly(d, sp)
+		return d.err()
 	}
 	defer st.Close()
-	fmt.Printf("✓ store: %s\n", dbPath())
+	checkStore(d, st)
 
+	checkSpecOnly(d, sp)
+
+	// A run nobody closed keeps its write-set claims alive and muddies session attribution.
+	// Surface the stale ones so they don't rot: 48h with no event means abandoned or forgotten.
+	if stale, err := st.StaleRuns(sp.Project, 48*time.Hour); err == nil && len(stale) > 0 {
+		d.warn("%d run(s) open >48h with no activity — close or resume them:", len(stale))
+		for _, r := range stale {
+			fmt.Printf("    %s (phase %s): batten close %s [--status ok|failed]\n", r.UnitID, r.Phase, r.UnitID)
+		}
+	}
+	return d.err()
+}
+
+// checkSpecOnly is everything doctor can say from the spec alone. It is split out so a repo
+// whose store will not open still gets its vault, domain and capability report in the same pass
+// instead of one finding per run.
+func checkSpecOnly(d *dx, sp *spec.Spec) {
 	// Optional capabilities degrade; report what is actually live rather than what is declared.
 	if sp.Capabilities.GraphEnabled() {
 		report("graph", sp.Capabilities.Graph.Provider, have(sp.Capabilities.Graph.Provider))
@@ -1423,15 +1482,15 @@ func cmdDoctor() error {
 	if v := sp.Capabilities.Obsidian.Vault; v != "" {
 		p := expandHome(v)
 		if _, err := os.Stat(p); err == nil {
-			fmt.Printf("✓ obsidian vault: %s\n", p)
+			d.ok("obsidian vault: %s", p)
 		} else {
-			fmt.Printf("⚠ obsidian vault not found: %s (canvas falls back to .batten/)\n", p)
+			d.warn("obsidian vault not found: %s (canvas falls back to .batten/)", p)
 		}
 	}
-	for name, d := range sp.Domains {
-		if d.Rules != "" {
-			if _, err := os.Stat(filepath.Join(sp.Root, d.Rules)); err != nil {
-				fmt.Printf("⚠ domain %q: rules file missing: %s\n", name, d.Rules)
+	for name, dom := range sp.Domains {
+		if dom.Rules != "" {
+			if _, err := os.Stat(filepath.Join(sp.Root, dom.Rules)); err != nil {
+				d.warn("domain %q: rules file missing: %s", name, dom.Rules)
 			}
 		}
 	}
@@ -1444,29 +1503,226 @@ func cmdDoctor() error {
 			if p.Hint != "" {
 				hint = fmt.Sprintf(" (did you mean %q?)", p.Hint)
 			}
-			fmt.Printf("⚠ %s references %q, which is not installed%s\n", p.Where, p.Ref, hint)
+			d.warn("%s references %q, which is not installed%s", p.Where, p.Ref, hint)
 		}
 	}
 
 	// The quota ceiling is unenforceable without the statusline, so say plainly whether it is live.
 	if sp.Budget.QuotaPctPerRun > 0 {
 		if present, existing, _ := statusline.Installed(sp.Root); present && statusline.IsBatten(existing) {
-			fmt.Println("✓ statusline installed — the quota ceiling is enforced")
+			d.ok("statusline installed — the quota ceiling is enforced")
 		} else {
-			fmt.Println("⚠ budget.quota_pct_per_run is set but the statusline is not installed — that " +
+			d.warn("budget.quota_pct_per_run is set but the statusline is not installed — that " +
 				"ceiling is NOT enforced. Run: batten statusline --install")
 		}
 	}
+}
 
-	// A run nobody closed keeps its write-set claims alive and muddies session attribution.
-	// Surface the stale ones so they don't rot: 48h with no event means abandoned or forgotten.
-	if stale, err := st.StaleRuns(sp.Project, 48*time.Hour); err == nil && len(stale) > 0 {
-		fmt.Printf("⚠ %d run(s) open >48h with no activity — close or resume them:\n", len(stale))
-		for _, r := range stale {
-			fmt.Printf("    %s (phase %s): batten close %s [--status ok|failed]\n", r.UnitID, r.Phase, r.UnitID)
+// checkRunnable answers the question a gate's `checks:` list quietly assumes: can these commands
+// actually be run on this machine?
+//
+// A check that cannot start does not fail loudly at `batten check` time in any useful way — it
+// fails as "exit 1, command not found" buried in the evidence of a BLOCKED verdict, and the
+// reader concludes the code is broken rather than the toolchain. Worse, `checks:` is copied
+// verbatim from the build files of whoever ran `batten init`, so `make test` in a repo without
+// make is the normal way this goes wrong, on a teammate's machine and not the author's.
+//
+// The resolution mirrors runCheck exactly — same shell, same lookup — because a doctor that
+// resolves commands differently from the runner is answering a different question.
+func checkRunnable(d *dx, sp *spec.Spec) {
+	seen := map[string]bool{}
+	probe := func(where, command string) {
+		for _, exe := range commandHeads(command) {
+			if exe == "" || seen[exe] {
+				continue
+			}
+			seen[exe] = true
+			if resolvable(sp.Root, exe) {
+				continue
+			}
+			d.warn("%s: %q cannot be run here — %q is not on PATH and is not a file in this repo.\n"+
+				"    The check will not fail your code, it will fail to start, and its output "+
+				"lands in the evidence of a BLOCKED verdict as if the code were at fault.\n"+
+				"    Install it, or replace the command with one this machine has.", where, command, exe)
 		}
 	}
-	return nil
+	for _, name := range sortedGateNames(sp) {
+		for _, c := range sp.Gates[name].Checks {
+			probe(fmt.Sprintf("gate %q", name), c)
+		}
+	}
+	for _, name := range sortedDomainNames(sp) {
+		for _, c := range sp.Domains[name].Check {
+			probe(fmt.Sprintf("domain %q", name), c)
+		}
+	}
+}
+
+func sortedGateNames(sp *spec.Spec) []string {
+	out := make([]string, 0, len(sp.Gates))
+	for n := range sp.Gates {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedDomainNames(sp *spec.Spec) []string {
+	out := make([]string, 0, len(sp.Domains))
+	for n := range sp.Domains {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// commandHeads pulls the executable out of each segment of a (possibly compound) shell command,
+// so `go build ./... && make test` is reported as two tools and not one unrecognisable string.
+// Leading VAR=value assignments are skipped: they are environment, not the program.
+func commandHeads(command string) []string {
+	var out []string
+	for _, seg := range strings.FieldsFunc(command, func(r rune) bool {
+		return r == '&' || r == '|' || r == ';'
+	}) {
+		fields := strings.Fields(seg)
+		for len(fields) > 0 && strings.Contains(fields[0], "=") && !strings.ContainsAny(fields[0], `/\`) {
+			fields = fields[1:]
+		}
+		if len(fields) > 0 {
+			out = append(out, strings.Trim(fields[0], `"'`))
+		}
+	}
+	return out
+}
+
+// resolvable reports whether the shell that runCheck uses could find exe. A path-ish token is
+// resolved against the repo root, because that is the directory runCheck runs in.
+func resolvable(root, exe string) bool {
+	if strings.ContainsAny(exe, `/\`) {
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(exe)))
+		return err == nil
+	}
+	if _, err := exec.LookPath(exe); err == nil {
+		return true
+	}
+	// Fall back to the shell's own opinion, which knows about builtins and (on Windows) about
+	// things LookPath's PATHEXT handling misses. Being generous here is deliberate: a doctor
+	// that cries wolf about a working check is worse than one that misses a broken one.
+	if runtime.GOOS == "windows" {
+		return exec.Command("cmd", "/C", "where "+exe).Run() == nil
+	}
+	return exec.Command("sh", "-c", "command -v "+exe).Run() == nil
+}
+
+// checkAnchors catches a spec that declares an anchor the repo cannot produce.
+//
+// Found by rebuilding the proyecto_ui replica: `batten init` writes `anchor: git_sha` into the
+// spec of a directory that is not a git repo at all, `batten phase` then records an empty
+// base_sha, and nothing anywhere says so. `diff_from: anchor` is meant to read that anchor, so
+// the whole "verify only what this unit changed" story rests on a value that was never written.
+func checkAnchors(d *dx, sp *spec.Spec) {
+	var anchored []string
+	for _, p := range sp.Phases {
+		if p.Anchor != "" {
+			anchored = append(anchored, p.ID)
+		}
+	}
+	if len(anchored) == 0 {
+		return
+	}
+	if isGitRepo(sp.Root) {
+		d.ok("anchor: %s can record a base SHA (git repo)", strings.Join(anchored, ", "))
+		return
+	}
+	d.warn("phase(s) %s declare an anchor, but %s is not a git repository — the anchor is "+
+		"recorded EMPTY and nothing that reads it (diff_from: anchor) has a base to diff from.\n"+
+		"    Either `git init` here, or drop `anchor:` from those phases so the spec stops "+
+		"promising something it cannot deliver.", strings.Join(anchored, ", "), sp.Root)
+}
+
+func isGitRepo(dir string) bool {
+	cmd := exec.Command("git", "-C", dir, "rev-parse", "--is-inside-work-tree")
+	return cmd.Run() == nil
+}
+
+// checkStore reports the database, and then the thing that opening it does NOT prove: that
+// batten can take the write lock.
+//
+// This is the diagnosis behind §4.3's whole failure mode. When another process holds the write
+// lock past busy_timeout, the database still OPENS — so "✓ store" was printed while every hook
+// that needed to record something was quietly failing. The user sees a healthy doctor and a gate
+// with no opinions.
+func checkStore(d *dx, st *store.Store) {
+	if st == nil {
+		st2, err := store.Open(dbPath())
+		if err != nil {
+			d.fail("store: %s cannot be opened — %v\n"+
+				"    Every hook that records anything is failing right now. Check the path is "+
+				"writable, or point BATTEN_DB somewhere that is.", dbPath(), err)
+			return
+		}
+		defer st2.Close()
+		st = st2
+	}
+	d.ok("store: %s", dbPath())
+	if err := st.ProbeWriteLock(); err != nil {
+		d.fail("store: the write lock is held by something else — %v\n"+
+			"    Opening the database succeeded, which is why this looked healthy. Writing to it "+
+			"does not, so hooks are degrading right now.\n"+
+			"    Close other batten processes (a stuck `batten tui`, an orphaned hook), then rerun.", err)
+		return
+	}
+	fmt.Println("  ✓ write lock available — hooks can record")
+}
+
+// checkInstall inspects the copy of batten that the HOOKS run, which is not the one you just
+// typed. The installed tree can be stale or mangled while the source tree is perfect.
+//
+// The line-ending check is three lines and closes the only route by which a fixed bug returns.
+// .gitattributes settles CRLF inside this repo and CI verifies it, but an install can travel by
+// a path that mangles it, and the failure mode is total and silent: `#!/usr/bin/env bash\r` is a
+// bad interpreter, bootstrap never downloads the binary, and every hook no-ops without a word.
+func checkInstall(d *dx, projectDir string) {
+	dir, ok := discovery.PluginDir(projectDir, "batten")
+	if !ok {
+		fmt.Println("· installed plugin: not found (running from a source checkout, or installed " +
+			"under a different name) — the checks below are about the copy the hooks invoke")
+		return
+	}
+
+	bin := filepath.Join(dir, "bin", "batten")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	switch out, err := exec.Command(bin, "version").Output(); {
+	case err != nil:
+		d.fail("installed binary %s does not run — %v\n"+
+			"    Every hook invokes THIS file, not the batten on your PATH, so the gate is not "+
+			"running at all. Reinstall the plugin.", bin, err)
+	default:
+		got := strings.TrimSpace(string(out))
+		if got != "batten "+version {
+			d.warn("installed binary is %q but you are running %q — the hooks and your terminal "+
+				"disagree about what batten is.\n    Reinstall the plugin to match.", got, "batten "+version)
+		} else {
+			d.ok("installed binary: %s (%s)", bin, got)
+		}
+	}
+
+	boot := filepath.Join(dir, "scripts", "bootstrap.sh")
+	b, err := os.ReadFile(boot)
+	switch {
+	case err != nil:
+		d.warn("installed bootstrap missing: %s — the binary will not self-download if it goes "+
+			"missing. Reinstall the plugin.", boot)
+	case bytes.Contains(b, []byte("\r\n")):
+		d.fail("installed bootstrap %s has CRLF line endings.\n"+
+			"    `#!/usr/bin/env bash\\r` is a bad interpreter: the script never runs, the binary "+
+			"is never downloaded, and every hook no-ops IN SILENCE.\n"+
+			"    Fix: dos2unix the file, or reinstall through a path that preserves LF.", boot)
+	default:
+		fmt.Println("  ✓ installed bootstrap has LF line endings")
+	}
 }
 
 func report(kind, provider string, ok bool) {
@@ -1530,13 +1786,37 @@ func graphStaleness(sp *spec.Spec) {
 // between rebuilds. A repo that commits the graph without the merge driver has a conflict
 // waiting for its second contributor.
 func graphHooks(sp *spec.Spec) {
-	out, err := exec.Command("graphify", "hook", "status").Output()
+	// -C the project root, not the process cwd: doctor answers about THIS repo, and running it
+	// from a subdirectory (or anywhere else) used to query whatever repo the shell happened to
+	// be in.
+	out, err := exec.Command("graphify", "-C", sp.Root, "hook", "status").Output()
 	if err != nil {
-		return // graphify absent or too old for `hook status`: say nothing rather than guess
+		// Older graphify has no -C. Fall back rather than lose the check entirely.
+		out, err = exec.Command("graphify", "hook", "status").Output()
+		if err != nil {
+			return // graphify absent or too old for `hook status`: say nothing rather than guess
+		}
 	}
 	s := string(out)
+
+	// Assert the positive. This concluded "installed" from the ABSENCE of two known failure
+	// strings, so any output it did not recognise read as success — and outside a git repo
+	// graphify prints "Not in a git repository." and exits 0, which produced a green tick for
+	// hooks that cannot exist. It is the same mistake as reading silence from `batten hook` as
+	// an allow, made by the tool whose job is to catch that mistake.
+	if !isGitRepo(sp.Root) {
+		fmt.Println("  · graphify git hooks: not applicable — this is not a git repository")
+		return
+	}
+	installedDriver := strings.Contains(s, "merge driver: registered")
+	installedHooks := strings.Contains(s, "post-commit: installed")
 	missingDriver := strings.Contains(s, "merge driver: not registered")
 	missingHooks := strings.Contains(s, "post-commit: not installed")
+	if !installedDriver && !installedHooks && !missingDriver && !missingHooks {
+		fmt.Println("  · graphify git hooks: could not tell — `graphify hook status` printed " +
+			"something this version does not recognise")
+		return
+	}
 	if !missingDriver && !missingHooks {
 		fmt.Println("  ✓ graphify git hooks installed (auto-rebuild + graph.json merge driver)")
 		return

@@ -61,6 +61,48 @@ func Open(path string) (*Store, error) {
 
 func (s *Store) Close() error { return s.db.Close() }
 
+// ProbeWriteLock reports whether this process can take the database's write lock right now.
+//
+// It exists for `batten doctor`, and it diagnoses the failure that is otherwise invisible: when
+// another process holds the write lock past busy_timeout, every hook that needs to record
+// something fails, batten degrades, and the only symptom the user gets is that the gate stopped
+// having opinions. Opening the database succeeds in that state — it is acquiring the WRITE lock
+// that does not — so "the store opened fine" is not evidence of a healthy store.
+//
+// The probe has to WRITE, and the write has to be rolled back.
+//
+// Two wrong ways to do this, both tried, both silently useless:
+//
+//   - `db.Exec("BEGIN IMMEDIATE")` on top of db.Begin() fails with "cannot start a transaction
+//     within a transaction" on every call, including on a completely idle database. A probe that
+//     always reports contention is a probe that reports nothing.
+//   - A transaction that only reads. Go's Begin starts a DEFERRED transaction, which takes no
+//     write lock until something actually writes — so it succeeds happily while another process
+//     holds the lock, and the probe returns a green tick for a database batten cannot write to.
+//     That is the exact false-green this whole check exists to catch, committed by the check.
+//
+// So: open a transaction, insert one row, and roll it back. The row never lands; the attempt is
+// the measurement. The short busy_timeout is the point — doctor must report contention, not sit
+// through it.
+func (s *Store) ProbeWriteLock() error {
+	if _, err := s.db.Exec("PRAGMA busy_timeout = 250"); err != nil {
+		return err
+	}
+	// Restore the operational timeout no matter how this returns; a doctor run must not leave
+	// the connection twitchier than it found it.
+	defer func() { _, _ = s.db.Exec("PRAGMA busy_timeout = 5000") }()
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	_, err = tx.Exec(`INSERT INTO events (run_id, node_id, hook, ts, payload) VALUES (?,?,?,?,?)`,
+		nil, nil, "batten.doctor.probe", now(), "{}")
+	return err
+}
+
 const schema = `
 CREATE TABLE IF NOT EXISTS runs (
   run_id       TEXT PRIMARY KEY,

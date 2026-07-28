@@ -62,6 +62,46 @@ func TestNormPathCaseFold(t *testing.T) {
 
 // TestMigrationAddsVerdictSource opens the same database twice — migrations must
 // upgrade in place and be idempotent — then round-trips one verdict per source and
+// TestProbeWriteLockIsHonestAndLeavesNothingBehind.
+//
+// The probe exists because opening the database proves nothing about writing to it, and "the
+// store opened fine" was being printed while every hook that needed to record something failed.
+//
+// Both of the obvious implementations were false: `BEGIN IMMEDIATE` on top of db.Begin() errors
+// on every call including on an idle database, and a read-only transaction takes no write lock
+// at all, so it reports green for a database batten cannot write to. Only an attempted WRITE
+// measures the thing. This test pins the two properties that catch both mistakes: an idle store
+// must probe clean, and the probe must not leave its row behind.
+func TestProbeWriteLockIsHonestAndLeavesNothingBehind(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "batten.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	if err := s.ProbeWriteLock(); err != nil {
+		t.Fatalf("an idle store must probe clean; a probe that always reports contention "+
+			"reports nothing at all: %v", err)
+	}
+	// Twice: the first probe must leave the connection usable, not stuck in a transaction.
+	if err := s.ProbeWriteLock(); err != nil {
+		t.Fatalf("the second probe failed, so the first left the connection in a transaction: %v", err)
+	}
+
+	var n int
+	if err := s.db.QueryRow(`SELECT count(*) FROM events WHERE hook = 'batten.doctor.probe'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("the probe left %d row(s) behind; diagnosing the log must not write to the log", n)
+	}
+
+	// And the store still works normally afterwards — busy_timeout restored, no lingering state.
+	if err := s.LogEvent("", "", "after-probe", []byte("{}")); err != nil {
+		t.Errorf("the store is unusable after a probe: %v", err)
+	}
+}
+
 // asserts LatestVerdictBySource separates the agent's claim from batten's evidence.
 func TestMigrationAddsVerdictSource(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "batten.db")

@@ -100,6 +100,28 @@ const (
 )
 
 // Skills returns every skill visible to projectDir, project first.
+// PluginDir returns the directory an installed plugin lives in, as Claude Code recorded it.
+//
+// `batten doctor` needs it to check the copy that actually runs. The binary in this repo is not
+// the binary the hooks invoke: hooks call ${CLAUDE_PLUGIN_ROOT}/bin/batten, and the installed
+// tree can be stale, half-written, or line-ending mangled while the source tree is perfect.
+func PluginDir(projectDir, name string) (string, bool) {
+	for _, p := range mustPlugins(projectDir) {
+		if strings.EqualFold(p.name, name) {
+			return p.dir, true
+		}
+	}
+	return "", false
+}
+
+func mustPlugins(projectDir string) []installedPlugin {
+	ps, err := plugins(projectDir, configDir())
+	if err != nil {
+		return nil
+	}
+	return ps
+}
+
 func Skills(projectDir string) ([]Item, error) { return listed(projectDir, kindSkills) }
 
 // Agents returns every subagent visible to projectDir, project first.
