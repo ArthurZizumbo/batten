@@ -26,14 +26,23 @@ negarte un commit. Los tres proyectos grandes del ecosistema —superpowers 224.
 97.500 ★, caveman 54.000 ★— también restringen, también son rigurosos, y también son honestos
 sobre lo que no saben. La diferencia no es la esencia: es que **dan algo antes de pedir algo**.
 
+Y hay un segundo problema, más incómodo, que solo se ve juntando las rondas: **batten declara
+nueve capacidades de gobierno que no impone** — el modo de falla exacto que existe para eliminar en
+el flujo de otra gente. Eso es §2.1, y tiene un arreglo sistémico además de nueve individuales.
+
 Este plan tiene dos vías que corren en paralelo y no se estorban:
 
 | vía | qué arregla | toca el motor |
 |---|---|---|
-| **A — Correcciones** | los defectos confirmados del field test y las brechas de confianza | sí |
+| **A — Correcciones** | los defectos confirmados, las brechas de confianza, y lo declarado-no-impuesto | sí |
 | **B — Adopción** | tiempo hasta el primer valor, artefactos mostrables, distribución | **no** |
 
 **Ningún ítem de la vía B cambia un principio.** Se pueden hacer por otra persona, en paralelo.
+
+> **Qué cambió en esta revisión.** Se agregó §2.1 (el patrón transversal y su guard), §4.5
+> (inyección de contexto por fase), §5.4 (worktrees), §5.5 (`doctor` clínico), §5.6 (el bucle
+> desatendido, que **ya existe** como `/batten-night` — lo que falta es volver mecánicas sus
+> cuatro reglas) y §6.7 (contadores de impacto, con dos de sus tres partes rechazadas).
 
 ---
 
@@ -100,6 +109,61 @@ concreta.
 | **Telemetría por red** | **rechazado** | tráfico saliente en una herramienta de auditoría cuesta más de lo que devuelve |
 | **Bucle autónomo (`batten loop`)** | **ya existe como `/batten-night`** — falta volver mecánicas sus 4 reglas | `max_iterations` nunca se incrementa ni se verifica: el freno de una corrida sin supervisión es una frase en markdown |
 | **Inyección de contexto por fase** | **hacer** — converge con §4.4 | hoy el agente recibe el spec entero de una vez; `phases[].reads` tiene 1 consumidor |
+
+---
+
+## 2.1 — El patrón que atraviesa un tercio del plan
+
+Trabajando las rondas de este plan por separado apareció **un solo modo de falla, siete veces**.
+Vale nombrarlo, porque cambia la respuesta: no son siete arreglos, es uno sistémico más siete
+instancias.
+
+**batten declara una capacidad de gobierno que no impone.**
+
+| instancia | declara | impone | § |
+|---|---|---|---|
+| `query_before_read`, `graph_query` | consultar el grafo antes de leer | nada | 5.3 · 8 |
+| `diff_from: anchor` | operar solo sobre el diff del unit | nada | 8 |
+| `models.tiers` | *"routes subagents and verifies it from the ledger"* | nada | 8 |
+| `provenance.format` | metadatos de procedencia para auditoría | nada | 8 |
+| `retry_of` | reintentos visibles en el grafo | 4 lectores, **0 escritores** | 8 |
+| `budget.max_iterations` | el techo de un bucle sin supervisión | se **muestra**, no se cuenta | 5.6 |
+| las 4 reglas de `/batten-night` | no borrar, no override, no commitear, honrar el techo | 112 líneas de markdown | 5.6 |
+| un claim de directorio | *"any other agent writing them is now denied"* | no cerca nada | 5.2 |
+| el write-set guard frente a `Bash` | un dueño por archivo | se rodea con `sed -i` | 5.1 |
+
+**Y es exactamente el modo de falla que batten existe para eliminar en el flujo de otra gente.**
+La primera línea del README dice que una regla que un documento solo puede *pedir*, un hook puede
+*imponer*. Nueve veces, batten pidió.
+
+Eso no es una ironía cómoda: es la explicación de por qué el field test encontró 52 defectos en un
+proyecto con la suite verde. Los tests verificaban que el código hiciera lo que hace. Nadie
+verificaba que el spec prometiera solo lo que el código hace.
+
+### El arreglo sistémico
+
+Las nueve instancias tienen su ítem en el plan. Pero lo que impide la décima es un test, y batten
+tiene el material para escribirlo:
+
+```
+Para cada campo del schema del spec, exigir que exista al menos un consumidor
+en producción, o que esté en una lista explícita de "declarado como futuro".
+```
+
+Es un test de paquete que recorre `batten.schema.json` / `internal/spec` y grepea los consumidores,
+igual que hice a mano en §8. Cuando alguien agrega un campo, o lo cablea, o lo declara futuro
+conscientemente. Lo que deja de poder hacer es agregarlo y olvidarse.
+
+**Y hay un segundo test, del mismo espíritu, para la otra mitad:** que cada regla del prompt de
+`/batten-night` que sea mecanizable tenga su denegación. Ese no se puede automatizar del todo, pero
+sí se puede dejar la lista de las cuatro en un test que falle mientras alguna siga siendo solo
+prosa.
+
+**Costo: ~1 día los dos.** **Prioridad: alta**, y va *antes* de las nueve instancias — porque si
+no, la décima entra mientras se arreglan las nueve.
+
+Es, además, el único ítem del plan que hace lo que batten predica: convierte una regla que hoy es
+disciplina ("no declares lo que no implementás") en un mecanismo que la impone.
 
 ---
 
@@ -403,6 +467,13 @@ sobre **write-sets disjuntos del mismo árbol** —esa es la premisa del diseño
 significa que ninguno ve el trabajo del otro, más N fusiones para un solo unit. El aislamiento
 que hace falta es entre **units concurrentes**, que es donde el conflicto es real y es lo que los
 tres mensajes de arriba ya dicen.
+
+**Excepción que sí justifica aislar por subagente, y no es la de las colisiones.** Cuatro agentes
+compartiendo un árbol mientras uno corre `go test ./...` producen un resultado de test que **no
+significa nada**: la suite leyó un árbol que otro agente estaba escribiendo a mitad de camino. Eso
+es aislamiento de **lectura durante la verificación**, no de escritura, y es una razón distinta y
+legítima. Aplica a la fase de verify, no a la de build — y es más barata de resolver serializando
+los checks que dando un árbol a cada agente.
 
 **(b) batten no orquesta, así que no puede "asignar" nada.** No lanza subagentes —eso son los
 Dynamic Workflows de Claude Code— y ese límite es deliberado (README: *"los rieles, no el
@@ -801,6 +872,7 @@ Cinco campos con **cero consumidores**, medido grepeando:
 | `phases[].graph_query` | consultar el grafo en vez de grepear | 0 | **implementar** (§5.3) |
 | `phases[].diff_from: anchor` | operar solo sobre el diff del unit | 0 | **implementar** — el ancla ya se graba |
 | `edges.rel = retry_of` | reintentos visibles en el grafo | 4 consumidores, **0 productores** | **implementar** — barato, y §6.1 lo necesita para dibujar el reintento |
+| `budget.max_iterations` | el tope de vueltas de un bucle desatendido | se declara, se muestra en la TUI, **nunca se incrementa ni se verifica** | **implementar** (§5.6) — es el peor caso de la tabla: gobierna el comando más peligroso |
 | `models.tiers` / `models.phases` | *"batten routes subagents and verifies it from the ledger"* | 0 | **sacar del spec generado** |
 | `provenance.format` | metadatos de procedencia | 0 | **sacar del spec generado** |
 
@@ -864,42 +936,43 @@ script.
 | 2 | validar los 8 fixes contra la réplica de proyecto_ui | 4.2 | ½ día |
 | 3 | fail-open ruidoso | 4.3 | ½ día |
 | 4 | **`doctor` clínico** — es lo primero que corre alguien cuando algo falla | 5.5 | 1 día |
-| 5 | rediseñar el payload MCP **+ inyección por fase** | 4.4 · 4.5 | 2 días |
+| 5 | **el guard de "declarado ⇒ implementado"** — antes que las nueve instancias, o entra la décima | 2.1 | 1 día |
+| 6 | rediseñar el payload MCP **+ inyección por fase** | 4.4 · 4.5 | 2 días |
 
 ### Bloque 2 — adopción (paralelizable, no toca el motor)
 
 | | qué | § | costo |
 |---|---|---|---|
-| 6 | **`decision` en `events`** — prerrequisito de los contadores, hoy el dato no existe | 6.7a | ½ día |
-| 7 | `batten report`, con los contadores de impacto | 6.2 · 6.7a | 1½ días |
-| 8 | `batten demo` | 6.4 | 1 día |
-| 9 | GIF con VHS | 6.5 | ½ día |
-| 10 | `batten pr` con DAG Mermaid | 6.1 | 2 días |
-| 11 | canvas HTML autocontenido | 6.3 | 2 días |
-| 12 | README reposicionado | 6.6 | 1 día |
+| 7 | **`decision` en `events`** — prerrequisito de los contadores, hoy el dato no existe | 6.7a | ½ día |
+| 8 | `batten report`, con los contadores de impacto | 6.2 · 6.7a | 1½ días |
+| 9 | `batten demo` | 6.4 | 1 día |
+| 10 | GIF con VHS | 6.5 | ½ día |
+| 11 | `batten pr` con DAG Mermaid | 6.1 | 2 días |
+| 12 | canvas HTML autocontenido | 6.3 | 2 días |
+| 13 | README reposicionado | 6.6 | 1 día |
 
 ### Bloque 3 — cerrar las brechas de confianza
 
 | | qué | § | costo |
 |---|---|---|---|
-| 13 | `scan-diff` post-fan-out | 5.1 pto. 4 | 1 día |
-| 14 | cadena graphify→engram en `/batten-build` | 5.3 | 2 h |
-| 15 | **modo desatendido mecánico** — las 4 reglas de `/batten-night` dejan de ser prosa | 5.6 | 2½ días |
-| 16 | **worktrees: `batten worktree` + guard consciente del árbol + fusión gateada** | 5.4 | 3 días |
-| 17 | parseo de Bash, advisory primero | 5.1 pto. 1–3 | 1½ días |
-| 18 | claim de directorio y colisión entre runs *(§5.4 lo resuelve estructuralmente; hacerlo solo si no se hacen worktrees)* | 5.2 | 1 día |
-| 19 | `retry_of` y `diff_from` (los necesita §6.1, y §5.4 le da sentido al segundo) | 8 | 1 día |
+| 14 | `scan-diff` post-fan-out | 5.1 pto. 4 | 1 día |
+| 15 | cadena graphify→engram en `/batten-build` | 5.3 | 2 h |
+| 16 | **modo desatendido mecánico** — las 4 reglas de `/batten-night` dejan de ser prosa | 5.6 | 2½ días |
+| 17 | **worktrees: `batten worktree` + guard consciente del árbol + fusión gateada** | 5.4 | 3 días |
+| 18 | parseo de Bash, advisory primero | 5.1 pto. 1–3 | 1½ días |
+| 19 | claim de directorio y colisión entre runs *(§5.4 lo resuelve estructuralmente; hacerlo solo si no se hacen worktrees)* | 5.2 | 1 día |
+| 20 | `retry_of` y `diff_from` (los necesita §6.1, y §5.4 le da sentido al segundo) | 8 | 1 día |
 
 ### Bloque 4 — profundidad
 
 | | qué | § |
 |---|---|---|
-| 20 | criterios como dato + vista de cumplimiento | 7 |
-| 21 | la familia de honestidad de superficie | 9 |
-| 22 | sacar del spec lo que no se va a implementar | 8 |
-| 23 | ciclo de vida y presentación | 9 |
+| 21 | criterios como dato + vista de cumplimiento | 7 |
+| 22 | la familia de honestidad de superficie | 9 |
+| 23 | sacar del spec lo que no se va a implementar | 8 |
+| 24 | ciclo de vida y presentación | 9 |
 
-**Camino más corto a "funcional y compartible":** bloque 1 completo, luego 6 → 7 → 8 → 9 → 10 → 12.
+**Camino más corto a "funcional y compartible":** bloque 1 completo, luego 7 → 8 → 9 → 10 → 11 → 13.
 Eso son ~9 días y produce: un plugin que no miente cuando falla, un `doctor` que diagnostica todo
 de una pasada, un comando que da valor sin configurar nada y que cuenta lo que batten evitó, un
 demo de 30 segundos, un GIF, un PR que se escribe solo con un diagrama que renderiza nativo, y un
