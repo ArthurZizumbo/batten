@@ -160,3 +160,72 @@ func keys(m map[string]HarnessFact) []string {
 	}
 	return out
 }
+
+// TestUnitComesFromTheBacklogNotJustBranches is the proyecto_ui case that motivated reading the
+// planning doc at all. That repo had US-001..US-020 written down and a single `main` branch, so
+// deriving from branch names alone proposed `TASK-\d+` — and every default downstream of the
+// unit was then wrong. The backlog is where the ids actually live.
+func TestUnitComesFromTheBacklogNotJustBranches(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "context/planeacion_proyecto.md", strings.Join([]string{
+		"# Plan",
+		"Intro prose mentioning US-001 several times: US-001, US-001, US-001, US-001.",
+		"### US-001 — Docker Compose",
+		"body",
+		"### US-002 — Dependencies",
+		"body",
+		"### US-003 — Terraform",
+		"body",
+		"### US-014 — RAG",
+		"body",
+	}, "\n"))
+	write(t, root, "main.go", "package main\n")
+
+	f, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if f.UnitName != "US" {
+		t.Errorf("unit name = %q, want US — the backlog says so on every heading", f.UnitName)
+	}
+	// Three digits were observed, so the pattern must demand three. A permissive \d+ would match
+	// US-1 and US-12345 too, and the unit id is what attribution hangs on.
+	if f.UnitPattern != `US-\d{3}` {
+		t.Errorf("unit pattern = %q, want %s", f.UnitPattern, `US-\d{3}`)
+	}
+	// Knowing WHERE the items are defined and HOW their headings look means plan and locator
+	// stop being TODOs the user has to discover.
+	if f.UnitPlan != "context/planeacion_proyecto.md" {
+		t.Errorf("unit plan = %q, want the backlog document", f.UnitPlan)
+	}
+	if f.UnitLocator != "### {id}" {
+		t.Errorf("unit locator = %q, want '### {id}'", f.UnitLocator)
+	}
+
+	y := f.ToYAML()
+	for _, want := range []string{`pattern: 'US-\d{3}'`, "plan: context/planeacion_proyecto.md", "locator: '### {id}'"} {
+		if !strings.Contains(y, want) {
+			t.Errorf("the drafted spec is missing %q:\n%s", want, y)
+		}
+	}
+}
+
+// Prose citations must not outvote headings, and too few headings must not be called a
+// convention at all — a single "see US-001" in a README is not a backlog.
+func TestASingleMentionIsNotAConvention(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "README.md", "# Thing\n\nRelated to US-001. See also US-001 and US-001.\n")
+	write(t, root, "main.go", "package main\n")
+
+	f, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.UnitName == "US" {
+		t.Errorf("three prose mentions and zero headings is not a backlog; unit = %q/%q", f.UnitName, f.UnitPattern)
+	}
+	if f.UnitPlan != "" {
+		t.Errorf("no backlog was found, so unit.plan must stay empty; got %q", f.UnitPlan)
+	}
+}

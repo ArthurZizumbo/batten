@@ -20,8 +20,10 @@ import (
 // Facts is everything the scanner could learn without a human.
 type Facts struct {
 	Project     string           `json:"project"`
-	UnitPattern string           `json:"unit_pattern"` // derived from branch names, or a sensible default
+	UnitPattern string           `json:"unit_pattern"` // from the backlog's headings, else branch names
 	UnitName    string           `json:"unit_name"`
+	UnitPlan    string           `json:"unit_plan"`    // the doc the work items are defined in, if found
+	UnitLocator string           `json:"unit_locator"` // how a unit's block is found inside it, e.g. "### {id}"
 	Domains     []DomainFact     `json:"domains"`
 	Stack       []string         `json:"stack"`    // languages and tooling, from marker files actually present
 	Purpose     []string         `json:"purpose"`  // files where the repo describes what it is for
@@ -67,7 +69,7 @@ func Scan(root string) (*Facts, error) {
 		UnitName: "TASK",
 	}
 
-	f.UnitName, f.UnitPattern = deriveUnit(root)
+	f.UnitName, f.UnitPattern, f.UnitPlan, f.UnitLocator = deriveUnit(root)
 	f.Domains = deriveDomains(root)
 	f.Stack = deriveStack(root)
 	f.Purpose = derivePurpose(root)
@@ -131,18 +133,105 @@ func Scan(root string) (*Facts, error) {
 	return f, nil
 }
 
-// deriveUnit inspects recent branch names for a work-item pattern the repo already uses.
-func deriveUnit(root string) (name, pattern string) {
+// deriveUnit finds the work-item noun this repo already uses.
+//
+// Branch names were the only source, and they are the WEAKER one. A repo that has been planned
+// but not yet worked has no feature branches at all — proyecto_ui had a backlog of US-001..US-0NN
+// written down and a single `main`, so the scan proposed `TASK-\d+` and every downstream default
+// was wrong: the unit pattern, the artifact paths, the locator. The backlog is where the ids
+// actually live, and derivePurpose has already found the file.
+//
+// So: read the planning docs first and fall back to branches. A doc that says US-001 forty times
+// is far better evidence than a branch someone named by hand once.
+func deriveUnit(root string) (name, pattern, plan, locator string) {
+	if n, p, doc, loc := unitFromDocs(root); n != "" {
+		return n, p, doc, loc
+	}
 	out, err := gitOut(root, "for-each-ref", "--sort=-committerdate", "--count=50",
 		"--format=%(refname:short)", "refs/heads")
 	if err != nil {
-		return "TASK", ""
+		return "TASK", "", "", ""
 	}
-	// Look for the most common <PREFIX>-<digits> shape.
+	n, p := pickUnit(strings.Split(out, "\n"))
+	return n, p, "", ""
+}
+
+// unitFromDocs mines the planning/backlog documents for the id shape they use, and returns the
+// document and the heading form alongside it — because once we know WHERE the work items are
+// written and WHAT their headings look like, unit.plan and unit.locator can be filled in too
+// instead of left as TODOs the user has to discover.
+//
+// Only markdown HEADINGS count. A heading is where a work item is DEFINED; a mention in prose is
+// usually a cross-reference to one defined elsewhere, and counting those would let a single
+// heavily-cited item outvote the real numbering.
+func unitFromDocs(root string) (name, pattern, plan, locator string) {
+	type hit struct {
+		doc   string
+		lines []string
+		level string
+	}
+	var hits []hit
+	for _, rel := range derivePurpose(root) {
+		if !strings.HasSuffix(strings.ToLower(rel), ".md") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			continue
+		}
+		h := hit{doc: rel}
+		for _, l := range strings.Split(string(b), "\n") {
+			t := strings.TrimSpace(l)
+			if !strings.HasPrefix(t, "#") {
+				continue
+			}
+			h.lines = append(h.lines, t)
+			if h.level == "" {
+				if m := regexp.MustCompile(`^(#{1,6})\s+[A-Z][A-Z0-9]{1,9}-\d`).FindStringSubmatch(t); m != nil {
+					h.level = m[1]
+				}
+			}
+		}
+		if len(h.lines) > 0 {
+			hits = append(hits, h)
+		}
+	}
+
+	// The document with the most work-item headings is the backlog; anything else mentioning an
+	// id is a design note that happens to cite one.
+	best, bestN := hit{}, 0
+	for _, h := range hits {
+		n := 0
+		re := regexp.MustCompile(`^#{1,6}\s+[A-Z][A-Z0-9]{1,9}-\d`)
+		for _, l := range h.lines {
+			if re.MatchString(strings.ToUpper(l)) {
+				n++
+			}
+		}
+		if n > bestN {
+			best, bestN = h, n
+		}
+	}
+	if bestN < 3 {
+		return "", "", "", "" // too few to call a convention
+	}
+	n, p := pickUnit(best.lines)
+	if n == "" || p == "" {
+		return "", "", "", ""
+	}
+	loc := ""
+	if best.level != "" {
+		loc = best.level + " {id}"
+	}
+	return n, p, best.doc, loc
+}
+
+// pickUnit returns the most common <PREFIX>-<digits> shape across the given lines.
+func pickUnit(lines []string) (name, pattern string) {
 	re := regexp.MustCompile(`([A-Z][A-Z0-9]{1,9})-(\d{1,6})`)
 	counts := map[string]int{}
 	width := map[string]int{}
-	for _, line := range strings.Split(out, "\n") {
+	for _, line := range lines {
 		if m := re.FindStringSubmatch(strings.ToUpper(line)); m != nil {
 			counts[m[1]]++
 			if len(m[2]) > width[m[1]] {
@@ -152,7 +241,9 @@ func deriveUnit(root string) (name, pattern string) {
 	}
 	best, bestN := "", 0
 	for p, n := range counts {
-		if n > bestN {
+		// Ties break on the name to stay deterministic: an unstable default would make
+		// `batten init` propose a different spec on every run over the same repo.
+		if n > bestN || (n == bestN && p < best) {
 			best, bestN = p, n
 		}
 	}
@@ -476,6 +567,14 @@ func (f *Facts) ToYAML() string {
 	w("unit:")
 	w("  name: " + f.UnitName)
 	w("  pattern: '" + f.UnitPattern + "'")
+	if f.UnitPlan != "" {
+		// Found by reading the backlog rather than guessed: the phases that read a unit's
+		// acceptance criteria need to know where they live.
+		w("  plan: " + f.UnitPlan)
+	}
+	if f.UnitLocator != "" {
+		w("  locator: '" + f.UnitLocator + "'")
+	}
 	w("")
 	w("artifacts:")
 	w("  handoff: docs/{id}.md   # TODO: where should per-unit handoffs live?")
