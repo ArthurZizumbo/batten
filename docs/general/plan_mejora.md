@@ -93,6 +93,11 @@ concreta.
 | **Migrar a OCC** | **no todavía — adoptar su principio** | falta medir el bloqueo real |
 | **Autorreparación de conflictos por LLM** | **rechazado** | reintroduce el fallo del 78 % en la otra mitad del producto |
 | **Obsidian bidireccional en vivo** | **no en este ciclo** | alto costo, valor no demostrado |
+| **Git worktrees por unit** | **hacer** | batten ya lo prescribe en 3 mensajes y no lo hace; resuelve el hallazgo #4 estructuralmente |
+| **`doctor` clínico** | **hacer, va temprano** | es lo primero que corre alguien cuando algo falla; absorbe los hallazgos #58 y #60 |
+| **Contadores de impacto en `report`** | **hacer — pero falta el dato** | `LogEvent` guarda el payload, no la decisión: hoy no se puede contar una denegación |
+| **Dólares "ahorrados" estimados** | **rechazado** | es un número inventado presentado como medido, en el comando donde batten dice `NO MEDIDO` |
+| **Telemetría por red** | **rechazado** | tráfico saliente en una herramienta de auditoría cuesta más de lo que devuelve |
 
 ---
 
@@ -112,7 +117,7 @@ Diez trabajos de la ventana junio–julio de 2026. Lo relevante no es que exista
 - El agente *"puede reportar con confianza que la tarea está completa"* con el estado corrupto
 
 **Consecuencia práctica:** batten tiene un número de terceros para el titular. No autorreportado.
-Ver §5.4.
+Ver §6.6.
 
 ### 3.2 — El fail-open es la brecha de confianza, pero fail-closed no es el remedio
 
@@ -343,6 +348,91 @@ decidimos*) → grep (fallback, el más caro).
 - **Paso 2 (~2 h):** que `doctor` cruce declaración con realidad — `query_before_read: true` sin graphify en PATH debe avisar.
 - **Paso 3 (~medio día):** medirlo. `SetCodeGraph` ya marca cada run; `measure` puede comparar el costo de orientación con y sin grafo. Mismo trato que headroom: *admitido, pero medido*.
 
+### 5.4 — ⭐ Git worktrees: cerrar el bucle que batten ya abrió
+
+**El argumento más fuerte a favor no es la literatura: es que batten ya lo prescribe y no lo hace.**
+Tres mensajes distintos del binario le dicen al usuario que use un worktree:
+
+| dónde | qué dice |
+|---|---|
+| [`hooks.go:376`](../../internal/hooks/hooks.go#L376) | "Bind it with `batten phase <unit> <phase>`, **or use a worktree per unit**" |
+| [`hooks.go:589`](../../internal/hooks/hooks.go#L589) | "Editing it now races that work. Coordinate, **or use a worktree per unit so each has its own branch**" |
+| [`hooks.go:744`](../../internal/hooks/hooks.go#L744) | "For parallel work, **a worktree per unit keeps each on its own branch**" |
+
+batten diagnostica el problema, nombra la solución, y deja que el usuario la ejecute a mano. Eso
+es exactamente el tipo de brecha entre lo declarado y lo hecho que §8 trata en otro contexto.
+
+**Y resuelve estructuralmente un defecto confirmado.** El hallazgo #4: dos sesiones reclaman el
+mismo archivo, ambas reciben "sos el dueño", y después el guard **las deniega a las dos**. Con un
+worktree por unit el conflicto no existe: cada unit tiene su propio árbol y su propia rama.
+
+#### Dos correcciones de alcance respecto a la propuesta
+
+**(a) Por unit, no por subagente.** La propuesta dice "cuando se lance un subagente paralelo,
+batten le asigna un worktree". Eso rompe el fan-out: los subagentes de un mismo unit trabajan
+sobre **write-sets disjuntos del mismo árbol** —esa es la premisa del diseño— y aislarlos entre sí
+significa que ninguno ve el trabajo del otro, más N fusiones para un solo unit. El aislamiento
+que hace falta es entre **units concurrentes**, que es donde el conflicto es real y es lo que los
+tres mensajes de arriba ya dicen.
+
+**(b) batten no orquesta, así que no puede "asignar" nada.** No lanza subagentes —eso son los
+Dynamic Workflows de Claude Code— y ese límite es deliberado (README: *"los rieles, no el
+motor"*). Lo que sí puede:
+
+- `batten worktree <unit>` — crea el worktree, lo registra en el run, y devuelve la ruta
+- el write-set guard se vuelve **consciente del worktree**: normaliza rutas contra la raíz del
+  árbol del run, no contra la del repo, para no denegar cruces que son en árboles distintos
+- la **fusión se gatea**: `batten close` rechaza integrar un worktree cuyo unit no tiene los dos
+  veredictos. Ahí sí batten es el que decide, y es la extensión natural del gate
+- `/batten-build` instruye al orquestador, que ya tiene `isolation: "worktree"` en su herramienta
+  de agentes — **integrar con eso, no reimplementarlo**
+
+#### Dos advertencias que hay que anotar antes de empezar
+
+- **Multiplica el conflicto de `graph.json`.** graphify commitea un `graph.json` de ~1 MB; dos
+  ramas que toquen código dan conflicto garantizado sin el merge driver de unión. Con worktrees,
+  "dos ramas tocando código" pasa de ser el caso raro al caso normal. `doctor` **ya** detecta si
+  el driver está registrado — con esto ese chequeo deja de ser una cortesía y pasa a ser un
+  requisito de instalación.
+- **El ancla cambia de significado.** Cada worktree tiene su propio `HEAD`. `diff_from: anchor`
+  —que hoy tiene cero consumidores (§8)— se vuelve *más* correcto en este modelo, no menos: el
+  ancla del unit es el punto donde su worktree se separó.
+
+**Costo:** `worktree` + registro ~1 día · guard consciente del árbol ~1 día · fusión gateada
+~1 día. **Prioridad: alta**, y sube si el trabajo con dos units concurrentes es habitual.
+
+### 5.5 — `batten doctor` clínico
+
+Hoy `doctor` valida el spec, el close gate, que el store abra, el proveedor de memoria, el vault y
+los archivos de reglas de cada dominio. **Le faltan los diagnósticos que corresponden al motor
+transaccional**, que es donde vive la causa de desinstalación silenciosa.
+
+Tres de los faltantes ya son hallazgos confirmados del field test, así que esto no es una
+funcionalidad nueva sino un paquete coherente:
+
+| chequeo | estado hoy |
+|---|---|
+| ¿los comandos de `check:` / `gates.checks` **existen y se pueden correr**? | **falta** — hallazgo #58 |
+| ¿el reporte llega a las advertencias cuando hay un error fatal? | **falta** — hallazgo #60: corta en el primer fatal, así que arreglás uno y aparece otro, de a uno |
+| ¿hay bloqueos activos en SQLite / procesos huérfanos sosteniendo la DB? | **falta** — y es exactamente lo que hace que el hook falle en silencio (§4.3) |
+| ¿el binario instalado corre? ¿el bootstrap del plugin tiene finales de línea LF? | **falta en runtime** |
+| ¿graphify en PATH? ¿merge driver registrado? ¿skills instaladas? | **ya está** |
+
+**Sobre los finales de línea:** en el repo ya está resuelto por
+[`.gitattributes`](../../.gitattributes) y CI lo verifica (§1.2a). Pero **la copia instalada es
+otra cosa**: un usuario puede instalar por una ruta que la mangle, y el modo de falla es
+`#!/usr/bin/env bash\r` → *bad interpreter* → el binario nunca se descarga → **los hooks no-opean
+en silencio**. Chequearlo en `doctor` cuesta tres líneas y cierra el único camino por el que ese
+bug puede volver.
+
+**Y una regla de presentación:** `doctor` debe emitir **todo lo que sabe en una sola pasada**, con
+la corrección concreta al lado de cada problema. Hoy corta en el primer fatal — arreglás uno,
+volvés a correr, aparece el siguiente. Un diagnóstico de a uno es lo que hace que la gente se
+rinda a la tercera iteración.
+
+**Costo:** ~1 día. **Prioridad: alta** — es barato, y es la primera cosa que corre alguien cuando
+algo no funciona.
+
 ---
 
 # VÍA B — Adopción
@@ -525,6 +615,63 @@ costado": quiere saber si le alcanza hasta las 5 de la tarde. Ya está construid
 
 **Costo: ~1 día.**
 
+## 6.7 — Estadísticas de impacto: contadas, no estimadas, y locales
+
+La idea es correcta: los desarrolladores comparten estadísticas de impacto, y batten está sentado
+sobre los datos. Pero hay que separarla en tres, porque dos partes se hacen y una no.
+
+### ✅ (a) El contador — pero primero falta el dato
+
+`batten report` debería cerrar con lo que batten efectivamente evitó:
+
+```
+esta semana
+  3 commits denegados     (2 sin veredicto · 1 con checks en rojo)
+  2 colisiones de write-set frenadas
+  1 run detenido por presupuesto
+  0 overrides
+```
+
+**Prerrequisito que no es obvio: hoy ese dato no existe.**
+[`LogEvent`](../../internal/store/store.go#L1048) registra **el payload entrante, no la decisión**
+— `hooks.go:177` lo llama una sola vez, antes de despachar. Así que batten no puede contar cuántos
+commits denegó: nunca lo anotó.
+
+Arreglo: una columna `decision` en `events` (`allow` | `deny` | `advise`) más el motivo, escrita
+después del dispatch. **~medio día**, y de paso vuelve el log de eventos genuinamente reproducible
+— que es lo que ya prometía llamarse "replay log".
+
+### ❌ (b) El dólar estimado — no
+
+La propuesta sugiere: *"batten te ahorró aproximadamente $15 USD en tokens de reintento"*.
+
+**Eso viola el principio #1 en la superficie más visible del producto.** Nadie sabe qué habría
+costado el reintento que no ocurrió: depende de cuántas vueltas habría dado el agente, con qué
+modelo, con cuánto contexto. Es un número inventado, presentado como medido, en el mismo comando
+donde batten se toma el trabajo de decir `NO MEDIDO` en vez de `$0.00`.
+
+Y el costo no es solo filosófico: es exactamente el tipo de afirmación que un revisor escéptico
+desarma en un comentario de Hacker News, y ahí se lleva puesta la credibilidad de las cifras que
+**sí** son reales.
+
+**La versión honesta es más fuerte:** *"3 commits denegados esta semana"* es verificable, cae bien
+en una captura, y no se puede refutar. Que el lector saque su propia conclusión sobre cuánto vale.
+
+### ❌ (c) Telemetría por red — no, y no es una decisión difícil
+
+Enviar métricas anónimas a un servidor es un problema de confianza para una herramienta cuyo
+trabajo es **auditar**. Los dos referentes del ecosistema no lo hacen: el punto de venta de
+graphify es *local determinista, sin vector store*, y superpowers no tiene telemetría alguna. Un
+plugin de gobernanza que hace tráfico saliente da un titular de issue —"¿por qué mi herramienta de
+seguridad llama a casa?"— que cuesta más de lo que cualquier dashboard agregado devuelve.
+
+**La alternativa que consigue lo mismo:** que el reporte local sea trivial de compartir. Una
+bandera `batten report --share` que emita un bloque markdown listo para pegar, con los números
+contados y sin nada identificable. Si es lindo y es honesto, la gente lo postea sola — que es
+exactamente el mecanismo por el que §6.1 funciona.
+
+**Costo:** (a) ~medio día de esquema + ~medio día de vista. (b) y (c) no se hacen.
+
 ---
 
 ## 7. La TUI y el seguimiento de cumplimiento
@@ -619,42 +766,51 @@ script.
 | 1 | tercer sitio del un-solo-veredicto | 4.1 | 30 min |
 | 2 | validar los 8 fixes contra la réplica de proyecto_ui | 4.2 | ½ día |
 | 3 | fail-open ruidoso | 4.3 | ½ día |
-| 4 | rediseñar el payload MCP | 4.4 | 1 día |
+| 4 | **`doctor` clínico** — es lo primero que corre alguien cuando algo falla | 5.5 | 1 día |
+| 5 | rediseñar el payload MCP | 4.4 | 1 día |
 
 ### Bloque 2 — adopción (paralelizable, no toca el motor)
 
 | | qué | § | costo |
 |---|---|---|---|
-| 5 | `batten report` | 6.2 | 1 día |
-| 6 | `batten pr` con DAG Mermaid | 6.1 | 2 días |
-| 7 | canvas HTML autocontenido | 6.3 | 2 días |
+| 6 | **`decision` en `events`** — prerrequisito de los contadores, hoy el dato no existe | 6.7a | ½ día |
+| 7 | `batten report`, con los contadores de impacto | 6.2 · 6.7a | 1½ días |
 | 8 | `batten demo` | 6.4 | 1 día |
 | 9 | GIF con VHS | 6.5 | ½ día |
-| 10 | README reposicionado | 6.6 | 1 día |
+| 10 | `batten pr` con DAG Mermaid | 6.1 | 2 días |
+| 11 | canvas HTML autocontenido | 6.3 | 2 días |
+| 12 | README reposicionado | 6.6 | 1 día |
 
 ### Bloque 3 — cerrar las brechas de confianza
 
 | | qué | § | costo |
 |---|---|---|---|
-| 11 | `scan-diff` post-fan-out | 5.1 pto. 4 | 1 día |
-| 12 | cadena graphify→engram en `/batten-build` | 5.3 | 2 h |
-| 13 | parseo de Bash, advisory primero | 5.1 pto. 1–3 | 1½ días |
-| 14 | claim de directorio y colisión entre runs | 5.2 | 1 día |
-| 15 | `retry_of` y `diff_from` (los necesita §6.1) | 8 | 1 día |
+| 13 | `scan-diff` post-fan-out | 5.1 pto. 4 | 1 día |
+| 14 | cadena graphify→engram en `/batten-build` | 5.3 | 2 h |
+| 15 | **worktrees: `batten worktree` + guard consciente del árbol + fusión gateada** | 5.4 | 3 días |
+| 16 | parseo de Bash, advisory primero | 5.1 pto. 1–3 | 1½ días |
+| 17 | claim de directorio y colisión entre runs *(§5.4 lo resuelve estructuralmente; hacerlo solo si no se hacen worktrees)* | 5.2 | 1 día |
+| 18 | `retry_of` y `diff_from` (los necesita §6.1, y §5.4 le da sentido al segundo) | 8 | 1 día |
 
 ### Bloque 4 — profundidad
 
 | | qué | § |
 |---|---|---|
-| 16 | criterios como dato + vista de cumplimiento | 7 |
-| 17 | la familia de honestidad de superficie | 9 |
-| 18 | sacar del spec lo que no se va a implementar | 8 |
-| 19 | ciclo de vida y presentación | 9 |
+| 19 | criterios como dato + vista de cumplimiento | 7 |
+| 20 | la familia de honestidad de superficie | 9 |
+| 21 | sacar del spec lo que no se va a implementar | 8 |
+| 22 | ciclo de vida y presentación | 9 |
 
-**Camino más corto a "funcional y compartible":** bloque 1 completo, luego 5 → 8 → 9 → 6 → 10.
-Eso son ~7 días de trabajo y produce: un plugin que no miente cuando falla, un comando que da
-valor sin configurar, un demo de 30 segundos, un GIF, un PR que se escribe solo con un diagrama
-que renderiza nativo, y un README que lidera con un número de terceros.
+**Camino más corto a "funcional y compartible":** bloque 1 completo, luego 6 → 7 → 8 → 9 → 10 → 12.
+Eso son ~9 días y produce: un plugin que no miente cuando falla, un `doctor` que diagnostica todo
+de una pasada, un comando que da valor sin configurar nada y que cuenta lo que batten evitó, un
+demo de 30 segundos, un GIF, un PR que se escribe solo con un diagrama que renderiza nativo, y un
+README que lidera con un número de terceros.
+
+**Los worktrees (§5.4) son el candidato a subir de bloque.** Están en el 3 porque cuestan 3 días y
+tocan el guard, pero cierran un bucle que batten ya abrió en tres mensajes distintos y resuelven
+estructuralmente el hallazgo #4. Si el trabajo con dos units concurrentes es habitual en la
+práctica, pasan al bloque 1.
 
 ---
 
