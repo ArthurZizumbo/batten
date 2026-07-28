@@ -247,7 +247,7 @@ CREATE TABLE IF NOT EXISTS overrides (
 // schemaVersion is bumped whenever an additive migration is added below. The base schema
 // (CREATE TABLE IF NOT EXISTS ...) always runs; versioned steps run once, in order, so a
 // database created by an older batten upgrades in place instead of needing a rebuild.
-const schemaVersion = 3
+const schemaVersion = 6
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
@@ -269,6 +269,20 @@ func (s *Store) migrate() error {
 		// so `batten measure` can compare with/without — the same admitted-but-measured
 		// treatment headroom gets. NULL = unknown, 0 = absent/stale, 1 = fresh.
 		`ALTER TABLE runs ADD COLUMN code_graph INTEGER`,
+		// v4-v6: what batten DECIDED, not just what it was asked.
+		//
+		// The events table has called itself a replay log since the beginning and could not
+		// replay anything: it recorded the INCOMING payload, once, BEFORE dispatch. So the one
+		// fact worth keeping — whether batten allowed, denied or warned, and why — was never
+		// written down. batten could not answer "how many commits did you deny this week"
+		// because it had never noticed denying one.
+		//
+		// Three columns rather than one: the decision, the human reason, and the rule that
+		// produced it. The rule is what lets a report say "2 without a verdict, 1 with red
+		// checks" instead of deriving categories by pattern-matching English later.
+		`ALTER TABLE events ADD COLUMN decision TEXT`, // allow | deny | advise
+		`ALTER TABLE events ADD COLUMN reason TEXT`,
+		`ALTER TABLE events ADD COLUMN rule TEXT`, // verdict_gate | budget | write_set | degraded
 	}
 	for i := have; i < schemaVersion; i++ {
 		if _, err := s.db.Exec(migrations[i]); err != nil {
@@ -1087,10 +1101,108 @@ func (s *Store) AdoptSession(runID, sessionID string) error {
 
 // ---------- events & overrides ----------
 
+// Decisions are the vocabulary of the audit log. They are what batten DID, which until now it
+// never recorded — only what it was asked.
+const (
+	DecisionAllow  = "allow"  // batten had no objection (or no opinion at all)
+	DecisionDeny   = "deny"   // the tool call was refused
+	DecisionAdvise = "advise" // the call proceeded, with a warning the user can see
+)
+
+// Rules name which wedge produced a decision, so a report can group denials by cause without
+// pattern-matching the English of the reason.
+const (
+	RuleVerdictGate = "verdict_gate"
+	RuleBudget      = "budget"
+	RuleWriteSet    = "write_set"
+	RuleDegraded    = "degraded" // batten could not run at all and said so
+)
+
+// Event is one row of the replay log: what arrived, and what batten decided about it.
+type Event struct {
+	RunID    string
+	NodeID   string
+	Hook     string
+	Payload  []byte
+	Decision string // allow | deny | advise; empty for a bare record
+	Reason   string
+	Rule     string
+	TS       int64
+}
+
+// LogEvent records an event with no decision attached. Kept for callers that are only
+// journalling an arrival; anything that DECIDES something should use LogDecision.
 func (s *Store) LogEvent(runID, nodeID, hook string, payload []byte) error {
-	_, err := s.db.Exec(`INSERT INTO events (run_id, node_id, hook, ts, payload) VALUES (?,?,?,?,?)`,
-		nullable(runID), nullable(nodeID), hook, now(), string(payload))
+	return s.LogDecision(Event{RunID: runID, NodeID: nodeID, Hook: hook, Payload: payload})
+}
+
+// LogDecision writes one replay-log row. Written AFTER the dispatch, which is the whole point:
+// the row that said what came in was useless for answering what batten did about it.
+func (s *Store) LogDecision(e Event) error {
+	if e.TS == 0 {
+		e.TS = now()
+	}
+	_, err := s.db.Exec(`INSERT INTO events
+	  (run_id, node_id, hook, ts, payload, decision, reason, rule) VALUES (?,?,?,?,?,?,?,?)`,
+		nullable(e.RunID), nullable(e.NodeID), e.Hook, e.TS, string(e.Payload),
+		nullable(e.Decision), nullable(e.Reason), nullable(e.Rule))
 	return err
+}
+
+// DecisionCount is one row of "what batten actually stopped", grouped the way a human would
+// ask for it.
+type DecisionCount struct {
+	Decision string
+	Rule     string
+	N        int
+}
+
+// CountDecisions reports what batten decided since a point in time.
+//
+// It counts rows batten WROTE, so it can only ever undercount — decisions taken before the
+// decision column existed are simply absent, and the report says so rather than presenting a
+// short history as a complete one.
+func (s *Store) CountDecisions(project string, since int64) ([]DecisionCount, error) {
+	// Events carry no project of their own; they are attributed through their run. Rows with no
+	// run (an unattributable commit, a degraded hook) belong to whoever is asking: they happened
+	// in this working tree, which is the only place batten was running.
+	rows, err := s.db.Query(`
+	  SELECT e.decision, COALESCE(e.rule,''), COUNT(*)
+	    FROM events e
+	    LEFT JOIN runs r ON r.run_id = e.run_id
+	   WHERE e.decision IS NOT NULL
+	     AND e.ts >= ?
+	     AND (e.run_id IS NULL OR r.project = ?)
+	   GROUP BY e.decision, e.rule`, since, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []DecisionCount
+	for rows.Next() {
+		var c DecisionCount
+		if err := rows.Scan(&c.Decision, &c.Rule, &c.N); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// FirstDecisionAt returns when batten first recorded a decision for this project, or 0 if it
+// never has. A counter without this is a lie by omission: "3 commits denied" reads as a
+// lifetime total, and batten only started counting when the column was added.
+func (s *Store) FirstDecisionAt(project string) (int64, error) {
+	var ts sql.NullInt64
+	err := s.db.QueryRow(`
+	  SELECT MIN(e.ts) FROM events e
+	    LEFT JOIN runs r ON r.run_id = e.run_id
+	   WHERE e.decision IS NOT NULL AND (e.run_id IS NULL OR r.project = ?)`, project).Scan(&ts)
+	if err != nil || !ts.Valid {
+		return 0, err
+	}
+	return ts.Int64, nil
 }
 
 func nullable(s string) any {

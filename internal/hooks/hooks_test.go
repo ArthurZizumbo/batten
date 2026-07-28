@@ -514,6 +514,97 @@ func TestOneOpenUnitTheSessionDoesNotOwnIsStillUngated(t *testing.T) {
 	}
 }
 
+// TestTheReplayLogRecordsWhatBattenDECIDED is §6.7a's prerequisite.
+//
+// The events table has called itself a replay log since the beginning and could replay nothing:
+// it wrote the INCOMING payload, once, BEFORE dispatch. So the only fact worth keeping — whether
+// batten allowed, denied or warned, and why — was never written down anywhere, and "how many
+// commits did you deny this week" was unanswerable because batten had never noticed denying one.
+//
+// This goes through Dispatch rather than calling verdictGate directly, because the defect was in
+// WHEN the row was written, and a test that skipped Dispatch would skip the bug.
+func TestTheReplayLogRecordsWhatBattenDECIDED(t *testing.T) {
+	h, run := budgetFixture(t, nil, 1000)
+	if err := h.Store.SaveVerdict(store.Verdict{
+		RunID: run.RunID, Gate: "qa", CheckID: "qa", Result: "ok",
+		Evidence: []string{"tests pass"}, Source: "agent",
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	burn(t, h, run, 5000) // over the ceiling: the commit below must be denied
+
+	raw, err := json.Marshal(commitInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.Dispatch("PreToolUse", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got != "deny" {
+		t.Fatalf("control failed: this commit must be DENIED for the log to have a denial to "+
+			"record; got %q", got)
+	}
+
+	counts, err := h.Store.CountDecisions("p", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var denials int
+	var rule string
+	for _, c := range counts {
+		if c.Decision == store.DecisionDeny {
+			denials += c.N
+			rule = c.Rule
+		}
+	}
+	if denials == 0 {
+		t.Fatal("batten denied a commit and the replay log did not record a single denial. " +
+			"Counting what batten prevented is impossible if batten never wrote down that it " +
+			"prevented anything")
+	}
+	// The rule is what lets a report say WHY, instead of deriving categories by pattern-matching
+	// English out of the reason field later.
+	if rule != store.RuleBudget {
+		t.Errorf("the denial was recorded under rule %q; an over-budget stop and a missing-verdict "+
+			"stop are different facts and a report that merges them is useless", rule)
+	}
+}
+
+// The other half, and the one that keeps the log honest: an allowed call is recorded too. A log
+// that only holds denials cannot tell "batten denied nothing this week" from "batten did not run".
+func TestTheReplayLogAlsoRecordsTheCallsItAllowed(t *testing.T) {
+	h, _ := gateFixture(t, nil, "enforce")
+
+	in := commitInput()
+	ti, _ := json.Marshal(bashInput{Command: "ls -la"}) // not a commit: no opinion at all
+	in.ToolInput = ti
+	raw, _ := json.Marshal(in)
+
+	out, err := h.Dispatch("PreToolUse", raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != nil {
+		t.Fatalf("control failed: `ls -la` must draw no opinion, got %+v", out)
+	}
+
+	counts, err := h.Store.CountDecisions("p", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var allows int
+	for _, c := range counts {
+		if c.Decision == store.DecisionAllow {
+			allows += c.N
+		}
+	}
+	if allows == 0 {
+		t.Error("a call batten had no objection to was not recorded as allowed; the log then " +
+			"cannot distinguish a quiet week from a batten that was never running")
+	}
+}
+
 // TestBattenCheckAloneDoesNotCloseAUnit.
 //
 // `batten check` writes its own source='batten' verdict. That row was both the newest verdict

@@ -56,6 +56,35 @@ type Output struct {
 	Continue      *bool         `json:"continue,omitempty"`
 	SystemMessage string        `json:"systemMessage,omitempty"`
 	HookSpecific  *HookSpecific `json:"hookSpecificOutput,omitempty"`
+
+	// Rule names the wedge that produced this output. It never goes over the wire — Claude Code
+	// has no use for it — but it is what the replay log needs to group denials by cause instead
+	// of pattern-matching their English later.
+	Rule string `json:"-"`
+}
+
+// withRule tags an output with the wedge that produced it. Nil-safe, because "no opinion" is a
+// normal return and every caller would otherwise need the same guard.
+func withRule(o *Output, rule string) *Output {
+	if o != nil && o.Rule == "" {
+		o.Rule = rule
+	}
+	return o
+}
+
+// decisionOf reads back what an output actually DID, in the audit log's vocabulary.
+func decisionOf(o *Output) (decision, reason string) {
+	if o == nil {
+		return store.DecisionAllow, "" // silence is no opinion, which is an allow
+	}
+	if o.HookSpecific != nil && o.HookSpecific.PermissionDecision == "deny" {
+		return store.DecisionDeny, firstLine(o.HookSpecific.PermissionDecisionReason)
+	}
+	if o.SystemMessage != "" {
+		return store.DecisionAdvise, firstLine(o.SystemMessage)
+	}
+	// Context injection (SessionStart's banner) is information, not a judgement.
+	return store.DecisionAllow, ""
 }
 
 type HookSpecific struct {
@@ -175,12 +204,12 @@ func (h *Handler) Dispatch(event string, raw []byte) (*Output, error) {
 		return nil, nil // not a batten repo: stay out of the way
 	}
 
-	// The replay log wants every event, not every byte: a Write tool's payload embeds the
-	// whole file body, and this INSERT sits on the fast path of every tool call in every
-	// session sharing the DB. 4KB keeps the log diagnostic (event shape, ids, decisions)
-	// without turning the events table into a mirror of the working tree.
-	_ = h.Store.LogEvent("", "", event, truncateBytes(raw, 4096))
+	out, err := h.route(event, in)
+	h.record(event, in, raw, out)
+	return out, err
+}
 
+func (h *Handler) route(event string, in Input) (*Output, error) {
 	switch event {
 	case "PreToolUse":
 		return h.preToolUse(in)
@@ -196,6 +225,44 @@ func (h *Handler) Dispatch(event string, raw []byte) (*Output, error) {
 		return h.stop(in)
 	}
 	return nil, nil
+}
+
+// record writes the replay-log row, AFTER the dispatch.
+//
+// Before is where it used to happen, and that is why the events table could describe every
+// request batten ever received and not one thing batten ever did. "How many commits did you
+// deny this week" was unanswerable because the answer was never written down.
+//
+// Best-effort by contract: a failure to journal must never change a decision. Governing is the
+// job; the log is the receipt.
+func (h *Handler) record(event string, in Input, raw []byte, out *Output) {
+	decision, reason := decisionOf(out)
+	rule := ""
+	if out != nil {
+		rule = out.Rule
+	}
+
+	// Attribute to a run when we cheaply can. RunBySession is a plain read — activeUnit would
+	// be richer but it ADOPTS sessions as a side effect, and journalling must not change state.
+	runID := ""
+	if in.SessionID != "" {
+		if r, err := h.Store.RunBySession(h.Spec.Project, in.SessionID); err == nil {
+			runID = r.RunID
+		}
+	}
+
+	// The replay log wants every event, not every byte: a Write tool's payload embeds the
+	// whole file body, and this INSERT sits on the fast path of every tool call in every
+	// session sharing the DB. 4KB keeps the log diagnostic (event shape, ids, decisions)
+	// without turning the events table into a mirror of the working tree.
+	_ = h.Store.LogDecision(store.Event{
+		RunID:    runID,
+		Hook:     event,
+		Payload:  truncateBytes(raw, 4096),
+		Decision: decision,
+		Reason:   reason,
+		Rule:     rule,
+	})
 }
 
 // phaseRe catches `batten phase <UNIT> ...` in a shell command, so the session that ran it can
@@ -257,13 +324,17 @@ func (h *Handler) preToolUse(in Input) (*Output, error) {
 		if err := json.Unmarshal(in.ToolInput, &bi); err != nil {
 			return nil, nil
 		}
-		return h.verdictGate(in, bi.Command)
+		// Tagged here rather than at each construction site: this is the one place that knows
+		// which wedge is answering, and the budget branch inside re-tags itself.
+		out, err := h.verdictGate(in, bi.Command)
+		return withRule(out, store.RuleVerdictGate), err
 	case "Write", "Edit", "NotebookEdit":
 		var wi writeInput
 		if err := json.Unmarshal(in.ToolInput, &wi); err != nil {
 			return nil, nil
 		}
-		return h.writeSetGuard(in, wi.FilePath)
+		out, err := h.writeSetGuard(in, wi.FilePath)
+		return withRule(out, store.RuleWriteSet), err
 	}
 	return nil, nil
 }
@@ -487,10 +558,13 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 		b := h.Spec.Budget
 		over, cs, err := h.Store.OverBudget(run.RunID, b.TokensPerRun, b.ImputedUSDPerRun, b.QuotaPctPerRun)
 		if err == nil && over {
-			return h.gate("PreToolUse", fmt.Sprintf(
+			// Its own rule, not the verdict gate's: "stopped for spending too much" and
+			// "stopped for having no evidence" are different facts, and a report that merges
+			// them tells the user nothing they can act on.
+			return withRule(h.gate("PreToolUse", fmt.Sprintf(
 				"batten: %s is over budget. budget.on_exceed=block.\n%s\n"+
 					"To proceed anyway (recorded): batten override %s --reason \"...\"",
-				unit, formatCeilings(cs), unit)), nil
+				unit, formatCeilings(cs), unit)), store.RuleBudget), nil
 		}
 	}
 	return pending, nil
