@@ -99,12 +99,15 @@ func glyph(s string) string {
 }
 
 type detail struct {
-	run     store.Run
-	nodes   []store.Node
-	edges   []store.Edge
-	verdict *store.Verdict
-	usage   map[string]store.Usage // node_id -> that node's share of the ledger
-	ceils   []store.Ceiling
+	run   store.Run
+	nodes []store.Node
+	edges []store.Edge
+	// verdict is the reviewer's judgment; battenVerdict is the mechanical pass. The gate
+	// needs both, so both are carried rather than collapsed to "the latest one".
+	verdict       *store.Verdict
+	battenVerdict *store.Verdict
+	usage         map[string]store.Usage // node_id -> that node's share of the ledger
+	ceils         []store.Ceiling
 	// writesets[nodeID] = the files that node owns
 	writesets map[string][]string
 }
@@ -175,9 +178,12 @@ func (m *Model) reload() {
 	d.nodes, _ = m.store.Nodes(r.RunID)
 	d.edges, _ = m.store.Edges(r.RunID)
 	d.usage, _ = m.store.UsageByNode(r.RunID)
-	if v, err := m.store.LatestVerdict(r.RunID, ""); err == nil {
-		d.verdict = v
-	}
+	// Both verdicts, for the same reason `batten show` needs both: the gate wants one from
+	// batten proving the checks ran and one from a reviewer judging the work, and rendering
+	// only the newest row lets `batten check` hide the reviewer's evidence behind its own
+	// check output. A screen that shows half a two-half rule is a screen you can misread.
+	d.battenVerdict, _ = m.store.LatestVerdictBySource(r.RunID, "", "batten")
+	d.verdict, _ = m.store.LatestVerdictNotBySource(r.RunID, "", "batten")
 	for _, n := range d.nodes {
 		if ws, err := m.store.WriteSet(r.RunID, n.NodeID); err == nil && len(ws) > 0 {
 			d.writesets[n.NodeID] = ws
@@ -498,7 +504,7 @@ func (m *Model) detailTree(d *detail) []string {
 }
 
 func (m *Model) detailVerdict(d *detail, w int) []string {
-	if d.verdict == nil {
+	if d.verdict == nil && d.battenVerdict == nil {
 		// The loudest thing on the screen, because it is the thing that will stop a commit
 		// and the user would otherwise find out from a denied `git commit` ten minutes later.
 		return []string{
@@ -506,27 +512,48 @@ func (m *Model) detailVerdict(d *detail, w int) []string {
 			stAlarm.Render(m.closeGateNote()),
 		}
 	}
-	v := d.verdict
-	out := []string{
-		stTitle.Render("verdict") + " " + statusStyle(v.Result).Render(strings.ToUpper(v.Result)) +
-			stDim.Render("  "+v.Gate+"/"+v.CheckID),
+
+	var out []string
+	for _, v := range []*store.Verdict{d.verdict, d.battenVerdict} {
+		if v == nil {
+			continue
+		}
+		if len(out) > 0 {
+			out = append(out, "")
+		}
+		src := v.Source
+		if src == "" {
+			src = "agent"
+		}
+		out = append(out, stTitle.Render("verdict")+" "+
+			statusStyle(v.Result).Render(strings.ToUpper(v.Result))+
+			stDim.Render("  "+v.Gate+"/"+v.CheckID+"  ["+src+"]"))
+		if v.Why != "" {
+			out = append(out, stDim.Render(wrapIndent(v.Why, w, "")))
+		}
+		if len(v.Evidence) == 0 {
+			// The one failure batten exists to kill. store.SaveVerdict refuses to write this
+			// when the gate requires evidence; on screen anyway means the gate was not armed.
+			out = append(out, stAlarm.Render("no evidence — this cannot be an approval"))
+		}
+		for _, e := range v.Evidence {
+			out = append(out, statusStyle("ok").Render("· ")+wrapIndent(e, w-2, "  "))
+		}
+		if v.RequiresConfirmation {
+			out = append(out, stWarn.Render("requires confirmation"))
+		}
+		if v.SafeNextStep != "" {
+			out = append(out, stDim.Render("next: "+wrapIndent(v.SafeNextStep, w-6, "      ")))
+		}
 	}
-	if v.Why != "" {
-		out = append(out, stDim.Render(wrapIndent(v.Why, w, "")))
+
+	// Name whichever half is missing. A single green verdict on screen reads as "approved"
+	// whichever one it is, and only one of the two can actually clear the gate alone.
+	if d.battenVerdict == nil {
+		out = append(out, "", stAlarm.Render("no batten-verified pass — the checks have not been RUN"))
 	}
-	if len(v.Evidence) == 0 {
-		// The one failure batten exists to kill. store.SaveVerdict refuses to write this
-		// when the gate requires evidence; if it is on screen anyway, the gate was not armed.
-		out = append(out, stAlarm.Render("no evidence — this cannot be an approval"))
-	}
-	for _, e := range v.Evidence {
-		out = append(out, statusStyle("ok").Render("· ")+wrapIndent(e, w-2, "  "))
-	}
-	if v.RequiresConfirmation {
-		out = append(out, stWarn.Render("requires confirmation"))
-	}
-	if v.SafeNextStep != "" {
-		out = append(out, "", stDim.Render("next: "+wrapIndent(v.SafeNextStep, w-6, "      ")))
+	if d.verdict == nil {
+		out = append(out, "", stWarn.Render("no reviewer verdict — nothing has judged the criteria"))
 	}
 	return out
 }

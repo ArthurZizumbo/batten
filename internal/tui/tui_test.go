@@ -324,3 +324,49 @@ func TestFormattingHelpers(t *testing.T) {
 		t.Error("wrapIndent dropped the text")
 	}
 }
+
+// TestTheTUIShowsBothVerdictsAndNamesTheMissingHalf.
+//
+// The gate needs two verdicts from two producers: batten's, proving the declared checks were
+// RUN, and a reviewer's, judging the work against its acceptance criteria. The TUI loaded only
+// the newest row, so `batten check` — which always writes last — hid the reviewer's evidence
+// behind its own check output, and a screen showing one green verdict read as "approved" when
+// only half the rule was satisfied.
+func TestTheTUIShowsBothVerdictsAndNamesTheMissingHalf(t *testing.T) {
+	m, st, r := fixture(t)
+
+	// Only the reviewer has spoken: the mechanical half must be called out as missing.
+	if err := st.SaveVerdict(store.Verdict{
+		RunID: r.RunID, Gate: "qa", CheckID: "qa", Result: "ok",
+		Evidence: []string{"AC-1 covered by TestExport"}, Source: "agent",
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	m.reload()
+	out := strip(m.render())
+	if !strings.Contains(out, "AC-1") {
+		t.Errorf("the reviewer's evidence is not shown:\n%s", out)
+	}
+	if !strings.Contains(strings.ToLower(out), "no batten-verified pass") {
+		t.Errorf("with no batten verdict the screen must say the checks were never run:\n%s", out)
+	}
+
+	// Now batten's own check lands. It must ADD to the screen, not replace what was there.
+	if err := st.SaveVerdict(store.Verdict{
+		RunID: r.RunID, Gate: "qa", CheckID: "qa-batten", Result: "ok",
+		Evidence: []string{"go test ./...: PASS (exit 0)"}, Source: "batten",
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	m.reload()
+	out = strip(m.render())
+	for _, want := range []string{"AC-1", "PASS"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("after `batten check` the screen lost %q — one verdict is hiding the other:\n%s",
+				want, out)
+		}
+	}
+	if strings.Contains(strings.ToLower(out), "no batten-verified pass") {
+		t.Errorf("the missing-half warning survived the verdict that satisfies it:\n%s", out)
+	}
+}
