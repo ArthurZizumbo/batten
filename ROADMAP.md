@@ -101,10 +101,17 @@ Everything above is prologue until this works, on a repo that is not this one:
 — and it must enter **without breaking the sprint**. Gates start at `enforcement: report` (they
 warn, they do not block) and harden to `enforce` when the team trusts them.
 
-**Next target: `proyecto_ui`.** It already has `AGENTS.md` per domain (backend/frontend/ml), formal
-user stories, and a Makefile with real checks. It is the ideal case *and* the hard case, because
-**it already has a harness.** batten must read what is there and complement it — never overwrite a
-process that already works. See the open question on `batten-init` below.
+**Next target: `proyecto_ui`.** It is the ideal case *and* the hard case, because **it already has
+a harness** — one considerably richer than expected: an `AGENTS.md` at the root and one per domain
+(`backend/`, `db/`, `frontend/`, `ml/`), a `CLAUDE.md`, **47 skills and 9 custom agents** under
+`.claude/`, and a formal backlog of `US-001`..`US-0NN` in `context/planeacion_proyecto.md`. batten
+must read what is there and complement it — never overwrite a process that already works.
+
+Two things about it shape the test rather than being incidental to it. It has **no code yet**:
+every domain directory holds only its `AGENTS.md`, so there are no build files and therefore no
+checks, which means the gate starts out verifying nothing and has to say so. And it has **one
+branch**, so there is no branch-name history to learn a unit convention from — the convention is
+in the backlog instead.
 
 ---
 
@@ -116,9 +123,17 @@ process that already works. See the open question on `batten-init` below.
    `proyecto_ui` — a repo planned in full but not yet built — is what found two bugs: a domain list
    that came back empty because it demanded code, and a note claiming checks came from build files
    that did not exist.
-2. **Prove the firing test on `proyecto_ui`.** The scan now reads it correctly: 4 domains from
-   their `AGENTS.md`, the planning doc, and an honest "no check command was found — the gate
-   currently verifies nothing". What remains is the actual install and a first work item through it.
+2. **Prove the firing test on `proyecto_ui`.** The scan now reads it correctly, and getting there
+   took four fixes it surfaced: a domain list that came back empty because it demanded code, a note
+   claiming checks came from build files that did not exist, a unit convention read from branch
+   names when it was written in the backlog, and skill suggestions matched against prose rather
+   than names. It now proposes `US`/`US-\d{3}` with the right plan document and locator, four
+   domains from their `AGENTS.md`, defensible per-domain skills, and an honest "NO check command
+   was found — the gate currently verifies nothing".
+
+   What remains is the part no scan can do for you: filling the invariants from those five
+   `AGENTS.md` files, and running a real work item end to end. See `docs/FIELD-TEST.md` for what a
+   sandboxed run of the whole surface actually found.
 3. **First public release.** The placeholder is gone: the module path, both bootstrap scripts, the
    plugin manifest, the marketplace entry, the schema `$id` and the install docs all point at
    `ArthurZizumbo/batten`. What remains is creating the repo, pushing, and tagging `v0.1.0` —
