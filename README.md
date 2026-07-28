@@ -55,15 +55,35 @@ another path, the commit hook catches it independently.
 
 **This is the one failure batten exists to kill: closing a work item because it *looks* fine.**
 
-A verdict that cites three real things gets through, and only then:
+So it cites three real things. That is still not enough, because a citation is also just text:
 
 ```console
 $ batten verdict --unit US-034 --file verdict.json
-verdict US-034-qa: ok (3 evidence)
+verdict recorded: US-034 qa=ok (3 evidence)
+
+$ git commit -m "feat: add order rate limiting"
+
+  batten: US-034 has no batten-verified pass. The gate's checks must be RUN, not asserted.
+  Run: batten check US-034
+```
+
+When the gate declares `checks:`, batten insists on running them itself:
+
+```console
+$ batten check US-034
+  ✓ go build ./...
+  ✓ go vet ./...
+  ✓ go test ./...
+
+US-034: OK (batten-verified). all gate checks passed (batten ran them)
 
 $ git commit -m "feat: add order rate limiting"
 [feature/US-034 8f2a1c9] feat: add order rate limiting
 ```
+
+**Two verdicts, from two different producers.** `batten check` proves the declared checks ran;
+the envelope proves somebody judged the work against its acceptance criteria. Neither one
+substitutes for the other, and `batten check` on its own does not close a unit.
 
 ### 2. The write-set guard
 
@@ -252,6 +272,18 @@ Worked specs at three depths, from 30 lines to 220, are in [`examples/`](example
 The phase *names* come from your `batten.yaml`. The commands read the spec and run whichever phase
 matches — they do not hardcode a workflow.
 
+The CLI underneath them is small enough to use directly, and
+[`docs/QUICKSTART.md`](docs/QUICKSTART.md) walks the whole adoption path that way — from an empty
+directory to a denied commit and back — with output captured from a real run:
+
+| command | what it does |
+|---|---|
+| `batten phase <unit> <phase>` | open or advance a run; records the anchor SHA |
+| `batten verdict --file v.json` | record the reviewer's judgment, with cited evidence |
+| `batten check <unit>` | **run** the gate's declared checks and record what they printed |
+| `batten close <unit>` | close through the gate and release the write-set claims |
+| `batten doctor` | validate the spec and report what is actually live |
+
 `/batten-night` is the one to read before trusting. It never deletes anything (if it *wanted* to, it
 tells you in the morning report instead), it never overrides the gate, and it stops before the
 close. The budget ceilings are the tripwire an unattended run otherwise lacks — there is no human
@@ -325,9 +357,19 @@ another agent's file is denied — as is the part that was an open design risk: 
 resolution, and whether `agent_id` reaches `PreToolUse` at all (the write-set guard hangs off that
 field, and degrades to advisory *out loud* when it is absent).
 
-What has **not** happened yet, stated plainly: no release has been tagged, and batten has never been
-installed on a repo other than this one. Neutrality is verified across two very different specs, but
-the five-step install into a project already mid-development is still the firing test.
+**It has now been run outside this repo.** A multi-agent field test put batten in front of agents
+that had never seen it, on a replica of a real project and on a repo built from an empty
+directory: 90 behaviours confirmed working and 80 findings, each one then handed to a second
+agent whose job was to refute it. 52 survived that pass. Three were blockers, and one of those
+was a regression introduced four commits earlier, in the same session, by a change I had written
+and reviewed and believed.
+
+Every blocker is fixed, each with a test that fails against the commit before it. The full
+account — what broke, what was refuted and why, and what the method got right — is in
+[docs/FIELD-TEST.md](docs/FIELD-TEST.md).
+
+What has **not** happened yet, stated plainly: no release has been tagged, and batten has not yet
+been adopted by a project it does not belong to, with people who did not write it.
 
 The transcript format batten reads for token accounting is **not a public API** and can change
 without notice; if parsing breaks, batten reports the count as unavailable rather than guessing.
