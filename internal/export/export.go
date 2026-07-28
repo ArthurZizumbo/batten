@@ -55,10 +55,16 @@ func Run(sp *spec.Spec, st *store.Store, unitID string) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	v, _ := st.LatestVerdict(run.RunID, "")
+	// Both verdicts, kept apart by producer. Reading only the latest row made `batten check`
+	// the author of the note's verdict section: its source=batten row is always the newest, so
+	// the reviewer's evidence was painted over with check output and the property the "needs a
+	// human" dashboard reads said `ok` for a run nobody had reviewed. This is the third site of
+	// that defect — `batten show` and the TUI were fixed first.
+	rv, _ := st.LatestVerdictNotBySource(run.RunID, "", "batten")
+	bv, _ := st.LatestVerdictBySource(run.RunID, "", "batten")
 
 	res := &Result{}
-	c := canvas.Render(run, nodes, edges, v)
+	c := canvas.Render(run, nodes, edges, rv, bv)
 	res.Nodes, res.Edges = len(c.Nodes), len(c.Edges)
 
 	if vlt := sp.Capabilities.Obsidian.Vault; vlt != "" {
@@ -72,7 +78,7 @@ func Run(sp *spec.Spec, st *store.Store, unitID string) (*Result, error) {
 			return res, err
 		}
 		usg, _ := st.UsageByNode(run.RunID)
-		if err := w.WriteRun(run, nodes, edges, v, usg, w.CanvasRel(unitID)); err != nil {
+		if err := w.WriteRun(run, nodes, edges, rv, bv, usg, w.CanvasRel(unitID)); err != nil {
 			return res, err
 		}
 		if err := w.WriteBases(); err != nil {

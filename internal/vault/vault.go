@@ -117,12 +117,19 @@ func safeName(s string) string {
 // load-bearing: a run whose transcript was never ingested has not spent zero tokens, we simply
 // did not measure it. An omitted property renders as empty (honest); `tokens: 0` would be a
 // number we invented. Same for evidence_count when there is no verdict to count evidence in.
+// A note on the two verdict properties. `verdict` is the REVIEWER's — the judgement of the work
+// against its acceptance criteria — and `batten_verdict` is batten's own proof that the declared
+// checks were run. They are separate because the gate requires both, from two different
+// producers, and because they answer different questions. Collapsing them into "the latest row"
+// let `batten check` set `verdict: ok` on a run nobody had reviewed, which took that run straight
+// out of the "needs a human" dashboard.
 type frontmatter struct {
 	Unit          string     `yaml:"unit"`
 	Project       string     `yaml:"project"`
 	Status        string     `yaml:"status"`
 	Phase         string     `yaml:"phase,omitempty"`
 	Verdict       string     `yaml:"verdict"`
+	BattenVerdict string     `yaml:"batten_verdict"`
 	EvidenceCount *int       `yaml:"evidence_count,omitempty"`
 	Tokens        *int64     `yaml:"tokens,omitempty"`
 	ImputedUSD    *float64   `yaml:"imputed_usd,omitempty"`
@@ -136,8 +143,11 @@ type frontmatter struct {
 
 // WriteRun writes the run note. canvasRel is the vault-relative path of the .canvas the caller
 // already emitted (or "" if none), so the note can embed it.
+//
+// reviewer and batten are the gate's two verdicts, from its two required producers; either may
+// be nil. See the frontmatter comment for why they are not one field.
 func (w *Writer) WriteRun(r *store.Run, nodes []store.Node, edges []store.Edge,
-	v *store.Verdict, usage map[string]store.Usage, canvasRel string) error {
+	reviewer, batten *store.Verdict, usage map[string]store.Usage, canvasRel string) error {
 	if w.Root == "" {
 		return ErrNoVault
 	}
@@ -146,13 +156,14 @@ func (w *Writer) WriteRun(r *store.Run, nodes []store.Node, edges []store.Edge,
 	}
 
 	fm := frontmatter{
-		Unit:    r.UnitID,
-		Project: w.Project,
-		Status:  r.Status,
-		Phase:   r.Phase,
-		Verdict: verdictNone,
-		BaseSHA: r.BaseSHA,
-		Domains: domainsOf(nodes),
+		Unit:          r.UnitID,
+		Project:       w.Project,
+		Status:        r.Status,
+		Phase:         r.Phase,
+		Verdict:       verdictNone,
+		BattenVerdict: verdictNone,
+		BaseSHA:       r.BaseSHA,
+		Domains:       domainsOf(nodes),
 	}
 	if r.StartedAt > 0 {
 		fm.Started = time.Unix(r.StartedAt, 0).UTC()
@@ -161,10 +172,13 @@ func (w *Writer) WriteRun(r *store.Run, nodes []store.Node, edges []store.Edge,
 		t := time.Unix(*r.EndedAt, 0).UTC()
 		fm.Ended = &t
 	}
-	if v != nil {
-		fm.Verdict = v.Result
-		n := len(v.Evidence)
+	if reviewer != nil {
+		fm.Verdict = reviewer.Result
+		n := len(reviewer.Evidence)
 		fm.EvidenceCount = &n // may legitimately be 0 — that is the failure, and it must be visible
+	}
+	if batten != nil {
+		fm.BattenVerdict = batten.Result
 	}
 	if r.TokensSpent > 0 {
 		t := r.TokensSpent
@@ -186,13 +200,13 @@ func (w *Writer) WriteRun(r *store.Run, nodes []store.Node, edges []store.Edge,
 	b.WriteString("---\n")
 	b.Write(head)
 	b.WriteString("---\n\n")
-	w.renderBody(&b, r, nodes, edges, v, usage, canvasRel)
+	w.renderBody(&b, r, nodes, edges, reviewer, batten, usage, canvasRel)
 
 	return writeIfChanged(w.RunNotePath(r.UnitID), []byte(b.String()))
 }
 
 func (w *Writer) renderBody(b *strings.Builder, r *store.Run, nodes []store.Node,
-	edges []store.Edge, v *store.Verdict, usage map[string]store.Usage, canvasRel string) {
+	edges []store.Edge, reviewer, batten *store.Verdict, usage map[string]store.Usage, canvasRel string) {
 
 	fmt.Fprintf(b, "# %s\n\n", r.UnitID)
 
@@ -222,7 +236,7 @@ func (w *Writer) renderBody(b *strings.Builder, r *store.Run, nodes []store.Node
 		b.WriteString("Usage **not measured** for this run (no transcript ingested). Not zero — unknown.\n\n")
 	}
 
-	w.renderVerdict(b, r, v)
+	w.renderVerdict(b, r, reviewer, batten)
 	w.renderFanout(b, nodes, usage)
 	renderRelations(b, nodes, edges)
 	renderCanvas(b, canvasRel)
@@ -232,10 +246,15 @@ func (w *Writer) renderBody(b *strings.Builder, r *store.Run, nodes []store.Node
 	b.WriteString("_Written by batten. SQLite is canonical; this note is a projection of it and is regenerated._\n")
 }
 
-func (w *Writer) renderVerdict(b *strings.Builder, r *store.Run, v *store.Verdict) {
+// renderVerdict writes the gate's state: BOTH verdicts, each under its producer's heading.
+//
+// Rendering only the newest row is how this note came to hide the very thing a reviewer opens it
+// for. `batten check` writes a source=batten verdict, which is then the latest one, so its check
+// output stood in for the reviewer's evidence — and a run nobody had reviewed read as a pass.
+func (w *Writer) renderVerdict(b *strings.Builder, r *store.Run, reviewer, batten *store.Verdict) {
 	b.WriteString("## Verdict\n\n")
-	switch {
-	case v == nil:
+
+	if reviewer == nil && batten == nil {
 		// The loudest thing in the note, because it is the one fact that changes what the
 		// human can do next: the close gate will refuse the commit.
 		fmt.Fprintf(b, "> [!danger] No verdict — the close gate will DENY a commit\n"+
@@ -244,8 +263,30 @@ func (w *Writer) renderVerdict(b *strings.Builder, r *store.Run, v *store.Verdic
 			"> Escape hatch, recorded in the audit log: `batten override %s --reason \"...\"`\n\n",
 			r.UnitID, r.UnitID)
 		return
+	}
 
-	case v.Result == "ok" && len(v.Evidence) == 0:
+	renderOneVerdict(b, "Reviewer", reviewer,
+		"> [!warning] No reviewer verdict\n"+
+			"> `batten check` proves the declared checks RAN. It does not judge whether the work meets\n"+
+			"> its acceptance criteria — only a verdict from the verify phase does that.\n"+
+			"> Record one: `batten verdict --file v.json`\n\n")
+
+	renderOneVerdict(b, "batten check", batten,
+		"> [!warning] No batten-verified pass\n"+
+			"> Nothing was RUN to verify this unit; the gate's checks were asserted at best.\n"+
+			"> Run: `batten check "+r.UnitID+"`\n\n")
+}
+
+// renderOneVerdict renders a single producer's envelope, or says plainly that it is missing.
+// A missing half is a fact about the gate, not an empty section to skip.
+func renderOneVerdict(b *strings.Builder, heading string, v *store.Verdict, missing string) {
+	fmt.Fprintf(b, "### %s\n\n", heading)
+	if v == nil {
+		b.WriteString(missing)
+		return
+	}
+
+	if v.Result == "ok" && len(v.Evidence) == 0 {
 		// store.SaveVerdict refuses this and the commit hook denies it. If one reached the
 		// vault anyway, the note is the last place it can still be seen for what it is.
 		fmt.Fprintf(b, "> [!danger] result `ok` with an EMPTY evidence[]\n"+
@@ -269,7 +310,7 @@ func (w *Writer) renderVerdict(b *strings.Builder, r *store.Run, v *store.Verdic
 		fmt.Fprintf(b, "%s\n\n", v.Why)
 	}
 
-	b.WriteString("### Evidence\n\n")
+	b.WriteString("#### Evidence\n\n")
 	if len(v.Evidence) == 0 {
 		b.WriteString("_none cited._\n\n")
 	} else {

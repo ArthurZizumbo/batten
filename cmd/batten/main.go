@@ -572,8 +572,12 @@ func cmdCanvas(args []string) error {
 		}
 		nodes, _ := st.Nodes(run.RunID)
 		edges, _ := st.Edges(run.RunID)
-		v, _ := st.LatestVerdict(run.RunID, "")
-		c := canvas.Render(run, nodes, edges, v)
+		// Both, by producer — same reason as export.Run: the newest row alone lets `batten check`
+		// stand in for the reviewer, and the canvas then draws one green pass for a gate that
+		// still needs a second one.
+		rv, _ := st.LatestVerdictNotBySource(run.RunID, "", "batten")
+		bv, _ := st.LatestVerdictBySource(run.RunID, "", "batten")
+		c := canvas.Render(run, nodes, edges, rv, bv)
 		if err := c.WriteFile(out); err != nil {
 			return err
 		}

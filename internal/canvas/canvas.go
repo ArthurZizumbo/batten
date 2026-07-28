@@ -96,7 +96,13 @@ const (
 
 // Render lays the run out as columns: each phase is a group, its subagents stack below it.
 // Deliberately simple — a run is small, and the layered structure is already in the data.
-func Render(run *store.Run, nodes []store.Node, edges []store.Edge, verdict *store.Verdict) *Canvas {
+//
+// It takes TWO verdicts because the gate demands two, from two different producers: `reviewer`
+// is somebody's judgement of the work against its acceptance criteria, `batten` is batten's own
+// proof that the declared checks were RUN. Rendering only the newest row — which is what this
+// took before — meant `batten check` painted its check output over the reviewer's evidence, and
+// the canvas showed one half of a two-half rule as though it were the whole gate.
+func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, batten *store.Verdict) *Canvas {
 	c := &Canvas{Nodes: []Node{}, Edges: []Edge{}}
 
 	// Group nodes by phase. A subagent's phase is the phase node that spawned it.
@@ -202,21 +208,43 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, verdict *sto
 		})
 	}
 
-	// The verdict is the point of the whole run: give it a node of its own.
-	if verdict != nil {
+	// The verdict is the point of the whole run: give it a node of its own. Both of them, in
+	// their own column — and once either exists the run is at the gate, so the half that is
+	// still MISSING gets a node too. A canvas that draws one green pass and omits the absent
+	// reviewer reads as a run that is ready to land; it is not.
+	if reviewer != nil || batten != nil {
 		x := len(phases) * gapX
-		body := fmt.Sprintf("## verdict: %s\n\n**%s**\n\n", verdict.Result, verdict.Why)
-		if len(verdict.Evidence) == 0 {
-			body += "_no evidence_ — an approval must cite something"
-		} else {
-			for _, e := range verdict.Evidence {
-				body += "- " + e + "\n"
-			}
+		slots := []struct {
+			id, title, missing string
+			v                  *store.Verdict
+		}{
+			{"verdict", "reviewer", "No reviewer verdict. `batten check` proves the checks ran; " +
+				"it does not judge whether the work meets its acceptance criteria.", reviewer},
+			{"verdict-batten", "batten check", "No batten-verified pass. The gate's checks must " +
+				"be RUN, not asserted.", batten},
 		}
-		c.Nodes = append(c.Nodes, Node{
-			ID: "verdict", Type: "text", X: x, Y: 0, Width: nodeW + 80, Height: nodeH + 80,
-			Color: statusColor(verdict.Result), Text: body,
-		})
+		for i, s := range slots {
+			y := i * (nodeH + 120)
+			body := fmt.Sprintf("## verdict · %s\n\n", s.title)
+			color := colRed
+			if s.v == nil {
+				body += "**missing**\n\n" + s.missing
+			} else {
+				color = statusColor(s.v.Result)
+				body += fmt.Sprintf("**%s**\n\n%s\n\n", s.v.Result, s.v.Why)
+				if len(s.v.Evidence) == 0 {
+					body += "_no evidence_ — an approval must cite something"
+				} else {
+					for _, e := range s.v.Evidence {
+						body += "- " + e + "\n"
+					}
+				}
+			}
+			c.Nodes = append(c.Nodes, Node{
+				ID: s.id, Type: "text", X: x, Y: y, Width: nodeW + 80, Height: nodeH + 80,
+				Color: color, Text: body,
+			})
+		}
 	}
 
 	// Header: what this run cost and where it stands.

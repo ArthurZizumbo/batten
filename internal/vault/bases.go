@@ -132,7 +132,8 @@ func props() map[string]baseProp {
 	return map[string]baseProp{
 		"status":         {DisplayName: "Status"},
 		"phase":          {DisplayName: "Phase"},
-		"verdict":        {DisplayName: "Verdict"},
+		"verdict":        {DisplayName: "Reviewer verdict"},
+		"batten_verdict": {DisplayName: "batten check"},
 		"evidence_count": {DisplayName: "Evidence"},
 		"tokens":         {DisplayName: "Tokens (exact)"},
 		"imputed_usd":    {DisplayName: "Imputed $ (never billed)"},
@@ -161,6 +162,10 @@ func (w *Writer) bases() []namedBase {
 			// The runs that need a human. "blocked" and "none" are the same operational fact —
 			// the close gate will deny the commit — so they belong in one list. `verdict: none`
 			// is why the run note always emits the property instead of omitting it.
+			//
+			// `batten_verdict` is in the same or-clause because the gate needs BOTH halves: a run
+			// whose reviewer approved it but whose checks were never run is just as stuck, and
+			// while these were one property it was invisible here.
 			name: "blocked-verdicts",
 			b: base{
 				Filters: map[string]any{"and": []any{
@@ -168,13 +173,14 @@ func (w *Writer) bases() []namedBase {
 					map[string]any{"or": []any{
 						`verdict == "blocked"`,
 						`verdict == "none"`,
+						`batten_verdict == "blocked"`,
 					}},
 				}},
 				Properties: props(),
 				Views: []baseView{{
 					Type:    "table",
 					Name:    "Blocked verdicts",
-					Order:   []string{"file.name", "status", "phase", "verdict", "evidence_count", "started"},
+					Order:   []string{"file.name", "status", "phase", "verdict", "batten_verdict", "evidence_count", "started"},
 					GroupBy: "verdict",
 					Sort:    []baseSort{{Property: "started", Direction: "DESC"}},
 				}},

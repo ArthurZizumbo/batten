@@ -1,6 +1,7 @@
 package export
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,6 +188,161 @@ func TestUnknownUnitFailsQuietlyEnoughForAHook(t *testing.T) {
 	sp, st := fixture(t, t.TempDir())
 	if _, err := Run(sp, st, "TASK-404"); err == nil {
 		t.Error("an unknown unit should report an error to its caller, which ignores it on the hook path")
+	}
+}
+
+// TestTheNoteKeepsBothVerdictsApartByProducer is the third site of the one-verdict defect.
+//
+// The gate needs two verdicts from two different producers: a reviewer's judgement of the work,
+// and batten's own proof that the declared checks RAN. `batten check` writes the second, and its
+// row is always the newest — so a surface that reads "the latest verdict" shows check output
+// where the reviewer's evidence should be. `batten show` (92ae1cb) and the TUI (24d7cd2) were
+// fixed; export.Run, which writes the Obsidian note AND the canvas, was still reading one row.
+//
+// The shape below is the one that does the damage: the reviewer BLOCKED the unit, then `batten
+// check` passed. Reading the latest row alone, the note said `verdict: ok`, printed the check
+// output as its evidence, and dropped the run out of the "blocked-verdicts" dashboard — which is
+// the one view whose whole job is to show a human that this unit is stuck.
+func TestTheNoteKeepsBothVerdictsApartByProducer(t *testing.T) {
+	vaultDir := t.TempDir()
+	sp, st := fixture(t, vaultDir)
+
+	r, err := st.LatestRun("p", "TASK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Explicit timestamps, both after the fixture's own row, and batten's the newest of all —
+	// which is exactly what let it win before. `batten check` always writes last.
+	if err := st.SaveVerdict(store.Verdict{
+		RunID: r.RunID, Gate: "qa", CheckID: "review", Result: "blocked", Source: "agent",
+		Evidence: []string{"acceptance criterion 3 is not met: no rate-limit header"},
+		Why:      "the reviewer rejected it", SafeNextStep: "implement the header",
+		TS: 9_000_000_000,
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SaveVerdict(store.Verdict{
+		RunID: r.RunID, Gate: "qa", CheckID: "checks", Result: "ok", Source: "batten",
+		Evidence: []string{"go test ./...: PASS by batten"}, Why: "the declared checks ran",
+		TS: 9_000_000_001,
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Run(sp, st, "TASK-1")
+	if err != nil {
+		t.Fatalf("export: %v", err)
+	}
+	b, err := os.ReadFile(res.RunNotePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note := string(b)
+
+	// The property the "needs a human" dashboard selects on must be the REVIEWER's.
+	if !strings.Contains(note, "verdict: blocked") {
+		t.Errorf("the reviewer blocked this unit, so `verdict` must be blocked — `batten check` "+
+			"passing its own checks does not overrule a reviewer:\n%s", note)
+	}
+	// And the reviewer's actual finding has to survive into the body.
+	if !strings.Contains(note, "acceptance criterion 3 is not met") {
+		t.Errorf("the reviewer's evidence was painted over with check output:\n%s", note)
+	}
+	// batten's pass is not deleted — it is reported as what it is, under its own heading.
+	if !strings.Contains(note, "batten_verdict: ok") || !strings.Contains(note, "go test ./...: PASS by batten") {
+		t.Errorf("batten's own check pass must still be reported, separately:\n%s", note)
+	}
+
+	// Same rule on the canvas: both envelopes get a node, so opening it cannot show one green
+	// pass for a gate that has a blocked half.
+	cb, err := os.ReadFile(res.CanvasPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Nodes []struct{ ID, Text string } `json:"nodes"`
+	}
+	if err := json.Unmarshal(cb, &c); err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]string{}
+	for _, n := range c.Nodes {
+		byID[n.ID] = n.Text
+	}
+	if !strings.Contains(byID["verdict"], "acceptance criterion 3 is not met") {
+		t.Errorf("the canvas verdict node does not carry the reviewer's evidence: %q", byID["verdict"])
+	}
+	if !strings.Contains(byID["verdict-batten"], "go test ./...: PASS by batten") {
+		t.Errorf("the canvas has no separate node for batten's check pass: %q", byID["verdict-batten"])
+	}
+}
+
+// The other half of the same rule, and the more dangerous one in practice: only `batten check`
+// has run. Nothing has reviewed the work, and every surface must say so rather than draw the one
+// green node it has. Silence here reads as approval.
+func TestACheckOnlyRunSaysTheReviewerIsMissing(t *testing.T) {
+	vaultDir := t.TempDir()
+	dir := t.TempDir()
+	y := "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
+		"phases:\n  - id: build\n  - id: close\n    requires_verdict: ok\n" +
+		"capabilities:\n  obsidian:\n    vault: '" + filepath.ToSlash(vaultDir) + "'\n"
+	if err := os.WriteFile(filepath.Join(dir, "batten.yaml"), []byte(y), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sp, err := spec.LoadFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "batten.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	r, _ := st.EnsureRun("p", "TASK-7", "sess-a")
+	_ = st.AddNode(store.Node{NodeID: "n-a", RunID: r.RunID, Kind: "subagent", Label: "solo", Status: "ok"})
+	if err := st.SaveVerdict(store.Verdict{
+		RunID: r.RunID, Gate: "qa", CheckID: "checks", Result: "ok", Source: "batten",
+		Evidence: []string{"go test ./...: PASS"}, Why: "the declared checks ran",
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Run(sp, st, "TASK-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(res.RunNotePath)
+	note := string(b)
+
+	// `verdict: none` is what keeps this run in the blocked-verdicts dashboard. Before the fix
+	// it read `verdict: ok` — a run nobody had reviewed, filed under approved.
+	if !strings.Contains(note, "verdict: none") {
+		t.Errorf("no reviewer has judged this unit, so `verdict` must be none:\n%s", note)
+	}
+	if !strings.Contains(note, "No reviewer verdict") {
+		t.Errorf("the note must name the missing half out loud:\n%s", note)
+	}
+
+	cb, _ := os.ReadFile(res.CanvasPath)
+	var c struct {
+		Nodes []struct{ ID, Text, Color string } `json:"nodes"`
+	}
+	if err := json.Unmarshal(cb, &c); err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, n := range c.Nodes {
+		if n.ID == "verdict" {
+			found = true
+			if !strings.Contains(n.Text, "missing") {
+				t.Errorf("the canvas draws a reviewer verdict that does not exist: %q", n.Text)
+			}
+		}
+	}
+	if !found {
+		t.Error("the canvas omits the missing reviewer verdict entirely; an absent half of the " +
+			"gate is a fact about the run, not an empty slot to skip")
 	}
 }
 

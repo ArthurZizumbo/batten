@@ -95,7 +95,7 @@ func readNote(t *testing.T, p string) (map[string]any, string) {
 func TestFrontmatterRoundTripsAsTypedYAML(t *testing.T) {
 	w := newVault(t)
 	r := fixtureRun()
-	if err := w.WriteRun(r, fixtureNodes(), nil, fixtureVerdict(), fixtureUsage(), ""); err != nil {
+	if err := w.WriteRun(r, fixtureNodes(), nil, fixtureVerdict(), nil, fixtureUsage(), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -161,7 +161,7 @@ func TestFrontmatterRoundTripsAsTypedYAML(t *testing.T) {
 
 func TestDomainsIsAlwaysAList(t *testing.T) {
 	w := newVault(t)
-	if err := w.WriteRun(fixtureRun(), nil, nil, fixtureVerdict(), nil, ""); err != nil {
+	if err := w.WriteRun(fixtureRun(), nil, nil, fixtureVerdict(), nil, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, _ := readNote(t, w.RunNotePath("US-034"))
@@ -180,7 +180,7 @@ func TestNoVerdictSaysSoLoudly(t *testing.T) {
 	w := newVault(t)
 	r := fixtureRun()
 	r.Status = "running"
-	if err := w.WriteRun(r, fixtureNodes(), nil, nil, fixtureUsage(), ""); err != nil {
+	if err := w.WriteRun(r, fixtureNodes(), nil, nil, nil, fixtureUsage(), ""); err != nil {
 		t.Fatal(err)
 	}
 	m, body := readNote(t, w.RunNotePath("US-034"))
@@ -206,7 +206,7 @@ func TestNoVerdictSaysSoLoudly(t *testing.T) {
 func TestOkWithEmptyEvidenceIsFlagged(t *testing.T) {
 	w := newVault(t)
 	v := &store.Verdict{Gate: "close", CheckID: "verify", Result: "ok"} // the failure batten exists to kill
-	if err := w.WriteRun(fixtureRun(), nil, nil, v, nil, ""); err != nil {
+	if err := w.WriteRun(fixtureRun(), nil, nil, v, nil, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, body := readNote(t, w.RunNotePath("US-034"))
@@ -223,7 +223,7 @@ func TestUnmeasuredUsageIsNeverReportedAsZero(t *testing.T) {
 	w := newVault(t)
 	r := fixtureRun()
 	r.TokensSpent, r.ImputedUSD = 0, 0 // no transcript ingested: unknown, not zero
-	if err := w.WriteRun(r, fixtureNodes(), nil, fixtureVerdict(), nil, ""); err != nil {
+	if err := w.WriteRun(r, fixtureNodes(), nil, fixtureVerdict(), nil, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, body := readNote(t, w.RunNotePath("US-034"))
@@ -253,7 +253,7 @@ func TestMeasuredButUnpricedRunIsNeverValuedAtZero(t *testing.T) {
 	w := newVault(t)
 	r := fixtureRun()
 	r.ImputedUSD = 0 // tokens were counted, but the run's model had no API rate
-	if err := w.WriteRun(r, fixtureNodes(), nil, fixtureVerdict(), nil, ""); err != nil {
+	if err := w.WriteRun(r, fixtureNodes(), nil, fixtureVerdict(), nil, nil, ""); err != nil {
 		t.Fatal(err)
 	}
 	m, body := readNote(t, w.RunNotePath("US-034"))
@@ -276,7 +276,7 @@ func TestMeasuredButUnpricedRunIsNeverValuedAtZero(t *testing.T) {
 
 func TestWriteSetSizeIsUnavailableWhenNotRecorded(t *testing.T) {
 	w := newVault(t)
-	if err := w.WriteRun(fixtureRun(), fixtureNodes(), nil, fixtureVerdict(), fixtureUsage(), ""); err != nil {
+	if err := w.WriteRun(fixtureRun(), fixtureNodes(), nil, fixtureVerdict(), nil, fixtureUsage(), ""); err != nil {
 		t.Fatal(err)
 	}
 	_, body := readNote(t, w.RunNotePath("US-034"))
@@ -286,7 +286,7 @@ func TestWriteSetSizeIsUnavailableWhenNotRecorded(t *testing.T) {
 
 	// With write-sets supplied, the files appear as inline code — never as wikilinks.
 	w.WriteSets = map[string][]string{"n-a": {"internal/ml/train.go", "internal/ml/eval.go"}}
-	if err := w.WriteRun(fixtureRun(), fixtureNodes(), nil, fixtureVerdict(), fixtureUsage(), ""); err != nil {
+	if err := w.WriteRun(fixtureRun(), fixtureNodes(), nil, fixtureVerdict(), nil, fixtureUsage(), ""); err != nil {
 		t.Fatal(err)
 	}
 	_, body = readNote(t, w.RunNotePath("US-034"))
@@ -310,7 +310,7 @@ func TestNoWikilinkToANoteWeCannotKnowExists(t *testing.T) {
 	// US-033.md does not exist in this vault, and no canvas was emitted. The note must
 	// therefore contain no wikilink at all: a link to a note that does not exist plants a
 	// phantom node in the graph view and asserts a fact we never established.
-	if err := w.WriteRun(fixtureRun(), fixtureNodes(), nil, fixtureVerdict(), fixtureUsage(), ""); err != nil {
+	if err := w.WriteRun(fixtureRun(), fixtureNodes(), nil, fixtureVerdict(), nil, fixtureUsage(), ""); err != nil {
 		t.Fatal(err)
 	}
 	_, body := readNote(t, w.RunNotePath("US-034"))
@@ -333,7 +333,7 @@ func TestPrevUnitIsLinkedOnlyOnceItsNoteExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := w.WriteRun(fixtureRun(), fixtureNodes(), nil, fixtureVerdict(), fixtureUsage(),
+	if err := w.WriteRun(fixtureRun(), fixtureNodes(), nil, fixtureVerdict(), nil, fixtureUsage(),
 		w.CanvasRel("US-034")); err != nil {
 		t.Fatal(err)
 	}
@@ -534,7 +534,7 @@ func TestPathsAreAbsoluteAndCannotEscapeTheVault(t *testing.T) {
 
 func TestNoVaultConfigured(t *testing.T) {
 	w := New("", "batten")
-	if err := w.WriteRun(fixtureRun(), nil, nil, nil, nil, ""); !errors.Is(err, ErrNoVault) {
+	if err := w.WriteRun(fixtureRun(), nil, nil, nil, nil, nil, ""); !errors.Is(err, ErrNoVault) {
 		t.Errorf("WriteRun with no root = %v, want ErrNoVault", err)
 	}
 	if err := w.WriteBases(); !errors.Is(err, ErrNoVault) {
@@ -550,7 +550,7 @@ func TestOnlyNonSpawnEdgesGetASection(t *testing.T) {
 		{Src: "p-implement", Dst: "n-a", Rel: "spawn"},
 		{Src: "n-b", Dst: "n-a", Rel: "retry_of"},
 	}
-	if err := w.WriteRun(fixtureRun(), fixtureNodes(), edges, fixtureVerdict(), fixtureUsage(), ""); err != nil {
+	if err := w.WriteRun(fixtureRun(), fixtureNodes(), edges, fixtureVerdict(), nil, fixtureUsage(), ""); err != nil {
 		t.Fatal(err)
 	}
 	_, body := readNote(t, w.RunNotePath("US-034"))
