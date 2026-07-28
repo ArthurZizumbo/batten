@@ -90,13 +90,26 @@ func Scan(root string) (*Facts, error) {
 	for _, d := range f.Domains {
 		domMap[d.Name] = struct{ Path string }{d.Path}
 	}
-	// discovery.Suggest wants spec.Domain; emulate its intent with a light match here to avoid a
-	// cyclic dependency on spec. Match skill name/description against domain name.
+	// Suggest skills per domain by matching the domain name against the skill NAME's
+	// hyphen-separated segments, and nothing else.
+	//
+	// This used to substring-match the name AND the description, which produced confident
+	// nonsense on a real repo. `portal-terraform-gcp` landed in both backend and frontend
+	// because its description mentions "2 Cloud Run services (frontend/backend)" — it is an
+	// infrastructure skill belonging to neither. And a domain named `db` matched any word
+	// containing those two letters anywhere in any description.
+	//
+	// A skills list is not a harmless suggestion: it rides into that domain's agent prompt, so a
+	// wrong entry spends context arguing for the wrong tool. Suggesting nothing is better, and a
+	// segment match is something a human can check at a glance.
 	for i, d := range f.Domains {
+		want := strings.ToLower(d.Name)
 		for _, s := range f.Skills {
-			hay := strings.ToLower(s.Name + " " + s.Description)
-			if strings.Contains(hay, strings.ToLower(d.Name)) {
-				f.Domains[i].Skills = append(f.Domains[i].Skills, s.Name)
+			for _, seg := range strings.Split(strings.ToLower(s.Name), "-") {
+				if seg == want {
+					f.Domains[i].Skills = append(f.Domains[i].Skills, s.Name)
+					break
+				}
 			}
 		}
 	}

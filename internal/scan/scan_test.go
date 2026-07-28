@@ -229,3 +229,56 @@ func TestASingleMentionIsNotAConvention(t *testing.T) {
 		t.Errorf("no backlog was found, so unit.plan must stay empty; got %q", f.UnitPlan)
 	}
 }
+
+// TestSkillSuggestionsMatchNamesNotProse pins a fix motivated by real output on a real repo.
+//
+// The old matcher substring-searched the skill name AND its description for the domain name,
+// which produced confident nonsense: an infrastructure skill whose description mentioned
+// "2 Cloud Run services (frontend/backend)" was suggested for BOTH of those domains, and a
+// domain named `db` matched any word containing those two letters anywhere in any prose.
+//
+// A skills list is not a harmless hint — it rides into that domain's agent prompt, so a wrong
+// entry spends context arguing for the wrong tool. Suggesting nothing beats suggesting noise.
+func TestSkillSuggestionsMatchNamesNotProse(t *testing.T) {
+	root := t.TempDir()
+	for _, d := range []string{"backend", "frontend", "db", "ml"} {
+		write(t, root, d+"/AGENTS.md", "- a rule\n")
+	}
+	skill := func(name, desc string) {
+		write(t, root, ".claude/skills/"+name+"/SKILL.md",
+			"---\nname: "+name+"\ndescription: "+desc+"\n---\n\nbody\n")
+	}
+	skill("portal-backend-api", "FastAPI routers and services.")
+	skill("portal-db-models", "SQLAlchemy models and migrations.")
+	// The trap: infrastructure, named for neither domain, describing both.
+	skill("portal-terraform-gcp", "Terraform for 2 Cloud Run services (frontend/backend) with scale-to-zero.")
+	// The other trap: 'db' appears inside an unrelated word in the prose.
+	skill("portal-auth-jwt", "JWT with pwdlib Argon2 and a role matrix.")
+
+	f, err := Scan(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][]string{}
+	for _, d := range f.Domains {
+		got[d.Name] = d.Skills
+	}
+
+	if len(got["backend"]) != 1 || got["backend"][0] != "portal-backend-api" {
+		t.Errorf("backend skills = %v, want exactly [portal-backend-api]", got["backend"])
+	}
+	if len(got["db"]) != 1 || got["db"][0] != "portal-db-models" {
+		t.Errorf("db skills = %v, want exactly [portal-db-models] — prose containing 'db' is not a match", got["db"])
+	}
+	// The infra skill belongs to neither, however its description reads.
+	for _, d := range []string{"backend", "frontend"} {
+		if has(got[d], "portal-terraform-gcp") {
+			t.Errorf("%s was given portal-terraform-gcp because its DESCRIPTION names the domain; "+
+				"only the skill's own name may decide: %v", d, got[d])
+		}
+	}
+	// No skill is named for ml, and saying so is the honest answer.
+	if len(got["ml"]) != 0 {
+		t.Errorf("ml skills = %v, want none — nothing is named for it", got["ml"])
+	}
+}
