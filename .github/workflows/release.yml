@@ -23,8 +23,30 @@ jobs:
           go-version-file: go.mod
           cache: true
       - run: go build ./...
+        shell: bash
       - run: go vet ./...
+        shell: bash
       - run: go test ./...
+        shell: bash
+
+      # The tag is what GoReleaser stamps into the binary, but the plugin manifest and the
+      # marketplace entry carry a version written by hand. Nothing has ever compared them, so
+      # v0.2.0 could ship a plugin that introduces itself as 0.1.0 — and the marketplace, not
+      # the binary, is what a user reads before installing.
+      - name: the manifests agree with the tag
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          fail=0
+          for f in plugin/claude-code/.claude-plugin/plugin.json .claude-plugin/marketplace.json; do
+            found="$(grep -o '"version": *"[^"]*"' "$f" | head -1 | sed 's/.*"version": *"//;s/"//')"
+            if [ "$found" != "$tag" ]; then
+              echo "$f declares version $found, but the tag is $tag"
+              fail=1
+            fi
+          done
+          exit $fail
 
   goreleaser:
     needs: verify
