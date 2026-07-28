@@ -554,3 +554,66 @@ func keys(m map[string]store.Usage) []string {
 	}
 	return out
 }
+
+// TestARecordThatNamesItsOwnAgentIsAttributed.
+//
+// Attribution normally comes from the FILE — subagents/agent-<id>.jsonl — because that is how
+// Claude Code lays transcripts out. But `record.AgentID` (the `agentId` field) was decoded and
+// then read by nothing at all: the struct field existed, the json tag existed, and a line
+// carrying its own agent id went in unattributed.
+//
+// The cost was not theoretical. `batten ingest` maps AgentID -> node, so the per-node ledger —
+// the half of batten no other tool in the ecosystem can produce, because nothing else records
+// the write-set claims — reported "usage not measured" for usage it had measured.
+func TestARecordThatNamesItsOwnAgentIsAttributed(t *testing.T) {
+	dir := t.TempDir()
+	transcript := filepath.Join(dir, "flat.jsonl")
+
+	line := `{"type":"assistant","requestId":"req_flat","timestamp":"2026-07-14T20:51:45.997Z",` +
+		`"agentId":"frontend-agent","message":{"id":"m1","model":"claude-opus-4-8",` +
+		`"usage":{"input_tokens":1000,"output_tokens":50}}}`
+	writeFile(t, transcript, line+"\n")
+
+	rows, _, err := Parse(transcript, "run-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected the one billed request, got %d", len(rows))
+	}
+	if rows[0].AgentID != "frontend-agent" {
+		t.Errorf("AgentID = %q; a record that names its own agent must be attributable, or the "+
+			"per-node ledger reports unmeasured usage it actually measured", rows[0].AgentID)
+	}
+}
+
+// And the file still wins where both are present: the directory layout is the source we can
+// trust, and a record disagreeing with the file it lives in should not be able to re-attribute
+// a subagent's spend to somebody else.
+func TestTheFileWinsOverARecordThatClaimsADifferentAgent(t *testing.T) {
+	dir := t.TempDir()
+	session := "s1"
+	transcript := filepath.Join(dir, session+".jsonl")
+	writeFile(t, transcript, "")
+
+	subs := filepath.Join(dir, session, "subagents")
+	if err := os.MkdirAll(subs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(subs, "agent-realowner.jsonl"),
+		`{"type":"assistant","requestId":"req_x","timestamp":"2026-07-14T20:51:45.997Z",`+
+			`"agentId":"impostor","message":{"id":"m","model":"claude-opus-4-8",`+
+			`"usage":{"input_tokens":10,"output_tokens":1}}}`+"\n")
+
+	rows, _, err := Parse(transcript, "run-1", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].AgentID != "realowner" {
+		t.Errorf("AgentID = %q, want realowner: the file the record lives in is the attribution "+
+			"we can trust", rows[0].AgentID)
+	}
+}

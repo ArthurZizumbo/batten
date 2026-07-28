@@ -198,6 +198,16 @@ func priceRecord(line []byte, runID, agentID string, skip func(string) bool, unk
 
 	u := rec.Message.Usage
 
+	// Attribution comes from the FILE — subagents/agent-<id>.jsonl — because that is how Claude
+	// Code lays transcripts out. But a record that names its own agent is attributable too, and
+	// `rec.AgentID` was decoded and then never read by anything: the field existed, the json tag
+	// existed, and a line carrying `"agentId": "..."` in a flat transcript went in unattributed.
+	// The ledger then reported "usage not measured" per node for usage it had, in fact, measured.
+	// The file still wins where both are present: it is the layout we can trust.
+	if agentID == "" {
+		agentID = rec.AgentID
+	}
+
 	// Price at the record's own timestamp, not now, so the Sonnet 5 repricing cannot rewrite
 	// history under us. A record with no usable timestamp is priced at today's rate — the only
 	// honest option left — and stamped with ingest time rather than 1970.
