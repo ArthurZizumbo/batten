@@ -374,7 +374,16 @@ func (s *Store) SetBaseSHA(runID, sha string) error {
 
 func (s *Store) CloseRun(runID, status string) error {
 	t := now()
-	_, err := s.db.Exec(`UPDATE runs SET status=?, ended_at=? WHERE run_id=?`, status, t, runID)
+	if _, err := s.db.Exec(`UPDATE runs SET status=?, ended_at=? WHERE run_id=?`, status, t, runID); err != nil {
+		return err
+	}
+	// A closed run has no phase still running. Nothing used to write ended_at on a phase node,
+	// so every phase read `running` forever — on `batten show`, on the canvas and in the TUI,
+	// in the same frame whose header said the run finished ok. Scoped by run_id: node ids are
+	// per-run now, but this UPDATE must not depend on that to be safe.
+	_, err := s.db.Exec(
+		`UPDATE nodes SET status=?, ended_at=? WHERE run_id=? AND kind='phase' AND ended_at IS NULL`,
+		status, t, runID)
 	return err
 }
 
@@ -392,6 +401,33 @@ type Node struct {
 	CostUSD   float64
 	StartedAt int64
 	EndedAt   *int64
+}
+
+// PhaseNodeID and AgentNodeID are the only sanctioned ways to name a node.
+//
+// node_id is a PRIMARY KEY and AddNode is an INSERT OR REPLACE, so an id that does not carry
+// its run is not an identifier — it is a collision waiting for a second work item. A phase
+// named "build" was once literally one row for the whole database: the second unit to enter
+// build took the row out of the first one's run, and that run's canvas collapsed to a bare
+// header while its subagents were left pointing at a parent that had moved. Two units open at
+// once is the headline use case, so this has to be structural rather than remembered.
+func PhaseNodeID(runID, phaseID string) string { return runID + ":p-" + phaseID }
+
+// AgentNodeID scopes subagent nodes the same way. Agent ids are only unique within the session
+// that minted them, and two runs fanning out over the same domains reuse them freely.
+func AgentNodeID(runID, agentID string) string { return runID + ":n-" + agentID }
+
+// DisplayNodeID strips the run scope and the kind prefix, leaving the name a human typed or a
+// subagent was launched under. Internal ids are for joins; showing one to an agent in a denial
+// invites it to pass that id back to `batten claim`, where it is not recognised.
+func DisplayNodeID(nodeID string) string {
+	if i := strings.LastIndex(nodeID, ":"); i >= 0 {
+		nodeID = nodeID[i+1:]
+	}
+	if len(nodeID) > 2 && (nodeID[:2] == "n-" || nodeID[:2] == "p-") {
+		nodeID = nodeID[2:]
+	}
+	return nodeID
 }
 
 func (s *Store) AddNode(n Node) error {

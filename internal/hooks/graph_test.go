@@ -26,9 +26,10 @@ func TestFanOutBecomesARunGraph(t *testing.T) {
 	if err := h.Store.SetPhase(r.RunID, "build"); err != nil {
 		t.Fatal(err)
 	}
-	// The phase node the spawn edges will hang off.
+	// The phase node the spawn edges will hang off, named the way production names it.
 	if err := h.Store.AddNode(store.Node{
-		NodeID: "p-build", RunID: r.RunID, Kind: "phase", Label: "build", Status: "running",
+		NodeID: store.PhaseNodeID(r.RunID, "build"), RunID: r.RunID,
+		Kind: "phase", Label: "build", Status: "running",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -59,16 +60,22 @@ func TestFanOutBecomesARunGraph(t *testing.T) {
 		t.Errorf("a subagent that just started is running, got %q", sub.Status)
 	}
 
-	// The spawn edge is what makes the canvas a graph rather than a list.
+	// The spawn edge is what makes the canvas a graph rather than a list. It must point at
+	// THIS run's phase node: a bare "p-build" is one row for the whole database, and the
+	// second unit to enter build would take it out of this run.
 	edges, _ := h.Store.Edges(r.RunID)
 	var spawned bool
 	for _, e := range edges {
-		if e.Src == "p-build" && e.Dst == sub.NodeID && e.Rel == "spawn" {
+		if e.Src == store.PhaseNodeID(r.RunID, "build") && e.Dst == sub.NodeID && e.Rel == "spawn" {
 			spawned = true
 		}
 	}
 	if !spawned {
-		t.Errorf("no spawn edge from the phase to the subagent; edges = %+v", edges)
+		t.Errorf("no spawn edge from this run's phase to the subagent; edges = %+v", edges)
+	}
+	if !strings.Contains(sub.NodeID, r.RunID) {
+		t.Errorf("subagent node id %q is not scoped to its run; agent ids are only unique "+
+			"within the session that minted them", sub.NodeID)
 	}
 
 	// Stop closes it out. A message that reads as a failure must NOT be recorded as ok — the
@@ -280,4 +287,111 @@ func domainFixture(t *testing.T) (*Handler, string) {
 	}
 	t.Cleanup(func() { st.Close() })
 	return &Handler{Spec: sp, Store: st}, dir
+}
+
+// TestTwoUnitsInTheSamePhaseDoNotStealEachOthersNodes is the collision the field test found.
+//
+// Phase node ids used to be `"p-" + phaseID`, and node_id is a PRIMARY KEY under an
+// INSERT OR REPLACE. A phase called "build" was therefore one row for the whole database:
+// the second unit to enter build rewrote the first one's row to point at its own run, and
+// the first run's canvas collapsed to a bare header while its subagents were left pointing
+// at a parent that had moved. Two work items open at once is the headline use case.
+func TestTwoUnitsInTheSamePhaseDoNotStealEachOthersNodes(t *testing.T) {
+	h, _ := gateFixture(t, nil, "enforce")
+
+	r1, err := h.Store.EnsureRun("p", "TASK-1", "sess-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2, err := h.Store.EnsureRun("p", "TASK-2", "sess-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r1.RunID == r2.RunID {
+		t.Fatal("fixture error: both units share a run")
+	}
+
+	// Both units enter a phase of the same name, and each fans out one subagent under an
+	// agent id the other also uses — the ordinary case, since agent ids are only unique
+	// within the session that minted them.
+	for _, r := range []*store.Run{r1, r2} {
+		if err := h.Store.SetPhase(r.RunID, "build"); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.Store.AddNode(store.Node{
+			NodeID: store.PhaseNodeID(r.RunID, "build"), RunID: r.RunID,
+			Kind: "phase", Label: "build", Status: "running",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		in := hookInput("SubagentStart", r.SessionID)
+		in.AgentID, in.AgentType = "worker-1", "api"
+		if _, err := h.subagentStart(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The first run must still own everything it recorded.
+	for _, r := range []*store.Run{r1, r2} {
+		nodes, err := h.Store.Nodes(r.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var phase, sub int
+		for _, n := range nodes {
+			switch n.Kind {
+			case "phase":
+				phase++
+			case "subagent":
+				sub++
+			}
+		}
+		if phase != 1 || sub != 1 {
+			t.Errorf("run %s has %d phase and %d subagent nodes, want 1 and 1 — a second unit "+
+				"entering the same phase took a row out of this run", r.UnitID, phase, sub)
+		}
+	}
+
+	// And the spawn edge must resolve inside its own run, or the canvas drops the subagent.
+	for _, r := range []*store.Run{r1, r2} {
+		edges, err := h.Store.Edges(r.RunID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(edges) != 1 {
+			t.Fatalf("run %s: want exactly one spawn edge, got %+v", r.UnitID, edges)
+		}
+		if edges[0].Src != store.PhaseNodeID(r.RunID, "build") {
+			t.Errorf("run %s: spawn edge points at %q, not at this run's phase node",
+				r.UnitID, edges[0].Src)
+		}
+	}
+}
+
+// A closed run has no phase still running. Every surface used to paint every phase as
+// `running` forever, in the same frame whose header said the run finished ok.
+func TestClosingARunFinishesItsPhases(t *testing.T) {
+	h, run := gateFixture(t, nil, "enforce")
+	if err := h.Store.AddNode(store.Node{
+		NodeID: store.PhaseNodeID(run.RunID, "build"), RunID: run.RunID,
+		Kind: "phase", Label: "build", Status: "running",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Store.CloseRun(run.RunID, "ok"); err != nil {
+		t.Fatal(err)
+	}
+	nodes, err := h.Store.Nodes(run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range nodes {
+		if n.Kind != "phase" {
+			continue
+		}
+		if n.Status == "running" || n.EndedAt == nil {
+			t.Errorf("phase %q is still %q with ended_at=%v after the run closed ok",
+				n.Label, n.Status, n.EndedAt)
+		}
+	}
 }

@@ -108,13 +108,29 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, verdict *sto
 	}
 
 	var phases []store.Node
+	present := map[string]bool{}
+	for _, n := range nodes {
+		if n.Kind == "phase" {
+			present[n.NodeID] = true
+		}
+	}
+
 	byPhase := map[string][]store.Node{}
 	for _, n := range nodes {
 		if n.Kind == "phase" {
 			phases = append(phases, n)
 			continue
 		}
-		byPhase[parent[n.NodeID]] = append(byPhase[parent[n.NodeID]], n)
+		// A spawn edge can name a phase that is not in this run's nodes — a run recorded before
+		// phase ids were scoped, or one whose phase row was taken by another unit. Treating that
+		// as "belongs to a phase we are not drawing" made the subagent disappear from the canvas
+		// while `batten show` still listed it. An id we cannot resolve is exactly what the
+		// unattributed column is for.
+		p := parent[n.NodeID]
+		if !present[p] {
+			p = ""
+		}
+		byPhase[p] = append(byPhase[p], n)
 	}
 	sort.Slice(phases, func(i, j int) bool { return phases[i].StartedAt < phases[j].StartedAt })
 

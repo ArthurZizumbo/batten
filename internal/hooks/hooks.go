@@ -460,15 +460,23 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 				return advise("PreToolUse", fmt.Sprintf(
 					"batten: %s is claimed by a fanned-out agent (%s) in this run. If you are that "+
 						"agent, ignore this; if you are the orchestrator, let the agent own its file.",
-					rel, owner)), nil
+					rel, store.DisplayNodeID(owner))), nil
 			}
+			// Both ids are shown as the agent was launched, not as the store keys it. The
+			// message names who you are and tells you to run `batten claim`, and an internal
+			// `n-`/run-scoped id is rejected by that command — handing one over sends the
+			// agent to a dead end.
 			mine, _ := h.Store.WriteSet(myRun, myNode)
+			owned := "(none — declare it with `batten claim " + store.DisplayNodeID(myNode) + " <file>...`)"
+			if len(mine) > 0 {
+				owned = strings.Join(mine, "\n  ")
+			}
 			return h.gate("PreToolUse", fmt.Sprintf(
 				"batten: write-set collision. %s belongs to another agent's write-set (%s); you are %s.\n"+
 					"Two agents must never write the same file — that is what makes the fan-out safe.\n"+
 					"Your write-set:\n  %s\n"+
 					"If this file genuinely belongs to you, the plan is wrong: fix the plan, do not cross the fence.",
-				rel, owner, myNode, strings.Join(mine, "\n  "))), nil
+				rel, store.DisplayNodeID(owner), store.DisplayNodeID(myNode), owned)), nil
 		}
 	}
 
@@ -493,7 +501,7 @@ func (h *Handler) subagentStart(in Input) (*Output, error) {
 	if err != nil {
 		return nil, nil
 	}
-	nodeID := "n-" + in.AgentID
+	nodeID := store.AgentNodeID(run.RunID, in.AgentID)
 	// The agent_type is usually the domain's own name (the fan-out launches "one agent per
 	// domain"), so match it directly first; fall back to path-prefix only if it isn't a domain.
 	domain := ""
@@ -508,7 +516,7 @@ func (h *Handler) subagentStart(in Input) (*Output, error) {
 		AgentID: in.AgentID, AgentType: in.AgentType,
 	})
 	if run.Phase != "" {
-		_ = h.Store.AddEdge(run.RunID, "p-"+run.Phase, nodeID, "spawn")
+		_ = h.Store.AddEdge(run.RunID, store.PhaseNodeID(run.RunID, run.Phase), nodeID, "spawn")
 	}
 	return nil, nil
 }

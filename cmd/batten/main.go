@@ -364,8 +364,14 @@ func cmdPhase(args []string) error {
 		_, fresh := codeGraphFresh(sp)
 		_ = st.SetCodeGraph(run.RunID, fresh)
 	}
+	// Finish the phase this run is leaving, so a phase reads `running` only while it is.
+	// Scoped by run: with a global id this would have closed another unit's phase.
+	if run.Phase != "" && run.Phase != phaseID {
+		_ = st.FinishNode(store.PhaseNodeID(run.RunID, run.Phase), "ok", 0)
+	}
 	_ = st.AddNode(store.Node{
-		NodeID: "p-" + phaseID, RunID: run.RunID, Kind: "phase", Label: phaseID, Status: "running",
+		NodeID: store.PhaseNodeID(run.RunID, phaseID), RunID: run.RunID,
+		Kind: "phase", Label: phaseID, Status: "running",
 	})
 
 	// The anchor. Every later phase diffs from here, not from HEAD~N.

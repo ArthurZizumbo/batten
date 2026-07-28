@@ -167,3 +167,46 @@ func TestEmptyRunRendersAnOpenableCanvas(t *testing.T) {
 		t.Fatalf("an empty run produced invalid JSON: %v", err)
 	}
 }
+
+// TestASubagentWhoseParentPhaseIsMissingStillAppears.
+//
+// A spawn edge can name a phase node that is not in this run: a run recorded before phase ids
+// were scoped per run, or one whose phase row was taken by another unit entering the same phase.
+// The renderer used to bucket that subagent under an id nothing drew, so it vanished from the
+// canvas while `batten show` still listed it — the run looked smaller than it was, and the
+// missing agent is exactly the one someone opens the canvas to find.
+func TestASubagentWhoseParentPhaseIsMissingStillAppears(t *testing.T) {
+	run := &store.Run{RunID: "r1", Project: "p", UnitID: "US-034", Phase: "build", Status: "running"}
+	nodes := []store.Node{
+		{NodeID: "r1:p-build", RunID: "r1", Kind: "phase", Label: "build", Status: "running"},
+		{NodeID: "r1:n-a1", RunID: "r1", Kind: "subagent", Label: "api", Domain: "api", Status: "ok"},
+		// Its spawn edge points at a phase row this run no longer has.
+		{NodeID: "r1:n-b1", RunID: "r1", Kind: "subagent", Label: "web", Domain: "web", Status: "ok"},
+	}
+	edges := []store.Edge{
+		{Src: "r1:p-build", Dst: "r1:n-a1", Rel: "spawn"},
+		{Src: "p-build", Dst: "r1:n-b1", Rel: "spawn"}, // dangling: unscoped, not in nodes
+	}
+
+	c := Render(run, nodes, edges, nil)
+
+	ids := map[string]bool{}
+	for _, n := range c.Nodes {
+		ids[n.ID] = true
+	}
+	for _, want := range []string{"r1:n-a1", "r1:n-b1"} {
+		if !ids[want] {
+			t.Errorf("subagent %q was dropped from the canvas; a parent id we cannot resolve "+
+				"belongs in the unattributed column, not in the bin", want)
+		}
+	}
+
+	// And it must not land on top of the phase it does not belong to.
+	pos := map[string][2]int{}
+	for _, n := range c.Nodes {
+		pos[n.ID] = [2]int{n.X, n.Y}
+	}
+	if pos["r1:n-a1"] == pos["r1:n-b1"] {
+		t.Errorf("the orphan was drawn on top of the attributed subagent, both at %v", pos["r1:n-a1"])
+	}
+}

@@ -51,18 +51,21 @@ func TestGuardDeniesAnAttributedTrespassAndOnlyWarnsOnAnUnattributedOne(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Node ids are built the way production builds them — run-scoped — so the assertions
+	// below are about what an agent actually reads, not about a shape only tests produce.
+	nodeA, nodeB := store.AgentNodeID(r.RunID, "agent-a"), store.AgentNodeID(r.RunID, "agent-b")
 	for _, n := range []store.Node{
-		{NodeID: "n-a", RunID: r.RunID, Kind: "subagent", Label: "a", AgentID: "agent-a"},
-		{NodeID: "n-b", RunID: r.RunID, Kind: "subagent", Label: "b", AgentID: "agent-b"},
+		{NodeID: nodeA, RunID: r.RunID, Kind: "subagent", Label: "a", AgentID: "agent-a"},
+		{NodeID: nodeB, RunID: r.RunID, Kind: "subagent", Label: "b", AgentID: "agent-b"},
 	} {
 		if err := h.Store.AddNode(n); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := h.Store.ClaimWriteSet(r.RunID, "n-a", []string{"ml/train.py"}); err != nil {
+	if err := h.Store.ClaimWriteSet(r.RunID, nodeA, []string{"ml/train.py"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := h.Store.ClaimWriteSet(r.RunID, "n-b", []string{"api/routes.go"}); err != nil {
+	if err := h.Store.ClaimWriteSet(r.RunID, nodeB, []string{"api/routes.go"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -77,12 +80,19 @@ func TestGuardDeniesAnAttributedTrespassAndOnlyWarnsOnAnUnattributedOne(t *testi
 	if got := decision(out); got != "deny" {
 		t.Fatalf("an identified agent writing another's file must be DENIED, got %q", got)
 	}
+	// The denial names the file, the owner, the trespasser and the trespasser's own write-set,
+	// so the agent can act on it. The ids are the ones the agents were LAUNCHED under, not the
+	// store's keys: the message tells the agent to run `batten claim`, and that command does
+	// not recognise an internal node id, so printing one sends it to a dead end.
 	reason := out.HookSpecific.PermissionDecisionReason
-	for _, want := range []string{"ml/train.py", "n-a", "n-b", "api/routes.go"} {
+	for _, want := range []string{"ml/train.py", "agent-a", "agent-b", "api/routes.go"} {
 		if !strings.Contains(reason, want) {
 			t.Errorf("the denial must name the file, the owner, the trespasser and the trespasser's own\n"+
 				"write-set (so the agent can act on it). Missing %q from:\n%s", want, reason)
 		}
+	}
+	if strings.Contains(reason, "n-agent-") || strings.Contains(reason, r.RunID) {
+		t.Errorf("the denial leaks an internal node id, which `batten claim` rejects:\n%s", reason)
 	}
 
 	// The owner writing its own file is never blocked.

@@ -431,13 +431,26 @@ func (m *Model) detailTree(d *detail) []string {
 	}
 
 	var phases []store.Node
+	present := map[string]bool{}
+	for _, n := range d.nodes {
+		if n.Kind == "phase" {
+			present[n.NodeID] = true
+		}
+	}
+
 	kids := map[string][]store.Node{}
 	for _, n := range d.nodes {
 		if n.Kind == "phase" {
 			phases = append(phases, n)
 			continue
 		}
+		// A parent id we cannot resolve in this run must fall through to the orphan list
+		// below, not into a bucket nothing ever reads. Dropping it would hide the subagent
+		// from the one screen a user opens to find it.
 		p := parent[n.NodeID]
+		if !present[p] {
+			p = ""
+		}
 		kids[p] = append(kids[p], n)
 	}
 
