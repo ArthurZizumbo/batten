@@ -207,7 +207,7 @@ type runsOutput struct {
 
 func (q *queries) runs(_ context.Context, _ *sdk.CallToolRequest, in runsInput) (*sdk.CallToolResult, runsOutput, error) {
 	if !q.governed() {
-		return nil, runsOutput{Runs: []runInfo{}, Note: notGoverned}, nil
+		return reply(runsOutput{Runs: []runInfo{}, Note: notGoverned})
 	}
 	proj := in.Project
 	if proj == "" {
@@ -231,7 +231,7 @@ func (q *queries) runs(_ context.Context, _ *sdk.CallToolRequest, in runsInput) 
 	if len(out.Runs) == 0 {
 		out.Note = "no runs recorded yet for " + proj + "; batten records a run the first time a hook fires for a work item"
 	}
-	return nil, out, nil
+	return reply(out)
 }
 
 // ---------- batten_run_graph ----------
@@ -349,7 +349,7 @@ func (q *queries) runGraph(_ context.Context, _ *sdk.CallToolRequest, in graphIn
 	if len(out.Nodes) == 0 && out.Note == "" {
 		out.Note = "the run exists but has no nodes yet: no phase or subagent hook has fired for it"
 	}
-	return nil, out, nil
+	return reply(out)
 }
 
 func toUsage(u store.Usage) *usageInfo {
@@ -397,7 +397,7 @@ func (q *queries) verdictStatus(_ context.Context, _ *sdk.CallToolRequest, in ve
 	out := verdictOutput{GateChecks: []string{}}
 	if !q.governed() {
 		out.Note = notGoverned
-		return nil, out, nil
+		return reply(out)
 	}
 
 	closing, gated := q.sp.ClosingPhase()
@@ -424,13 +424,13 @@ func (q *queries) verdictStatus(_ context.Context, _ *sdk.CallToolRequest, in ve
 		// Say so plainly rather than implying the work is approved.
 		out.HowToFix = "no run is recorded, so the gate has nothing to enforce and will not block a commit. " +
 			"That is not an approval: nothing has been verified."
-		return nil, out, nil
+		return reply(out)
 	}
 	out.Unit, out.RunID = r.UnitID, r.RunID
 
 	if !gated || closing.RequiresVerdict == "" {
 		out.Note = "batten.yaml declares no closing phase with requires_verdict, so the commit gate is not armed"
-		return nil, out, nil
+		return reply(out)
 	}
 
 	if ov, err := q.st.HasOverride(r.RunID, gate); err == nil && ov {
@@ -459,7 +459,7 @@ func (q *queries) verdictStatus(_ context.Context, _ *sdk.CallToolRequest, in ve
 	}
 
 	if out.Overridden {
-		return nil, out, nil
+		return reply(out)
 	}
 
 	switch {
@@ -469,13 +469,13 @@ func (q *queries) verdictStatus(_ context.Context, _ *sdk.CallToolRequest, in ve
 		out.HowToFix = fmt.Sprintf("run the %q phase: execute the gate's checks and record a verdict "+
 			"whose evidence[] cites their output. To proceed anyway (recorded in the audit log): "+
 			"batten override %s --reason \"...\"", closing.ID, r.UnitID)
-		return nil, out, nil
+		return reply(out)
 
 	case out.Verdict.Result == "ok" && out.Verdict.EvidenceCount == 0:
 		out.CommitDenied = true
 		out.DenyReason = fmt.Sprintf("%s has result=ok but an empty evidence[]. %s", r.UnitID, store.ErrNoEvidence)
 		out.HowToFix = "re-run the gate's checks and record the verdict again, citing their output in evidence[]"
-		return nil, out, nil
+		return reply(out)
 
 	case out.Verdict.Result != closing.RequiresVerdict && out.Verdict.Result != "ok":
 		out.CommitDenied = true
@@ -485,7 +485,7 @@ func (q *queries) verdictStatus(_ context.Context, _ *sdk.CallToolRequest, in ve
 		if out.HowToFix == "" {
 			out.HowToFix = "fix what the verdict flags, then record a new verdict"
 		}
-		return nil, out, nil
+		return reply(out)
 	}
 
 	// Budget is also a closing condition: a run that blew its ceiling should not quietly land.
@@ -498,12 +498,12 @@ func (q *queries) verdictStatus(_ context.Context, _ *sdk.CallToolRequest, in ve
 				r.UnitID, exceededSummary(cs))
 			out.HowToFix = fmt.Sprintf("raise the ceiling in batten.yaml, or proceed on the record: "+
 				"batten override %s --reason \"...\"", r.UnitID)
-			return nil, out, nil
+			return reply(out)
 		}
 	}
 
 	out.HowToFix = "nothing to fix: the verdict clears the gate and the commit will be allowed"
-	return nil, out, nil
+	return reply(out)
 }
 
 func exceededSummary(cs []store.Ceiling) string {
@@ -566,7 +566,7 @@ func (q *queries) budget(_ context.Context, _ *sdk.CallToolRequest, in budgetInp
 	out := budgetOutput{Ceilings: []ceilingInfo{}}
 	if !q.governed() {
 		out.Note = notGoverned
-		return nil, out, nil
+		return reply(out)
 	}
 	b := q.sp.Budget
 	out.OnExceed, out.MaxIterations, out.Declared = b.OnExceed, b.MaxIterations, b.Set()
@@ -577,14 +577,14 @@ func (q *queries) budget(_ context.Context, _ *sdk.CallToolRequest, in budgetInp
 	}
 	if r == nil {
 		out.Note = note
-		return nil, out, nil
+		return reply(out)
 	}
 	out.RunID, out.Unit, out.Iterations, out.Note = r.RunID, r.UnitID, r.Iterations, note
 
 	if !b.Set() {
 		out.Note = joinNotes(note, "batten.yaml declares no budget ceiling, so nothing is enforced. "+
 			"This run has spent "+fmt.Sprintf("%d tokens (~$%.2f imputed).", r.TokensSpent, r.ImputedUSD))
-		return nil, out, nil
+		return reply(out)
 	}
 
 	cs, err := q.st.Budget(r.RunID, b.TokensPerRun, b.ImputedUSDPerRun, b.QuotaPctPerRun)
@@ -601,7 +601,7 @@ func (q *queries) budget(_ context.Context, _ *sdk.CallToolRequest, in budgetInp
 		}
 		out.Ceilings = append(out.Ceilings, ci)
 	}
-	return nil, out, nil
+	return reply(out)
 }
 
 // unavailableReason explains WHY a ceiling cannot be measured, so the agent can either fix it
@@ -633,13 +633,13 @@ func (q *queries) writeSetOwner(_ context.Context, _ *sdk.CallToolRequest, in wr
 	out := writeSetOutput{YourWriteSet: []string{}, WriteAllowed: true}
 	if !q.governed() {
 		out.Note = notGoverned
-		return nil, out, nil
+		return reply(out)
 	}
 	rel, err := q.relPath(in.Path)
 	if err != nil {
 		out.Path = filepath.ToSlash(in.Path)
 		out.Note = "that path is outside the repo, so no write-set governs it"
-		return nil, out, nil
+		return reply(out)
 	}
 	out.Path = rel
 	if d, ok := q.sp.DomainFor(rel); ok {
@@ -652,7 +652,7 @@ func (q *queries) writeSetOwner(_ context.Context, _ *sdk.CallToolRequest, in wr
 	}
 	if r == nil {
 		out.Note = joinNotes(note, "with no active run there are no write-set claims, so nothing is enforced")
-		return nil, out, nil
+		return reply(out)
 	}
 	out.RunID = r.RunID
 
@@ -675,7 +675,7 @@ func (q *queries) writeSetOwner(_ context.Context, _ *sdk.CallToolRequest, in wr
 	}
 	if owner == "" {
 		out.Note = joinNotes(out.Note, "unclaimed: no agent owns this file in run "+r.RunID)
-		return nil, out, nil
+		return reply(out)
 	}
 
 	out.Owned, out.OwnerNode = true, owner
@@ -697,7 +697,7 @@ func (q *queries) writeSetOwner(_ context.Context, _ *sdk.CallToolRequest, in wr
 				"same file — that is what makes the fan-out safe. If this file genuinely belongs to you, "+
 				"the plan is wrong: fix the plan, do not cross the fence.", rel, owner))
 	}
-	return nil, out, nil
+	return reply(out)
 }
 
 // relPath normalizes a caller-supplied path to the repo-relative, forward-slash form the
@@ -722,7 +722,19 @@ func (q *queries) relPath(p string) (string, error) {
 
 // ---------- batten_spec ----------
 
-type specInput struct{}
+// specInput carries §4.5: answer for ONE phase instead of handing over the whole document.
+//
+// What already existed was the spec being available; what was missing was any of it changing
+// with the phase. An agent in `verify` was handed every domain, every gate and every phase and
+// left to orient itself — and `phases[].reads`, the field that declares what a phase's inputs
+// ARE, had exactly one consumer: this tool echoing it back.
+//
+// The limit this deliberately respects: what comes back is the user's batten.yaml, narrowed.
+// batten does not add methodology of its own. Inventing "brainstorming guidance" or "strict TDD"
+// here would be inventing a workflow, which is the one thing the batten-engine skill forbids.
+type specInput struct {
+	Phase string `json:"phase,omitempty" jsonschema:"return only what this phase needs — its inputs, its gate, and the invariants of the domains it fans out over. Omit for the whole spec."`
+}
 
 type phaseSpec struct {
 	ID              string   `json:"id"`
@@ -775,10 +787,13 @@ type specOutput struct {
 	Domains     []domainSpec      `json:"domains" jsonschema:"the fan-out axes: one subagent per domain, disjoint write-sets"`
 	Gates       []gateSpec        `json:"gates"`
 	Budget      budgetSpec        `json:"budget"`
-	Note        string            `json:"note,omitempty"`
+	// ScopedToPhase names the phase this answer was narrowed to, so a reader can tell a
+	// one-phase reply from a project that genuinely has one phase.
+	ScopedToPhase string `json:"scoped_to_phase,omitempty"`
+	Note          string `json:"note,omitempty"`
 }
 
-func (q *queries) spec(_ context.Context, _ *sdk.CallToolRequest, _ specInput) (*sdk.CallToolResult, specOutput, error) {
+func (q *queries) spec(_ context.Context, _ *sdk.CallToolRequest, in specInput) (*sdk.CallToolResult, specOutput, error) {
 	out := specOutput{
 		Artifacts: map[string]string{},
 		Phases:    []phaseSpec{},
@@ -787,7 +802,7 @@ func (q *queries) spec(_ context.Context, _ *sdk.CallToolRequest, _ specInput) (
 	}
 	if q.sp == nil {
 		out.Note = "no batten.yaml was found: this repo has no declared process. Run `batten init` to create one."
-		return nil, out, nil
+		return reply(out)
 	}
 	s := q.sp
 	out.Project, out.Root = s.Project, filepath.ToSlash(s.Root)
@@ -823,7 +838,121 @@ func (q *queries) spec(_ context.Context, _ *sdk.CallToolRequest, _ specInput) (
 		QuotaPctPerRun: s.Budget.QuotaPctPerRun, MaxIterations: s.Budget.MaxIterations,
 		OnExceed: s.Budget.OnExceed,
 	}
-	return nil, out, nil
+	if in.Phase != "" {
+		narrowToPhase(&out, in.Phase)
+	}
+	return reply(out)
+}
+
+// narrowToPhase keeps only what the named phase needs. An unknown phase narrows nothing and
+// says so: silently returning the whole document would let a typo look like an answer.
+func narrowToPhase(out *specOutput, phase string) {
+	var kept []phaseSpec
+	for _, p := range out.Phases {
+		if strings.EqualFold(p.ID, phase) {
+			kept = append(kept, p)
+		}
+	}
+	if len(kept) == 0 {
+		var ids []string
+		for _, p := range out.Phases {
+			ids = append(ids, p.ID)
+		}
+		out.Note = fmt.Sprintf("no phase %q in this project's workflow. Declared phases: %s. "+
+			"Returning the whole spec.", phase, strings.Join(ids, ", "))
+		return
+	}
+	out.ScopedToPhase = kept[0].ID
+	out.Phases = kept
+
+	// The gates worth keeping are the ones this phase must satisfy. The rest belong to phases
+	// this agent is not in.
+	wanted := map[string]bool{}
+	if g := kept[0].Gate; g != "" {
+		wanted[g] = true
+	}
+	var gates []gateSpec
+	for _, g := range out.Gates {
+		if wanted[g.Name] {
+			gates = append(gates, g)
+		}
+	}
+	out.Gates = orEmptyGates(gates)
+
+	// Domains are dropped for a phase that does not fan out: their invariants exist to ride into
+	// a fanned-out agent's prompt, and a phase with no fan-out has no such agent to hand them to.
+	if !kept[0].Fanout {
+		out.Domains = []domainSpec{}
+	}
+}
+
+func orEmptyGates(g []gateSpec) []gateSpec {
+	if g == nil {
+		return []gateSpec{}
+	}
+	return g
+}
+
+func (o specOutput) summary() string {
+	if o.Note != "" && len(o.Phases) == 0 {
+		return o.Note
+	}
+	var b strings.Builder
+	if o.ScopedToPhase != "" {
+		p := o.Phases[0]
+		fmt.Fprintf(&b, "%s · phase %q", o.Project, p.ID)
+		if p.Fanout {
+			fmt.Fprintf(&b, " · fans out over %d domain(s)", len(o.Domains))
+		}
+		if p.RequiresVerdict != "" {
+			fmt.Fprintf(&b, " · HARD gate: a commit is denied without verdict %q", p.RequiresVerdict)
+		} else if p.Gate != "" {
+			fmt.Fprintf(&b, " · must emit a verdict for gate %q", p.Gate)
+		}
+		b.WriteString("\n")
+		if len(p.Reads) > 0 {
+			fmt.Fprintf(&b, "reads: %s\n", strings.Join(p.Reads, ", "))
+		}
+		for _, g := range o.Gates {
+			fmt.Fprintf(&b, "gate %s: %d check(s)", g.Name, len(g.Checks))
+			if len(g.Checks) == 0 {
+				b.WriteString(" — declares NOTHING to run, so it approves on your word alone")
+			} else {
+				fmt.Fprintf(&b, " — %s", joinCapped(g.Checks, 4))
+			}
+			if g.EvidenceRequired {
+				b.WriteString("; an ok verdict with empty evidence[] is denied")
+			}
+			b.WriteString("\n")
+		}
+		for _, d := range o.Domains {
+			fmt.Fprintf(&b, "domain %s (%s)\n", d.Name, d.Path)
+			for _, inv := range d.Invariants {
+				fmt.Fprintf(&b, "  - %s\n", inv)
+			}
+		}
+	} else {
+		fmt.Fprintf(&b, "%s · unit %s (%s) · %d phases, %d domains, %d gates\n",
+			o.Project, o.UnitName, o.UnitPattern, len(o.Phases), len(o.Domains), len(o.Gates))
+		var ids []string
+		for _, p := range o.Phases {
+			id := p.ID
+			if p.Fanout {
+				id += "(fanout)"
+			}
+			if p.RequiresVerdict != "" {
+				id += "(hard gate)"
+			}
+			ids = append(ids, id)
+		}
+		fmt.Fprintf(&b, "workflow: %s\n", strings.Join(ids, " -> "))
+		b.WriteString("Ask for one phase at a time (phase: \"build\") to get only its inputs, " +
+			"its gate and its domains' invariants.\n")
+	}
+	if o.Note != "" {
+		b.WriteString(o.Note + "\n")
+	}
+	return b.String()
 }
 
 // ---------- run resolution ----------

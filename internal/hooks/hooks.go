@@ -19,6 +19,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/ArthurZizumbo/batten/internal/export"
@@ -709,6 +710,67 @@ func (h *Handler) ingest(in Input, runID string) {
 // sessionStart injects where the active unit stands: which phase, what the verdict says,
 // how much of the budget is gone. This is the "¿dónde quedó?" that the handoff doc answers
 // by hand today.
+// phaseBriefing renders what the ACTIVE phase demands: its declared inputs, whether it fans out,
+// and what its gate will refuse. Returns "" when the phase is not one the spec declares.
+//
+// `phases[].reads` is the field that says what a phase's inputs ARE, and until now its only
+// consumer was batten_spec echoing it back. This is the second one, and the one that reaches the
+// agent without it having to ask.
+func phaseBriefing(sp *spec.Spec, phaseID string) string {
+	var p *spec.Phase
+	for i := range sp.Phases {
+		if sp.Phases[i].ID == phaseID {
+			p = &sp.Phases[i]
+			break
+		}
+	}
+	if p == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n### phase `%s`\n", p.ID)
+	if len(p.Reads) > 0 {
+		fmt.Fprintf(&b, "- reads: %s\n", strings.Join(p.Reads, ", "))
+	}
+	if p.Fanout {
+		var names []string
+		for _, n := range sortedDomains(sp) {
+			names = append(names, n)
+		}
+		fmt.Fprintf(&b, "- fans out over %d domain(s): %s. Each agent gets a DISJOINT write-set; "+
+			"claim yours with `batten claim <agent-id> <files...>`.\n", len(names), strings.Join(names, ", "))
+	}
+	if p.Gate != "" {
+		g, ok := sp.Gates[p.Gate]
+		switch {
+		case !ok:
+			fmt.Fprintf(&b, "- gate `%s` — declared on this phase but missing from gates:. "+
+				"Nothing will verify it.\n", p.Gate)
+		case len(g.Checks) == 0:
+			fmt.Fprintf(&b, "- gate `%s` declares NO checks, so it approves on the agent's word "+
+				"alone — nothing is run to verify it.\n", p.Gate)
+		default:
+			fmt.Fprintf(&b, "- gate `%s`: %d check(s) must RUN, not be asserted — `batten check %s`\n",
+				p.Gate, len(g.Checks), sp.Unit.Name)
+		}
+	}
+	if p.RequiresVerdict != "" {
+		fmt.Fprintf(&b, "- this is the CLOSING phase: a commit is denied without a verdict `%s` "+
+			"citing evidence.\n", p.RequiresVerdict)
+	}
+	return b.String()
+}
+
+func sortedDomains(sp *spec.Spec) []string {
+	out := make([]string, 0, len(sp.Domains))
+	for n := range sp.Domains {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (h *Handler) sessionStart(in Input) (*Output, error) {
 	runs, err := h.Store.ListRuns(h.Spec.Project, 5)
 	if err != nil {
@@ -753,6 +815,14 @@ func (h *Handler) sessionStart(in Input) (*Output, error) {
 	switch {
 	case mine != "":
 		fmt.Fprintf(&b, "\n→ this session is working **%s**.\n", mine)
+		// §4.5: say what the ACTIVE PHASE requires, not just which unit is open. The spec was
+		// always available on request; nothing about it ever changed with the phase, so an agent
+		// resuming mid-workflow got the same orientation whether it was about to fan out or
+		// about to face a gate. Everything below comes out of the user's batten.yaml — batten
+		// narrows their process, it does not add one.
+		if r, err := h.Store.ActiveRun(h.Spec.Project, mine); err == nil {
+			b.WriteString(phaseBriefing(h.Spec, r.Phase))
+		}
 	default:
 		open, _ := h.Store.OpenRuns(h.Spec.Project)
 		if len(open) > 1 {

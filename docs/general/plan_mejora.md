@@ -358,10 +358,44 @@ Corré: batten check US-034
 ~25 tokens en vez de ~260. **Y resuelve la pregunta de TOON sin adoptar TOON:** el ahorro viene de
 mandar menos, no de codificar distinto.
 
-**~1 día para las 6 herramientas. Ahorro estimado 70–90 % del contexto MCP.**
+### ✅ Hecho — y la causa raíz resultó ser más simple de lo diagnosticado
 
-> Validación previa (~1 h): confirmar con `/context` que Claude Code no mete `structuredContent`.
-> Si resulta que sí, el arreglo sigue siendo correcto y el ahorro es mayor.
+**La duplicación no la escribía batten: la escribía el SDK, porque batten no escribía nada.** Cada
+handler devolvía un `*sdk.CallToolResult` **nil**, y el go-sdk rellena lo que el handler deja
+vacío ([`mcp/server.go:386`](https://github.com/modelcontextprotocol/go-sdk)):
+
+```go
+res.StructuredContent = outJSON
+if res.Content == nil {
+    res.Content = []Content{&TextContent{Text: string(outJSON)}}
+}
+```
+
+De ahí los 932/932, 1176/1176, 1466/1466 bytes idénticos. Y de ahí también el arreglo: **el SDK
+deja `Content` en paz si el handler lo pone.** No hay que pelearse con nada.
+
+**Validación empírica, en lugar de `/context`:** llamar a `batten_spec` desde una sesión real
+devuelve el payload **una sola vez**. Así que la duplicación es real *en el cable* y **no**
+duplica lo que llega al contexto del modelo — que es exactamente la corrección que la
+investigación ya había hecho al diagnóstico original. Cuál de las dos mitades renderiza el
+harness no se pudo determinar desde adentro de la sesión, y **no cambia nada**: el arreglo es
+correcto en los dos casos, y si resulta ser `content`, el ahorro es inmediato.
+
+**Ahorro medido** (no estimado), sobre el fixture del paquete:
+
+| herramienta | `content` antes | ahora | |
+|---|---|---|---|
+| `batten_spec` | 1205 B | 227 | **−81 %** |
+| `batten_spec` con fase | 881 B | 138 | **−84 %** |
+| `batten_budget` | 589 B | 237 | −60 % |
+| `batten_verdict_status` | 665 B | 304 | −54 % |
+| `batten_runs` | 279 B | 131 | −53 % |
+| `batten_writeset_owner` | 262 B | 146 | −44 % |
+
+Los porcentajes bajos son de payloads chicos del fixture: `batten_runs` con veinte corridas
+reales comprime muchísimo más, porque el resumen crece por línea y el JSON por campo. La
+estimación de 70–90 % era optimista para las herramientas chicas y **conservadora para `spec`**,
+que es la más grande y la que más se llama.
 
 ### 4.5 — Inyección de contexto por fase
 
@@ -389,6 +423,21 @@ Y que `SessionStart` inyecte la fase activa, no solo el estado del run.
   ahí"*. Lo que batten inyecta debe salir del `batten.yaml` del usuario, no de la opinión de batten.
 
 **Costo:** ~1 día, y se hace junto con §4.4 porque tocan el mismo código.
+
+### ✅ Hecho — las dos mitades
+
+- **`batten_spec` acepta `phase`** y devuelve solo lo de esa fase: su `reads`, su gate, y —solo si
+  la fase hace fan-out— los invariantes de sus dominios. Una fase que no fanea no recibe
+  dominios: los invariantes existen para viajar al prompt de un agente del fan-out, y sin fan-out
+  no hay a quién dárselos. Una fase que el spec no declara **lo dice** en vez de devolver el
+  documento entero en silencio, que dejaría que un typo pareciera una respuesta.
+- **`SessionStart` inyecta la fase activa**, no solo el estado del run. En `build` dice sobre
+  cuántos dominios se fanea y cómo reclamar el write-set; en `close` dice que el commit se deniega
+  sin veredicto con evidencia. **`phases[].reads` pasó de un consumidor —el eco de MCP— a dos**, y
+  el segundo llega al agente sin que tenga que preguntar.
+
+Los dos límites se respetaron: batten no reescribe el system prompt, y **lo que inyecta sale del
+`batten.yaml` del usuario**. No hay una sola línea de metodología propia.
 
 ---
 
