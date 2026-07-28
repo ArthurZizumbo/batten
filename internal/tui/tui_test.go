@@ -191,10 +191,10 @@ func TestBindingCeilingIsTheClosestMeasurableOne(t *testing.T) {
 		t.Error("a cap of zero must not bind; it would read as instantly exceeded")
 	}
 
-	if unmeasurable(cs) != "quota_pct" {
-		t.Errorf("unmeasurable = %q, want quota_pct", unmeasurable(cs))
+	if got := firstUnmeasurable(cs); got.Kind != "quota_pct" {
+		t.Errorf("firstUnmeasurable = %q, want quota_pct", got.Kind)
 	}
-	if unmeasurable(cs[:2]) != "" {
+	if got := firstUnmeasurable(cs[:2]); got.Kind != "" {
 		t.Error("with everything measurable there is nothing to report as unmeasurable")
 	}
 }

@@ -597,7 +597,7 @@ func (q *queries) budget(_ context.Context, _ *sdk.CallToolRequest, in budgetInp
 			spent, remaining := c.Spent, c.Cap-c.Spent
 			ci.Spent, ci.Remaining = &spent, &remaining
 		} else {
-			ci.UnavailableReason = unavailableReason(c.Kind)
+			ci.UnavailableReason = c.Reason + " — this ceiling is declared but NOT enforced"
 		}
 		out.Ceilings = append(out.Ceilings, ci)
 	}
@@ -606,15 +606,6 @@ func (q *queries) budget(_ context.Context, _ *sdk.CallToolRequest, in budgetInp
 
 // unavailableReason explains WHY a ceiling cannot be measured, so the agent can either fix it
 // or knowingly proceed without it. "unavailable" with no reason is just a shrug.
-func unavailableReason(kind string) string {
-	if kind == "quota_pct" {
-		return "the share of the rolling 5-hour subscription window can only be sampled by " +
-			"`batten statusline` (hooks never see quota). It is not installed, or it has not sampled " +
-			"since this run opened, or the window rolled over mid-run. This ceiling is declared but NOT enforced."
-	}
-	return "batten has no measurement for this ceiling, so it is declared but NOT enforced"
-}
-
 // ---------- batten_writeset_owner ----------
 
 type writeSetInput struct {

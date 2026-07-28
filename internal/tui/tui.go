@@ -340,7 +340,7 @@ func (m *Model) bindingLine(r store.Run) string {
 	}
 	c, ok := binding(cs)
 	if !ok {
-		return stDim.Render(strings.Repeat("─", barW) + " n/a  " + naReason(unmeasurable(cs)))
+		return stDim.Render(strings.Repeat("─", barW) + " n/a  " + naReason(firstUnmeasurable(cs)))
 	}
 	frac := c.Spent / c.Cap
 	return fracStyle(frac).Render(fmt.Sprintf("%s %3.0f%% %s", bar(frac, barW), frac*100, kindLabel(c.Kind)))
@@ -571,7 +571,7 @@ func ceilingLine(c store.Ceiling) string {
 	label := kindLabel(c.Kind)
 	if !c.Available {
 		return stDim.Render(fmt.Sprintf("%-7s %s n/a  %s",
-			label, strings.Repeat("─", barW), naReason(c.Kind)))
+			label, strings.Repeat("─", barW), naReason(c)))
 	}
 	frac := 0.0
 	if c.Cap > 0 {
@@ -611,7 +611,11 @@ func kindLabel(kind string) string {
 // naReason says WHY a ceiling is unmeasurable. Bare "n/a" reads as a bug in batten; the
 // real cause is almost always that `batten statusline` — the only local surface that can
 // sample the subscription quota — is not installed, and that is something the user can fix.
-func naReason(kind string) string {
+func naReason(c store.Ceiling) string {
+	if c.Reason != "" {
+		return "(" + c.Reason + ")"
+	}
+	kind := c.Kind
 	if kind == "quota_pct" {
 		return "(needs `batten statusline`)"
 	}
@@ -619,13 +623,14 @@ func naReason(kind string) string {
 }
 
 // unmeasurable returns the kind of the first ceiling we cannot see, for the n/a reason.
-func unmeasurable(cs []store.Ceiling) string {
+// firstUnmeasurable returns the first ceiling we cannot see, so the list row can say why.
+func firstUnmeasurable(cs []store.Ceiling) store.Ceiling {
 	for _, c := range cs {
 		if !c.Available {
-			return c.Kind
+			return c
 		}
 	}
-	return ""
+	return store.Ceiling{}
 }
 
 func fracStyle(frac float64) lipgloss.Style {

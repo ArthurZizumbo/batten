@@ -267,3 +267,87 @@ func TestMeasureRefusesToConcludeFromTooFewRuns(t *testing.T) {
 		t.Errorf("groups account for %d runs, want 6", total)
 	}
 }
+
+// TestAnUnmeasuredRunIsNotAZeroSpendRun is principle #1 as a test.
+//
+// Ceiling.Available was hardcoded true for tokens and dollars, so a run nobody had ingested a
+// transcript for reported `0 tokens, $0.00` — presented with a progress bar, beside a ceiling,
+// as a measured number. That is not a rounding problem: it is the tool stating a fact it does
+// not have. And it was the DEFAULT path, because the flow opens the run, the work happens, and
+// nothing ingests anything unless someone remembers to.
+func TestAnUnmeasuredRunIsNotAZeroSpendRun(t *testing.T) {
+	s := open(t)
+	run := run(t, s, "US-1", "sess-1")
+
+	cs, err := s.Budget(run.RunID, 1_000_000, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs) != 2 {
+		t.Fatalf("want a tokens and an imputed_usd ceiling, got %+v", cs)
+	}
+	for _, c := range cs {
+		if c.Available {
+			t.Errorf("%s reports as measured on a run with no usage row at all; "+
+				"unmeasured must never render as a number", c.Kind)
+		}
+		if c.Exceeded {
+			t.Errorf("%s cannot be exceeded when it cannot be measured", c.Kind)
+		}
+		if c.Reason == "" {
+			t.Errorf("%s is unavailable with no reason, so no surface can tell the user "+
+				"what to do about it", c.Kind)
+		}
+	}
+
+	// One measured request flips it, and only then is the number real.
+	if _, err := s.RecordUsage([]Usage{{
+		RequestID: "r1", RunID: run.RunID, Model: "claude-opus-4-5",
+		TS: run.StartedAt + 1, InputTokens: 500,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	cs, err = s.Budget(run.RunID, 1_000_000, 10, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range cs {
+		if !c.Available {
+			t.Errorf("%s is still unmeasurable after a usage row landed: %s", c.Kind, c.Reason)
+		}
+	}
+}
+
+// TestTheFenceReportsWhatItKeptOut. Discarding the session's earlier history is correct — a
+// run must not inherit 30 hours it did not spend. Discarding it SILENTLY and then printing a
+// total is not: the caller has no way to distinguish "nothing was spent" from "everything was
+// thrown away", and those need opposite responses.
+func TestTheFenceReportsWhatItKeptOut(t *testing.T) {
+	s := open(t)
+	run := run(t, s, "US-1", "sess-1")
+
+	added, fenced, err := s.RecordUsageFenced([]Usage{
+		{RequestID: "old-1", RunID: run.RunID, Model: "m", TS: run.StartedAt - 600,
+			InputTokens: 1000, OutputTokens: 200, ImputedUSD: 0.30},
+		{RequestID: "old-2", RunID: run.RunID, Model: "m", TS: run.StartedAt - 300,
+			InputTokens: 500, ImputedUSD: 0.10},
+		{RequestID: "new-1", RunID: run.RunID, Model: "m", TS: run.StartedAt + 5,
+			InputTokens: 42, ImputedUSD: 0.01},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 1 {
+		t.Errorf("added = %d, want 1 — only the row inside the run's life counts", added)
+	}
+	if fenced.Requests != 2 {
+		t.Errorf("fenced.Requests = %d, want 2", fenced.Requests)
+	}
+	if fenced.Tokens != 1700 {
+		t.Errorf("fenced.Tokens = %d, want 1700 — the caller cannot report what it cannot see",
+			fenced.Tokens)
+	}
+	if fenced.Earliest != run.StartedAt-600 {
+		t.Errorf("fenced.Earliest = %d, want the oldest excluded row", fenced.Earliest)
+	}
+}

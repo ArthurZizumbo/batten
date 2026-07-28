@@ -724,10 +724,27 @@ func (u Usage) Tokens() int64 {
 // adopts the session must only own the usage that happened while it was open. Without the
 // fence, a run opened in hour 30 of a long session inherits 30 hours of history — found live
 // in E0 when a fresh demo run showed 176M tokens it never spent.
+// Fenced is what the time fence kept out: usage that is real, was parsed and priced, and
+// belongs to the session rather than to this run. It is returned rather than dropped because
+// silently discarding the whole transcript and then printing "+0 requests" reads as "this run
+// cost nothing", which is the one thing a budget tool must never say when it does not know.
+type Fenced struct {
+	Requests   int
+	Tokens     int64
+	ImputedUSD float64
+	Earliest   int64 // ts of the oldest row kept out; 0 when nothing was
+}
+
 func (s *Store) RecordUsage(us []Usage) (added int, err error) {
+	added, _, err = s.RecordUsageFenced(us)
+	return added, err
+}
+
+// RecordUsageFenced is RecordUsage plus an account of what the fence excluded.
+func (s *Store) RecordUsageFenced(us []Usage) (added int, out Fenced, err error) {
 	tx, err := s.db.Begin()
 	if err != nil {
-		return 0, err
+		return 0, out, err
 	}
 	defer tx.Rollback()
 
@@ -747,20 +764,28 @@ func (s *Store) RecordUsage(us []Usage) (added int, err error) {
 	   input_tokens, output_tokens, cache_write_5m, cache_write_1h, cache_read, web_searches, imputed_usd)
 	  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
 	if err != nil {
-		return 0, err
+		return 0, out, err
 	}
 	defer ins.Close()
 
 	touched := map[string]bool{}
 	for _, u := range us {
 		if u.TS < fenceFor(u.RunID) {
-			continue // predates the run: this usage belongs to the session, not to this run
+			// Predates the run: this usage belongs to the session, not to this run. Counted
+			// so the caller can say so out loud instead of reporting an unmeasured zero.
+			out.Requests++
+			out.Tokens += u.Tokens()
+			out.ImputedUSD += u.ImputedUSD
+			if out.Earliest == 0 || u.TS < out.Earliest {
+				out.Earliest = u.TS
+			}
+			continue
 		}
 		res, err := ins.Exec(u.RequestID, u.RunID, nullable(u.NodeID), nullable(u.AgentID),
 			u.Model, u.Speed, u.TS, u.InputTokens, u.OutputTokens,
 			u.CacheWrite5m, u.CacheWrite1h, u.CacheRead, u.WebSearches, u.ImputedUSD)
 		if err != nil {
-			return 0, err
+			return 0, out, err
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
 			added++
@@ -775,13 +800,13 @@ func (s *Store) RecordUsage(us []Usage) (added int, err error) {
 		                    FROM usage WHERE run_id=?),
 		    imputed_usd_spent = (SELECT COALESCE(SUM(imputed_usd),0) FROM usage WHERE run_id=?)
 		    WHERE run_id=?`, runID, runID, runID); err != nil {
-			return 0, err
+			return 0, out, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, err
+		return 0, out, err
 	}
-	return added, nil
+	return added, out, nil
 }
 
 // UsageByNode totals a run's usage per node, for the TUI and the canvas.
@@ -833,6 +858,29 @@ type Ceiling struct {
 	Cap       float64
 	Exceeded  bool
 	Available bool // false => we cannot measure this; it is NOT enforced, and we say so
+	// Reason says WHY it is unmeasurable, in the user's terms. Every unavailable ceiling used
+	// to print "install the statusline", which is the remedy for exactly one of the causes and
+	// misdirects for the others.
+	Reason string
+}
+
+// tokenReason and the constants below are the causes a ceiling can be unmeasurable. They are
+// spelled as remedies because that is what the reader needs.
+const (
+	reasonNoUsage    = "no usage has been measured for this run — run `batten ingest <unit> --transcript <path>`"
+	reasonNoStatus   = "install `batten statusline` — it is the only local surface that samples the quota"
+	reasonNoBaseline = "this run opened before the statusline was installed, so it has no baseline to subtract"
+	reasonRolledOver = "the 5-hour window rolled over mid-run, so the delta is not a share of one window"
+	reasonAmbiguous  = "more than one run is open in this session, so the quota delta cannot be attributed to one"
+)
+
+// HasUsage reports whether any usage row was ever recorded for this run. This is the
+// difference between "this run spent nothing" and "nobody has measured this run", and
+// batten is required to tell them apart rather than print a zero for both.
+func (s *Store) HasUsage(runID string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM usage WHERE run_id=?`, runID).Scan(&n)
+	return n > 0, err
 }
 
 // Budget reports every declared ceiling. A ceiling we cannot measure is reported as
@@ -842,20 +890,39 @@ func (s *Store) Budget(runID string, tokensCap int64, usdCap, quotaCap float64) 
 	if err != nil {
 		return nil, err
 	}
+	// A run with no usage row has not spent zero — it has not been measured. Reporting the
+	// former for the latter is the exact failure principle #1 exists to prevent, and it was
+	// the DEFAULT path: the flow opens the run, the work happens, and nothing ingests a
+	// transcript unless someone remembers to.
+	measured, err := s.HasUsage(runID)
+	if err != nil {
+		return nil, err
+	}
+
 	var cs []Ceiling
 	if tokensCap > 0 {
-		cs = append(cs, Ceiling{"tokens", float64(r.TokensSpent), float64(tokensCap),
-			r.TokensSpent >= tokensCap, true})
+		c := Ceiling{Kind: "tokens", Spent: float64(r.TokensSpent), Cap: float64(tokensCap),
+			Exceeded: measured && r.TokensSpent >= tokensCap, Available: measured}
+		if !measured {
+			c.Reason = reasonNoUsage
+		}
+		cs = append(cs, c)
 	}
 	if usdCap > 0 {
-		cs = append(cs, Ceiling{"imputed_usd", r.ImputedUSD, usdCap, r.ImputedUSD >= usdCap, true})
+		c := Ceiling{Kind: "imputed_usd", Spent: r.ImputedUSD, Cap: usdCap,
+			Exceeded: measured && r.ImputedUSD >= usdCap, Available: measured}
+		if !measured {
+			c.Reason = reasonNoUsage
+		}
+		cs = append(cs, c)
 	}
 	if quotaCap > 0 {
-		burned, ok, err := s.QuotaBurned(r)
+		burned, ok, why, err := s.quotaBurned(r)
 		if err != nil {
 			return nil, err
 		}
-		cs = append(cs, Ceiling{"quota_pct", burned, quotaCap, ok && burned >= quotaCap, ok})
+		cs = append(cs, Ceiling{Kind: "quota_pct", Spent: burned, Cap: quotaCap,
+			Exceeded: ok && burned >= quotaCap, Available: ok, Reason: why})
 	}
 	return cs, nil
 }
@@ -867,18 +934,36 @@ func (s *Store) Budget(runID string, tokensCap int64, usdCap, quotaCap float64) 
 // The window resets on a rolling basis; a negative delta means it rolled over mid-run,
 // which we report as unmeasurable rather than as a bogus number.
 func (s *Store) QuotaBurned(r *Run) (pct float64, ok bool, err error) {
-	if r.QuotaStart5h == nil || r.SessionID == "" {
-		return 0, false, nil
+	pct, ok, _, err = s.quotaBurned(r)
+	return pct, ok, err
+}
+
+// quotaBurned also returns WHY it could not measure. The causes are genuinely different and
+// so are their remedies: an uninstalled statusline, a run that predates its installation, a
+// window that rolled over, and an ambiguous session are four different problems. Printing
+// "install the statusline" for all four sends three of those users to fix something that is
+// already fine — and the field test caught exactly that, with doctor reporting the statusline
+// installed on the same screen where budget told the user to install it.
+func (s *Store) quotaBurned(r *Run) (pct float64, ok bool, reason string, err error) {
+	if r.SessionID == "" {
+		return 0, false, reasonAmbiguous, nil
 	}
 	snap, err := s.LatestQuota(r.SessionID)
 	if err != nil || snap.FiveHourPct == nil {
-		return 0, false, nil //nolint:nilerr // absence is not an error; it is "not installed"
+		//nolint:nilerr // absence is not an error; it is "not installed"
+		return 0, false, reasonNoStatus, nil
+	}
+	// The statusline IS sampling — this run simply opened before it started, so there is no
+	// baseline to subtract. Naming that is the difference between a fixable state and a
+	// confusing one: the next run will measure fine, and nothing needs installing.
+	if r.QuotaStart5h == nil {
+		return 0, false, reasonNoBaseline, nil
 	}
 	d := *snap.FiveHourPct - *r.QuotaStart5h
 	if d < 0 {
-		return 0, false, nil // the window rolled over mid-run
+		return 0, false, reasonRolledOver, nil
 	}
-	return d, true, nil
+	return d, true, "", nil
 }
 
 // OverBudget reports whether any measurable ceiling is blown, and which.

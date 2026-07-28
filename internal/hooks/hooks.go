@@ -392,7 +392,7 @@ func formatCeilings(cs []store.Ceiling) string {
 		}
 		switch {
 		case !c.Available:
-			fmt.Fprintf(&b, "  %s %-12s not measurable (install `batten statusline`)\n", mark, c.Kind)
+			fmt.Fprintf(&b, "  %s %-12s not measurable — %s\n", mark, c.Kind, c.Reason)
 		case c.Kind == "imputed_usd":
 			fmt.Fprintf(&b, "  %s %-12s $%.2f of $%.2f\n", mark, c.Kind, c.Spent, c.Cap)
 		case c.Kind == "quota_pct":

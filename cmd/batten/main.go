@@ -1054,13 +1054,32 @@ func cmdIngest(args []string) error {
 			}
 		}
 	}
-	added, err := st.RecordUsage(rows)
+	added, fenced, err := st.RecordUsageFenced(rows)
 	if err != nil {
 		return err
 	}
 	r, _ := st.Run(run.RunID)
-	fmt.Printf("%s: +%d requests, %s tokens total, $%.2f imputed\n",
-		unit, added, humanTokens(r.TokensSpent), r.ImputedUSD)
+	if measured, err := st.HasUsage(run.RunID); err == nil && !measured {
+		fmt.Printf("%s: +0 requests — usage remains NOT MEASURED for this run\n", unit)
+	} else {
+		fmt.Printf("%s: +%d requests, %s tokens total, $%.2f imputed\n",
+			unit, added, humanTokens(r.TokensSpent), r.ImputedUSD)
+	}
+
+	// The fence is right — a run must not inherit the whole session's history — but it used
+	// to be silent, and the default flow opens the run AFTER the work happened. So the usual
+	// outcome was "+0 requests, 0 tokens total", which reads as "this run was free" when what
+	// actually happened is that every row was parsed, priced, and then discarded.
+	if fenced.Requests > 0 {
+		fmt.Printf("  %d request(s) in this transcript predate the run and were NOT counted "+
+			"(%s tokens, $%.2f).\n", fenced.Requests, humanTokens(fenced.Tokens), fenced.ImputedUSD)
+		fmt.Printf("  They belong to the session, not to %s, which opened at %s.\n",
+			unit, time.Unix(r.StartedAt, 0).Format("15:04:05"))
+		if added == 0 {
+			fmt.Printf("  Nothing was counted for this run. Its budget is UNMEASURED, not zero — " +
+				"open the run before the work if you want it priced.\n")
+		}
+	}
 	if len(unknown) > 0 {
 		// Never silently price an unknown model as zero-value: name it, so the number is honest.
 		fmt.Printf("  unpriced models (counted as $0, tokens still exact): %s\n", strings.Join(unknown, ", "))
@@ -1095,7 +1114,16 @@ func cmdBudget(args []string) error {
 			continue
 		}
 		shown = true
-		fmt.Printf("%s  %s tokens, $%.2f imputed\n", r.UnitID, humanTokens(r.TokensSpent), r.ImputedUSD)
+		// "0 tokens, $0.00" for a run nobody measured is the fabricated number this tool
+		// exists to refuse. A run with no usage row has not spent nothing — it is unmeasured,
+		// and those need opposite responses from the reader.
+		if measured, err := st.HasUsage(r.RunID); err == nil && !measured {
+			fmt.Printf("%s  usage NOT MEASURED (not zero — nothing has been ingested for this run)\n",
+				r.UnitID)
+		} else {
+			fmt.Printf("%s  %s tokens, $%.2f imputed\n",
+				r.UnitID, humanTokens(r.TokensSpent), r.ImputedUSD)
+		}
 
 		if !b.Set() {
 			fmt.Println("  no ceilings declared in budget:")
@@ -1113,9 +1141,9 @@ func cmdBudget(args []string) error {
 			switch {
 			case !c.Available:
 				// Never invent a number. An unmeasurable ceiling is an unenforced ceiling,
-				// and the user deserves to know which.
-				fmt.Printf("  %s %-12s NOT MEASURABLE — install the statusline (`batten statusline --install`)\n",
-					mark, c.Kind)
+				// and the user deserves to know which — and why, since the causes have
+				// different fixes and only one of them is "install the statusline".
+				fmt.Printf("  %s %-12s NOT MEASURABLE — %s\n", mark, c.Kind, c.Reason)
 			case c.Kind == "tokens":
 				fmt.Printf("  %s %-12s %s / %s  %s\n", mark, c.Kind,
 					humanTokens(int64(c.Spent)), humanTokens(int64(c.Cap)), bar(c.Spent/c.Cap))
