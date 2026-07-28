@@ -98,6 +98,8 @@ concreta.
 | **Contadores de impacto en `report`** | **hacer — pero falta el dato** | `LogEvent` guarda el payload, no la decisión: hoy no se puede contar una denegación |
 | **Dólares "ahorrados" estimados** | **rechazado** | es un número inventado presentado como medido, en el comando donde batten dice `NO MEDIDO` |
 | **Telemetría por red** | **rechazado** | tráfico saliente en una herramienta de auditoría cuesta más de lo que devuelve |
+| **Bucle autónomo (`batten loop`)** | **ya existe como `/batten-night`** — falta volver mecánicas sus 4 reglas | `max_iterations` nunca se incrementa ni se verifica: el freno de una corrida sin supervisión es una frase en markdown |
+| **Inyección de contexto por fase** | **hacer** — converge con §4.4 | hoy el agente recibe el spec entero de una vez; `phases[].reads` tiene 1 consumidor |
 
 ---
 
@@ -297,6 +299,33 @@ mandar menos, no de codificar distinto.
 > Validación previa (~1 h): confirmar con `/context` que Claude Code no mete `structuredContent`.
 > Si resulta que sí, el arreglo sigue siendo correcto y el ahorro es mayor.
 
+### 4.5 — Inyección de contexto por fase
+
+Converge con §4.4: las dos son "mandar menos, más preciso".
+
+**Lo que ya existe:** `batten_spec` expone el spec por MCP · el skill `batten-engine` le dice al
+agente que lo lea · el hook `SessionStart` ya devuelve `additionalContext` con el estado del run ·
+`domains[].invariants` viaja verbatim al prompt de cada agente del fan-out.
+
+**Lo que falta:** que algo de eso **cambie según la fase activa**. Hoy el agente recibe el spec
+entero de una vez y se orienta solo. `phases[].reads` —el campo que declara *qué artefactos son las
+entradas de esta fase*— tiene **un solo consumidor**: el eco de MCP.
+
+**La propuesta:** que `batten_spec` acepte un parámetro de fase y devuelva solo lo que esa fase
+necesita — sus `reads`, su gate, los invariantes de sus dominios — en vez del documento completo.
+Y que `SessionStart` inyecte la fase activa, no solo el estado del run.
+
+**Dos límites que conviene fijar antes de construirlo:**
+
+- **batten no reescribe el system prompt.** No puede y no debería: eso es del harness. Lo que puede
+  es responder menos y mejor cuando le preguntan, que es donde el ahorro real está.
+- **No inventar metodología.** La propuesta sugiere inyectar "pautas de brainstorming" o "TDD
+  estricto". Eso es lo que hace superpowers, y hacerlo sería inventar un workflow — justo lo que el
+  skill `batten-engine` prohíbe explícitamente: *"nunca asumas un workflow que no esté declarado
+  ahí"*. Lo que batten inyecta debe salir del `batten.yaml` del usuario, no de la opinión de batten.
+
+**Costo:** ~1 día, y se hace junto con §4.4 porque tocan el mismo código.
+
 ---
 
 ## 5. Prioridad alta — vía A
@@ -432,6 +461,74 @@ rinda a la tercera iteración.
 
 **Costo:** ~1 día. **Prioridad: alta** — es barato, y es la primera cosa que corre alguien cuando
 algo no funciona.
+
+### 5.6 — ⭐ El bucle desatendido ya existe: hacer mecánicas sus reglas
+
+**`/batten-night` ya es el bucle de autocorrección autónomo**, y es más maduro que la propuesta
+que lo pediría: 112 líneas que corren build → verify → **fix** → re-verify, con los techos de
+presupuesto como disparador, un tope de iteraciones, y un reporte de la mañana. Tiene además
+cuatro reglas que la propuesta no contempla y que son las que hacen que una corrida sin supervisión
+sea aceptable:
+
+1. **Nunca borrar nada.** Ni un archivo, ni una rama, ni un commit, ni con `git reset --hard`, ni
+   "limpiando". Lo que quiso borrar va a una sección del reporte. *"La asimetría es todo el punto:
+   dejar un archivo obsoleto le cuesta diez segundos a alguien mañana. Borrar el equivocado cuesta
+   trabajo que nadie recupera, en una corrida que nadie miraba."*
+2. **Nunca hacer override del gate.** `batten override` exige una razón humana, y a las 3am no hay
+   humano. *Un veredicto bloqueado al final de una corrida desatendida es un resultado exitoso.*
+3. **No commitear.** Para antes de la fase de cierre, a propósito.
+4. **Honrar `budget.max_iterations`.** *"Un bucle que falló el mismo check tres veces no va a
+   pasarlo en la cuarta; va a gastarse la ventana."*
+
+#### Y acá está el problema, que es el mejor ejemplo posible de la tesis de batten aplicada a sí misma
+
+**Las cuatro son prosa.** Son 112 líneas de markdown pidiéndole al modelo que se comporte — que es
+exactamente la categoría de regla que batten existe para convertir en mecanismo. El README lo dice
+en su primera línea: *"una regla que un documento solo puede pedir, un hook puede imponer"*. El
+comando más peligroso del plugin es el único donde eso no se hizo.
+
+Y la cuarta no es teórica. **`max_iterations` nunca se impone, y el contador nunca se incrementa:**
+
+| dónde aparece | qué hace |
+|---|---|
+| `internal/spec/spec.go:138` | se declara |
+| `internal/mcp/mcp.go:559,763` | se devuelve por MCP |
+| `internal/tui/tui.go:418` | se muestra: `iters %d / %d` |
+| **ninguna parte** | **lo incrementa** |
+| **ninguna parte** | **lo verifica** |
+
+`runs.iterations` está en 0 para siempre. La TUI dice `iters 0 / 3` toda la noche. El único freno
+que una corrida sin supervisión tiene contra gastarse la ventana entera es una frase en un archivo
+markdown.
+
+#### La propuesta correcta no es agregar un orquestador
+
+No hace falta `batten loop --max-turns 30`: el bucle ya está escrito y batten no orquesta a
+propósito. Lo que hace falta es **un flag de modo desatendido en el run, que vuelva mecánicas las
+cuatro reglas**:
+
+```
+runs.mode = 'unattended'    ← lo pone /batten-night al arrancar
+```
+
+Con eso, cada regla deja de ser un pedido:
+
+| regla | hoy | mecanismo |
+|---|---|---|
+| honrar `max_iterations` | prosa, contador en 0 | `batten iterate <unit>` incrementa y devuelve si se alcanzó el techo; `phase` se niega a avanzar por encima de él |
+| nunca borrar | prosa | matcher `PreToolUse`/`Bash` que **deniega** `rm`, `git reset --hard`, `git checkout --`, `> archivo` truncante mientras `mode='unattended'` — es el patrón del write-set guard, aplicado a la destrucción |
+| nunca hacer override | prosa | `batten override` **rechaza** con `mode='unattended'`: la razón humana requiere un humano |
+| no commitear | prosa | el gate **deniega** la fase de cierre mientras el modo esté activo |
+
+Cuatro reglas, cuatro denegaciones, cero orquestación nueva. Y el modo se apaga solo cuando un
+humano lee el reporte y cierra.
+
+**Además hace que §6.7a valga el doble:** un run desatendido que dice *"12 iteraciones, techo 15,
+3 borrados denegados, 1 override rechazado"* es una estadística de impacto que nadie más del
+ecosistema puede producir.
+
+**Costo:** flag de modo + `iterate` ~1 día · guard de destrucción ~1 día · las otras dos ~medio día.
+**Prioridad: alta.** Es el comando más peligroso del plugin y el único gobernado solo por prosa.
 
 ---
 
@@ -767,7 +864,7 @@ script.
 | 2 | validar los 8 fixes contra la réplica de proyecto_ui | 4.2 | ½ día |
 | 3 | fail-open ruidoso | 4.3 | ½ día |
 | 4 | **`doctor` clínico** — es lo primero que corre alguien cuando algo falla | 5.5 | 1 día |
-| 5 | rediseñar el payload MCP | 4.4 | 1 día |
+| 5 | rediseñar el payload MCP **+ inyección por fase** | 4.4 · 4.5 | 2 días |
 
 ### Bloque 2 — adopción (paralelizable, no toca el motor)
 
@@ -787,19 +884,20 @@ script.
 |---|---|---|---|
 | 13 | `scan-diff` post-fan-out | 5.1 pto. 4 | 1 día |
 | 14 | cadena graphify→engram en `/batten-build` | 5.3 | 2 h |
-| 15 | **worktrees: `batten worktree` + guard consciente del árbol + fusión gateada** | 5.4 | 3 días |
-| 16 | parseo de Bash, advisory primero | 5.1 pto. 1–3 | 1½ días |
-| 17 | claim de directorio y colisión entre runs *(§5.4 lo resuelve estructuralmente; hacerlo solo si no se hacen worktrees)* | 5.2 | 1 día |
-| 18 | `retry_of` y `diff_from` (los necesita §6.1, y §5.4 le da sentido al segundo) | 8 | 1 día |
+| 15 | **modo desatendido mecánico** — las 4 reglas de `/batten-night` dejan de ser prosa | 5.6 | 2½ días |
+| 16 | **worktrees: `batten worktree` + guard consciente del árbol + fusión gateada** | 5.4 | 3 días |
+| 17 | parseo de Bash, advisory primero | 5.1 pto. 1–3 | 1½ días |
+| 18 | claim de directorio y colisión entre runs *(§5.4 lo resuelve estructuralmente; hacerlo solo si no se hacen worktrees)* | 5.2 | 1 día |
+| 19 | `retry_of` y `diff_from` (los necesita §6.1, y §5.4 le da sentido al segundo) | 8 | 1 día |
 
 ### Bloque 4 — profundidad
 
 | | qué | § |
 |---|---|---|
-| 19 | criterios como dato + vista de cumplimiento | 7 |
-| 20 | la familia de honestidad de superficie | 9 |
-| 21 | sacar del spec lo que no se va a implementar | 8 |
-| 22 | ciclo de vida y presentación | 9 |
+| 20 | criterios como dato + vista de cumplimiento | 7 |
+| 21 | la familia de honestidad de superficie | 9 |
+| 22 | sacar del spec lo que no se va a implementar | 8 |
+| 23 | ciclo de vida y presentación | 9 |
 
 **Camino más corto a "funcional y compartible":** bloque 1 completo, luego 6 → 7 → 8 → 9 → 10 → 12.
 Eso son ~9 días y produce: un plugin que no miente cuando falla, un `doctor` que diagnostica todo
