@@ -90,6 +90,9 @@ func main() {
 		printUsage()
 		os.Exit(2)
 	}
+	if errors.Is(err, errSilent) {
+		os.Exit(1) // the command already explained itself; do not say it twice
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "batten:", err)
 		os.Exit(1)
@@ -104,7 +107,9 @@ func printUsage() {
   batten hook <event>                hook entrypoint (stdin JSON -> stdout JSON)
   batten phase <unit> <phase>        advance a unit to a phase (records the anchor SHA)
   batten claim <agent-id> <file>...  declare a subagent's write-set
-  batten verdict [--file v.json]     record a verdict envelope
+  batten verdict [--file v.json]     record a verdict envelope (the reviewer's judgment)
+  batten check <unit> [--gate g]     RUN the gate's checks and record what they printed
+  batten close <unit> [--status s]   close a unit through the gate, releasing its write-sets
   batten runs                        list runs
   batten show <unit>                 run detail
   batten canvas <unit> [--out p]     emit the run DAG as JSON Canvas
@@ -114,6 +119,7 @@ func printUsage() {
   batten mcp                         MCP server (exposes the run graph to the agent)
   batten statusline [--install]      status line + the only subscription-quota sensor
   batten ingest <unit> --transcript  price a transcript's tokens into the run ledger
+  batten measure                     spend by model, and what the capabilities bought
 `)
 }
 
@@ -486,16 +492,35 @@ func cmdShow(args []string) error {
 		}
 		fmt.Println()
 	}
-	if v, err := st.LatestVerdict(run.RunID, ""); err == nil {
-		fmt.Printf("\nverdict %s=%s (%s): %s\n", v.Gate, v.Result, v.Source, v.Why)
+	// Both verdicts, labelled by producer. The gate needs one of each — batten's, proving the
+	// declared checks ran, and a reviewer's, judging the work against its acceptance criteria.
+	// Rendering only the newest row meant `batten check` hid the reviewer's evidence behind its
+	// own check output, so the screen showed one half of a two-half rule.
+	bv, bErr := st.LatestVerdictBySource(run.RunID, "", "batten")
+	av, aErr := st.LatestVerdictNotBySource(run.RunID, "", "batten")
+	if bErr != nil && aErr != nil {
+		fmt.Println("\nno verdict: the close gate will deny a commit")
+		return nil
+	}
+	fmt.Println()
+	for _, v := range []*store.Verdict{av, bv} {
+		if v == nil {
+			continue
+		}
+		fmt.Printf("verdict %s=%s (%s): %s\n", v.Gate, v.Result, v.Source, v.Why)
 		for _, e := range v.Evidence {
 			fmt.Println("  -", firstLineOf(e))
 		}
 		if len(v.Evidence) == 0 {
 			fmt.Println("  (no evidence — this cannot be an approval)")
 		}
-	} else {
-		fmt.Println("\nno verdict: the close gate will deny a commit")
+	}
+	if aErr != nil {
+		fmt.Println("no reviewer verdict yet — `batten check` proves the checks ran, not that " +
+			"the work meets its acceptance criteria")
+	}
+	if bErr != nil {
+		fmt.Printf("no batten-verified pass yet — run: batten check %s\n", run.UnitID)
 	}
 	return nil
 }
@@ -816,9 +841,18 @@ func cmdCheck(args []string) error {
 	fmt.Printf("\n%s: %s (batten-verified). %s\n", unit, strings.ToUpper(result), why)
 	if result != "ok" {
 		fmt.Println("the commit gate will deny until this passes.")
+		// An exit code is a contract with everything that is not a human reading a terminal.
+		// Returning 0 on BLOCKED — the same code a full pass returns — means `batten check &&
+		// ...` proceeds and `set -e` does not stop, so a CI job wires this up, watches it go
+		// green, and gates nothing.
+		return errSilent
 	}
 	return nil
 }
+
+// errSilent means "exit non-zero, the message is already printed". Returning a normal error
+// here would print the failing check output a second time, wrapped.
+var errSilent = errors.New("")
 
 // runCheck executes one gate command via the OS shell, capturing combined output. A per-command
 // timeout keeps a hung test from wedging the gate.
@@ -1234,12 +1268,15 @@ func cmdDoctor() error {
 	path, err := spec.Find(cwd)
 	if err != nil {
 		fmt.Printf("✗ no %s found. Run: batten init\n", spec.Filename)
-		return nil
+		return errSilent
 	}
 	sp, err := spec.Load(path)
 	if err != nil {
+		// doctor's whole job is to say whether this repo is correctly governed. Printing
+		// "✗ invalid spec" and then exiting 0 tells a script the opposite of what it just told
+		// the human, so a CI step running `batten doctor` goes green on a broken spec.
 		fmt.Printf("✗ %v\n", err)
-		return nil
+		return errSilent
 	}
 	fmt.Printf("✓ %s — project %q, unit %q, %d phases, %d domains\n",
 		path, sp.Project, sp.Unit.Name, len(sp.Phases), len(sp.Domains))
@@ -1284,7 +1321,7 @@ func cmdDoctor() error {
 	st, err := store.Open(dbPath())
 	if err != nil {
 		fmt.Printf("✗ store: %v\n", err)
-		return nil
+		return errSilent
 	}
 	defer st.Close()
 	fmt.Printf("✓ store: %s\n", dbPath())

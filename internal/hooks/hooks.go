@@ -340,16 +340,26 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	// trunk-based development, where the branch names nothing, the message is the only signal
 	// there is. batten.schema.json has promised this resolution the whole time.
 	if named := h.Spec.MatchUnit(cmd); named != "" && named != unit {
-		if r, err := h.Store.ActiveRun(h.Spec.Project, named); err == nil {
+		switch r, err := h.Store.ActiveRun(h.Spec.Project, named); {
+		case err == nil:
 			// The message names a real open unit. Gate THAT one — it is the more specific
 			// statement of intent, and it is the unit whose work is about to land.
 			unit = r.UnitID
-		} else if unit != "" {
+		case unit != "":
 			return h.gate("PreToolUse", fmt.Sprintf(
 				"batten: this commit message names %s, but this session is working %s and %s has "+
 					"no open run.\nCommitting it under %s's verdict would credit one unit's review "+
 					"to another's work.\nOpen it (`batten phase %s %s`) or fix the commit message.",
 				named, unit, named, unit, named, firstPhaseID(h.Spec))), nil
+		default:
+			// Nothing else resolved a unit either, so this message is the only evidence there
+			// is about what the commit is for — and the unit it names was never opened. Falling
+			// through here would reach the "nothing to attribute" path and say nothing at all,
+			// which is the silence this whole class of fix exists to remove.
+			return advise("PreToolUse", fmt.Sprintf(
+				"batten: this commit is NOT gated. Its message names %s, which has no run on "+
+					"record, so nothing was verified.\nOpen one with `batten phase %s %s`.",
+				named, named, firstPhaseID(h.Spec))), nil
 		}
 	}
 

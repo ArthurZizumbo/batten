@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -266,5 +267,34 @@ func TestCodeGraphFreshReportsAbsenceHonestly(t *testing.T) {
 	// nagging about staleness it cannot establish.
 	if !fresh {
 		t.Error("with no git history there is nothing to be stale against")
+	}
+}
+
+// TestUsageListsEveryCommandTheGateTellsYouToRun.
+//
+// `check`, `close` and `measure` were absent from --help while the commit gate's own denial
+// said "Run: batten check <unit>". A user reads that, types `batten --help`, does not find the
+// command, and reasonably concludes the denial is a bug in batten rather than an instruction.
+func TestUsageListsEveryCommandTheGateTellsYouToRun(t *testing.T) {
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+	printUsage()
+	w.Close()
+	os.Stderr = old
+
+	var sb strings.Builder
+	if _, err := io.Copy(&sb, r); err != nil {
+		t.Fatal(err)
+	}
+	help := sb.String()
+
+	for _, cmd := range []string{"check", "close", "measure", "init", "doctor", "verdict", "phase"} {
+		if !strings.Contains(help, "batten "+cmd) {
+			t.Errorf("--help does not list %q, which the CLI accepts and the gate's messages cite", cmd)
+		}
 	}
 }
