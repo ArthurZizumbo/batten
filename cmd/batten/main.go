@@ -81,6 +81,8 @@ func main() {
 		err = cmdMeasure()
 	case "report":
 		err = cmdReport(os.Args[2:])
+	case "demo":
+		err = cmdDemo(os.Args[2:])
 	case "close":
 		err = cmdClose(os.Args[2:])
 	case "check":
@@ -113,6 +115,7 @@ func printUsage() {
   batten verdict [--file v.json]     record a verdict envelope (the reviewer's judgment)
   batten check <unit> [--gate g]     RUN the gate's checks and record what they printed
   batten close <unit> [--status s]   close a unit through the gate, releasing its write-sets
+  batten demo [--keep]               the whole flow on a throwaway repo; touches nothing of yours
   batten report [--since d|--week]   what batten saw, and what it stopped (--share for markdown)
   batten runs                        list runs
   batten show <unit>                 run detail
