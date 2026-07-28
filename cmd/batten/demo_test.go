@@ -174,3 +174,43 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// --dir gives the .tape scripts a KNOWN sandbox path, which is the only reason they can cd into
+// it afterwards. That convenience must not become a way to delete somebody's work: a path the
+// demo did not create is refused outright, not emptied.
+func TestDemoDirRefusesADirectoryItDidNotCreate(t *testing.T) {
+	dir := t.TempDir()
+	precious := filepath.Join(dir, "thesis.txt")
+	if err := os.WriteFile(precious, []byte("years of work"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := cmdDemo([]string{"--dir", dir})
+	if err == nil {
+		t.Fatal("the demo agreed to build itself over a directory full of somebody else's files")
+	}
+	if !strings.Contains(err.Error(), "not empty") {
+		t.Errorf("the refusal must say why: %v", err)
+	}
+	if b, readErr := os.ReadFile(precious); readErr != nil || string(b) != "years of work" {
+		t.Errorf("the file was touched: %v %q", readErr, b)
+	}
+}
+
+// And it reuses its own sandbox, so re-running a tape twice does not fail on the second pass.
+func TestDemoDirReusesItsOwnSandbox(t *testing.T) {
+	t.Setenv("BATTEN_DB", filepath.Join(t.TempDir(), "unused.db"))
+	dir := filepath.Join(t.TempDir(), "demo-here")
+
+	for i := 0; i < 2; i++ {
+		out := captureStdout(t, func() {
+			if err := cmdDemo([]string{"--keep", "--dir", dir}); err != nil {
+				t.Fatalf("run %d: %v", i+1, err)
+			}
+		})
+		if !strings.Contains(out, "what batten stopped") {
+			t.Fatalf("run %d did not complete:\n%s", i+1, out)
+		}
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+}

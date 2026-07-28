@@ -21,6 +21,7 @@ package main
 // the exact failure batten exists to eliminate — a claim with nothing behind it.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,18 +36,26 @@ import (
 )
 
 func cmdDemo(args []string) error {
-	keep := false
-	for _, a := range args {
-		switch a {
+	keep, at := false, ""
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--keep":
 			// For someone who wants to poke at the sandbox afterwards. It prints the path.
 			keep = true
+		case "--dir":
+			// A KNOWN path, which is what makes the demo scriptable: the .tape files that
+			// record the README's GIF need to cd into the sandbox afterwards, and they cannot
+			// read a random temp name back out of the output.
+			if i+1 >= len(args) {
+				return errors.New("demo: --dir needs a path")
+			}
+			at, i = args[i+1], i+1
 		default:
-			return fmt.Errorf("demo: unknown flag %q", a)
+			return fmt.Errorf("demo: unknown flag %q", args[i])
 		}
 	}
 
-	dir, err := os.MkdirTemp("", "batten-demo-")
+	dir, err := demoDir(at)
 	if err != nil {
 		return err
 	}
@@ -67,6 +76,8 @@ func cmdDemo(args []string) error {
 
 	if keep {
 		fmt.Printf("\nsandbox kept at %s — delete it when you are done.\n", dir)
+		fmt.Printf("to browse it:  cd %s && BATTEN_DB=%s batten tui\n",
+			dir, filepath.Join(".batten", "demo.db"))
 		return nil
 	}
 	if err := os.RemoveAll(dir); err != nil {
@@ -77,6 +88,30 @@ func cmdDemo(args []string) error {
 	fmt.Printf("\nThe sandbox is gone. Your repo and your database were never touched.\n" +
 		"To govern a real repo: batten init\n")
 	return nil
+}
+
+// demoDir resolves where the sandbox goes. An explicit --dir is created fresh: reusing a
+// directory that already has a batten.yaml would run the demo over somebody's leftovers and
+// report on those instead. It refuses a path that exists and is not obviously ours, because the
+// one thing this command must never do is delete something a person cares about.
+func demoDir(at string) (string, error) {
+	if at == "" {
+		return os.MkdirTemp("", "batten-demo-")
+	}
+	abs, err := filepath.Abs(at)
+	if err != nil {
+		return "", err
+	}
+	if entries, err := os.ReadDir(abs); err == nil && len(entries) > 0 {
+		if _, err := os.Stat(filepath.Join(abs, ".batten", "demo.db")); err != nil {
+			return "", fmt.Errorf("demo: %s is not empty and was not created by a previous demo. "+
+				"Refusing to write there — pick an empty path", abs)
+		}
+		if err := os.RemoveAll(abs); err != nil {
+			return "", err
+		}
+	}
+	return abs, os.MkdirAll(abs, 0o755)
 }
 
 type demo struct {
