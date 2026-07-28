@@ -1,84 +1,78 @@
-# Plan de mejora
+# Plan de mejora — v2
 
-> Estado base: commit `24d7cd2`, versión `0.1.0`, suite verde, sin release. Escrito 2026-07-28
-> después del field test, de sus 8 correcciones, y de un estudio comparativo de mercado externo.
+> **v2 reemplaza a v1.** v1 era el plan técnico salido del field test. v2 lo fusiona con el
+> trabajo de adopción, después de auditar un estudio de mercado externo y contrastarlo con la
+> literatura de junio–julio de 2026 y con los tres proyectos de referencia del ecosistema.
+>
+> Estado base: commit `61264e3`, versión `0.1.0`, suite verde en 13 paquetes, sin release
+> taggeado, sin usuarios externos.
 >
 > **Regla de este documento:** cada afirmación dice de dónde sale — una medición propia, un
 > hallazgo verificado del field test, o una fuente citada. Donde el estudio externo se equivoca,
-> lo digo. Donde acierta, lo digo también.
+> lo digo.
 >
-> Contexto del plugin: [`plugin_al_momento.md`](plugin_al_momento.md) ·
-> Field test: [`../FIELD-TEST.md`](../FIELD-TEST.md) ·
-> Recorrido de adopción: [`../QUICKSTART.md`](../QUICKSTART.md) ·
-> **Adopción y esencia:** [`adopcion_y_esencia.md`](adopcion_y_esencia.md) — evalúa un estudio de
-> mercado pesimista, y contiene el orden de trabajo FUSIONADO (técnico + adopción) en su §7
+> Contexto: [`plugin_al_momento.md`](plugin_al_momento.md) · [`adopcion_y_esencia.md`](adopcion_y_esencia.md) ·
+> [`../FIELD-TEST.md`](../FIELD-TEST.md) · [`../QUICKSTART.md`](../QUICKSTART.md)
 
 ---
 
-## 0. Cómo leer este plan
+## 0. La tesis de este plan, en un párrafo
 
-Tres fuentes de evidencia alimentan lo que sigue, y conviene no confundirlas:
+batten funciona y su premisa está **medida por terceros**: el 78 % de las fallas de agentes son
+silenciosas, y las compuertas deterministas triplican la fiabilidad
+([arXiv:2607.07405](https://arxiv.org/html/2607.07405v1)). Lo que no funciona es el **camino hasta
+verlo**: hoy son ~8 pasos de configuración y la primera cosa que el plugin hace por vos es
+negarte un commit. Los tres proyectos grandes del ecosistema —superpowers 224.700 ★, graphify
+97.500 ★, caveman 54.000 ★— también restringen, también son rigurosos, y también son honestos
+sobre lo que no saben. La diferencia no es la esencia: es que **dan algo antes de pedir algo**.
 
-| fuente | qué aporta | confianza |
+Este plan tiene dos vías que corren en paralelo y no se estorban:
+
+| vía | qué arregla | toca el motor |
 |---|---|---|
-| **field test** (63 hallazgos verificados adversarialmente) | defectos reproducidos en el binario real | alta — cada uno con repro y control positivo |
-| **mediciones propias** (esta sesión) | tokens de payloads MCP reales, consumidores de campos del spec | alta — reproducibles |
-| **estudio comparativo externo** | posicionamiento de mercado, comparación con otros plugins | **media — dos afirmaciones suyas resultaron falsas al verificarlas** |
-| **literatura Jun–Jul 2026** (10 papers) | valida o refuta decisiones de diseño | alta para lo empírico, con las salvedades de cada paper |
+| **A — Correcciones** | los defectos confirmados del field test y las brechas de confianza | sí |
+| **B — Adopción** | tiempo hasta el primer valor, artefactos mostrables, distribución | **no** |
+
+**Ningún ítem de la vía B cambia un principio.** Se pueden hacer por otra persona, en paralelo.
 
 ---
 
 ## 1. Auditoría del estudio externo
 
-El estudio califica a batten **8.5/10 — "Innovación de Integración de Alta Viabilidad"**, con el
-juicio de que su valor no está en conceptos inéditos sino en la síntesis coherente. **Estoy de
-acuerdo con ese juicio.** Pero antes de planear sobre él, hay que separar lo verificado de lo que
-no lo está.
+Califica a batten **8.5/10 — "Innovación de Integración de Alta Viabilidad"**, y proyecta
+**100–300 estrellas**. El juicio cualitativo lo comparto. El cuantitativo no se sostiene.
 
-### 1.1 — Lo que el estudio acierta (confirmado contra el código)
+### 1.1 — Lo que acierta (confirmado contra el código)
 
-| afirmación del estudio | verificación |
+| afirmación | verificación |
 |---|---|
-| Evasión del write-set guard por `Bash` (`sed -i`, `cat >>`, heredocs) | **CONFIRMADO** — hallazgo #6 del field test, reproducido. `preToolUse` rutea `Bash` solo a `verdictGate`; el comando nunca se contrasta contra las rutas reclamadas |
-| Un claim de directorio no ofrece control recursivo | **CONFIRMADO** — hallazgo #7. Se acepta, se reporta como protector, y no cerca nada |
-| Fail-open silencioso ante panic / DB corrupta / JSON malformado | **CONFIRMADO** — [`main.go:168`](../../cmd/batten/main.go#L168) recupera el panic y pone `retErr = nil`; `loadForHook` y `Dispatch` también retornan `nil` ante error. Exit 0 sin salida, indistinguible de ALLOW |
-| Incoherencia entre spec declarado e implementación | **CONFIRMADO** — 5 campos con cero consumidores, medido grepeando. Ver §6 |
-| Obsidian es exportación pasiva unidireccional, solo en `Stop` | **CONFIRMADO** — `export.Run` dispara desde `Stop`, `canvas` y post-veredicto. No hay canal de lectura |
+| Evasión del write-set guard por `Bash` (`sed -i`, `cat >>`, heredocs) | **CONFIRMADO** — hallazgo #6, reproducido. `preToolUse` rutea `Bash` solo a `verdictGate` |
+| Un claim de directorio no ofrece control recursivo | **CONFIRMADO** — hallazgo #7 |
+| Fail-open silencioso ante panic / DB corrupta / JSON malformado | **CONFIRMADO** — [`main.go:168`](../../cmd/batten/main.go#L168) recupera el panic y pone `retErr = nil` |
+| Incoherencia entre spec declarado e implementación | **CONFIRMADO** — 5 campos con cero consumidores |
+| Obsidian es exportación pasiva, solo en `Stop` | **CONFIRMADO** |
+| Alta fricción de configuración inicial | **CONFIRMADO, y es el problema principal** — ver §4 |
 
-### 1.2 — Lo que el estudio se equivoca
+### 1.2 — Lo que se equivoca
 
-**(a) CRLF en `bootstrap.sh` — ya resuelto, hace tiempo.**
+**(a) CRLF en `bootstrap.sh`: ya resuelto.** [`.gitattributes`](../../.gitattributes) fija
+`*.sh text eol=lf` con un comentario que describe ese modo exacto de falla, y CI verifica el
+contrato del artefacto. El estudio analizó una instantánea previa a `8e038b5`.
 
-El estudio lo lista como vulnerabilidad abierta. Es falso: [`.gitattributes`](../../.gitattributes)
-fija `*.sh text eol=lf` explícitamente, con un comentario que explica exactamente el modo de
-falla que el estudio describe. Y CI verifica dos contratos relacionados: que la copia del
-bootstrap dentro del plugin esté sincronizada con su fuente, y que el nombre de artefacto que
-pide `bootstrap.sh` coincida con el que produce GoReleaser.
+**(b) El tamaño del mercado, errado por 20×.** Su fórmula usa `A_act ≈ 50.000` justificado con
+"56.498 plugins indexados". Eso es **oferta, no demanda**. Y su propio conjunto de comparación lo
+refuta: caveman tiene 54.000 ★, que bajo su `R_conv = 0,05` implica **~1,08 millones de usuarios**.
+Corrigiendo solo ese parámetro, con todo lo demás igual de pesimista: ~500, no 25.
 
-Probablemente el estudio analizó una instantánea previa al commit `8e038b5`.
+**(c) "A los desarrolladores no les gusta que los restrinjan": refutado por el #1 del
+ecosistema.** [superpowers](https://github.com/obra/superpowers) tiene 224.700 ★ y **es** un
+imponedor de metodología: su skill de TDD impone RED-GREEN-REFACTOR, la de brainstorming exige
+refinar antes de escribir código. Y [graphify](https://github.com/Graphify-Labs/graphify) (97.500 ★)
+vende como punto central *decir lo que no sabe* — `EXTRACTED` vs `INFERRED`, "no es un índice
+vectorial". Eso es el principio #1 de batten, y le dio adopción en vez de quitársela.
 
-**(b) La escala del ecosistema — no verificable como se afirma.**
-
-El estudio dice "más de 56.000 plugins y 556.000 componentes individuales, incluyendo 11.500
-ganchos y más de 8.400 servidores MCP", y usa esa cifra para sostener que las funciones de batten
-"coinciden con herramientas consolidadas".
-
-Lo que sí es verificable: el directorio oficial de Anthropic tiene **~55 plugins vetados**, el
-marketplace comunitario **~70 que pasaron filtro automático de seguridad**, y para mayo de 2026 el
-marketplace oficial lista **cientos** de plugins con **2.000+ skills** en marketplaces
-comunitarios ([Claude Camp](https://claudecamp.ai/blog/claude-code-plugins-official-directory)).
-
-La cifra de 56.000 parece ser de un agregador que cuenta repositorios de GitHub, no de un
-directorio curado. **La diferencia importa para el argumento**: un ecosistema de decenas de
-plugins vetados es uno donde batten compite con pocos pares serios; uno de 56.000 es donde se
-pierde. No hay que planear como si fuera lo segundo sin evidencia.
-
-**(c) La fórmula de eficiencia de concurrencia.**
-
-El estudio propone `E = (T_util − T_bloqueo) / (T_util + T_reparación)`. Es una intuición
-razonable pero no es de ninguna fuente citada y no está dimensionalmente motivada: mezcla un
-numerador que puede ser negativo con un denominador que siempre crece. Trátese como heurística
-ilustrativa, no como métrica. **La literatura real sobre esto está en §3**, y es más útil.
+**(d) Fail-closed como remedio.** Ver §3.2 — la recomendación rompería el principio #2 de forma
+concreta.
 
 ---
 
@@ -86,242 +80,167 @@ ilustrativa, no como métrica. **La literatura real sobre esto está en §3**, y
 
 | tema | decisión | evidencia |
 |---|---|---|
-| **TOON** en vez de JSON | **descartado** | medición propia: +5.7 % tokens. Y la literatura añade un riesgo peor: pérdida de exactitud |
-| **Duplicación de payload MCP** | **rediseñar — prioridad máxima** | el patrón correcto está documentado y batten lo usa al revés |
-| **Fail-open en hooks** | **arreglar, pero NO como propone el estudio** | fail-closed brickearía sesiones; la respuesta correcta es fail-open **ruidoso** |
-| **Bypass por Bash** | **arreglar — prioridad alta** | hallazgo #6 + el estudio + la literatura de control planes |
-| **TUI: seguimiento de cumplimiento** | **sí, hacerlo** | el dato de criterios no existe |
-| **Validar contra proyecto_ui** | **sí, va primero** | los 8 fixes nunca se revalidaron contra la forma difícil |
-| **Cadena graphify → engram** | **sí — no estaba considerada** | el subagente del fan-out no consulta nada |
-| **Migrar a concurrencia optimista (OCC)** | **no todavía — pero adoptar su principio** | CoAgent valida la dirección; el costo de implementarla no está justificado a 0.1.0 |
-| **Obsidian bidireccional en vivo** | **no en este ciclo** | alto costo, valor no demostrado; ver §7.3 |
+| **TOON** en vez de JSON | **descartado** | medición propia +5,7 % tokens; la literatura añade hasta −9 pp de exactitud |
+| **Payload MCP duplicado** | **rediseñar — prioridad máxima** | batten usa el patrón al revés; 70–90 % de ahorro |
+| **Fail-open en hooks** | **arreglar como fail-open RUIDOSO**, no fail-closed | `SQLITE_BUSY` brickearía la sesión |
+| **Bypass por Bash** | **arreglar** | hallazgo #6 + los control planes de la literatura filtran cada llamada Bash |
+| **PR que se escribe solo, con DAG Mermaid** | **hacer — es la mejor idea del estudio** | renderiza nativo en GitHub; 0 costo de esencia |
+| **`batten report` antes que la negación** | **hacer** | es el patrón de graphify: nudge por default, strict opt-in |
+| **Canvas HTML autocontenido** | **hacer** | el `graph.html` de graphify es lo que la gente comparte |
+| **Cero configuración / `batten demo`** | **hacer** | ~8 pasos hasta el primer valor es el techo real |
+| **Validar contra proyecto_ui** | **hacer, va primero** | los 8 fixes nunca se revalidaron contra la forma difícil |
+| **Cadena graphify → engram** | **hacer** | el subagente del fan-out no consulta nada |
+| **Migrar a OCC** | **no todavía — adoptar su principio** | falta medir el bloqueo real |
+| **Autorreparación de conflictos por LLM** | **rechazado** | reintroduce el fallo del 78 % en la otra mitad del producto |
+| **Obsidian bidireccional en vivo** | **no en este ciclo** | alto costo, valor no demostrado |
 
 ---
 
-## 3. Lo que dice la literatura de junio–julio de 2026
+## 3. Lo que la literatura obliga a cambiar
 
-Diez trabajos, elegidos porque tocan directamente una decisión de batten. Lo relevante no es que
-existan sino qué obligan a cambiar.
+Diez trabajos de la ventana junio–julio de 2026. Lo relevante no es que existan, sino qué cambian.
 
-### 3.1 — La tesis de batten queda validada empíricamente
+### 3.1 — La tesis está validada, y con ella el titular
 
-**[Reason Less, Verify More: Deterministic Gates Recover a Silent Policy-Violation Failure Mode
-in Tool-Using LLM Agents](https://arxiv.org/html/2607.07405v1)** — arXiv:2607.07405, 8 de julio
-de 2026 (Reddy, Challaram, Basu; KDD Workshop on Evaluation and Trustworthiness of Agentic AI).
+**[Reason Less, Verify More](https://arxiv.org/html/2607.07405v1)** — arXiv:2607.07405, 8 jul 2026
+(Reddy, Challaram, Basu; KDD Workshop on Evaluation and Trustworthiness of Agentic AI).
 
-Es el paper más directamente relevante que existe para este proyecto. Sus números:
+- En τ²-bench, **el 78 % de las fallas son silenciosas** — estado incorrecto, sin error de herramienta
+- Compuertas deterministas: éxito **29,6 % → 42,0 %** (+12,4 pp), replicado con **P = 0,0008**
+- Donde la compuerta disparó (26/50): **+19,2 pp**
+- Fiabilidad pass₅: **8,0 % → 26,0 %** — más del triple
+- El agente *"puede reportar con confianza que la tarea está completa"* con el estado corrupto
 
-- En las tareas de aerolínea de τ²-bench, **el 78 % de las fallas observadas son fallas
-  silenciosas de estado incorrecto, sin ningún error de herramienta.**
-- Compuertas deterministas de pre-ejecución llevaron el éxito de **29,6 % a 42,0 % (+12,4 pp)**,
-  replicado en un conjunto disjunto de 15 semillas a **+12,3 pp (P = 0,0008)**.
-- En las tareas donde la compuerta efectivamente disparó (26 de 50), la mejora fue **+19,2 pp**.
-- Bajo la métrica de fiabilidad pass₅: **26,0 % con compuerta contra 8,0 % sin ella** — más del
-  triple.
-- Y la frase que describe exactamente el fallo que batten existe para matar: el agente *"puede
-  reportar con confianza que la tarea está completa"* mientras el estado del sistema está
-  corrupto, porque la herramienta permisiva no da ninguna señal correctiva.
+**Consecuencia práctica:** batten tiene un número de terceros para el titular. No autorreportado.
+Ver §5.4.
 
-**Qué significa para batten:** la premisa fundacional —que un agente que se autoevalúa aprueba
-trabajo roto y que una compuerta determinista lo recupera— no es una intuición de diseño, está
-medida. También refuerza el **doble veredicto**: la mitad `source: batten` es exactamente la
-"señal correctiva" que el paper dice que falta.
+### 3.2 — El fail-open es la brecha de confianza, pero fail-closed no es el remedio
 
-### 3.2 — El fail-open es la vulnerabilidad que la literatura señala más fuerte
+**[A Deterministic Control Plane for LLM Coding Agents](https://arxiv.org/html/2606.26924v1)**
+(arXiv:2606.26924) filtra **cada llamada Bash**, no solo las herramientas de escritura declaradas,
+y añade un `scan-diff` post-delegación sobre **solo las líneas añadidas** del diff. Enfatiza
+fail-closed.
 
-**[A Deterministic Control Plane for LLM Coding Agents](https://arxiv.org/html/2606.26924v1)** —
-arXiv:2606.26924, junio de 2026.
+**[Reframing LLM Agent Security](https://arxiv.org/pdf/2605.24309)** (arXiv:2605.24309) ordena los
+mecanismos: los ganchos de framework están *un escalón arriba en facilidad de despliegue y uno
+abajo en determinismo* frente a la aplicación a nivel de SO.
 
-Despliega ganchos `PreToolUse` de Claude Code que filtran *tanto* pre-escritura (contenido de
-archivo) *como* pre-ejecución (**cada llamada Bash**), y enfatiza **diseño fail-closed** en todo.
-Añade una segunda capa: un `scan-diff` post-delegación que revisa **solo las líneas añadidas** del
-diff de git, y una máquina de estados que se niega a completar la fase hasta que el escaneo esté
-limpio.
+**Dos consecuencias:**
 
-**[ActPlane: Programmable OS-Level Policy Enforcement for Agent
-Harnesses](https://arxiv.org/html/2606.25189v2)** — arXiv:2606.25189, junio de 2026, y
-**[Reframing LLM Agent Security as an Agent–Human Interaction
-Problem](https://arxiv.org/pdf/2605.24309)** — arXiv:2605.24309.
+1. **El bypass por Bash no es un detalle.** Los dos control planes de la literatura filtran cada
+   llamada Bash. batten es el incompleto acá.
+2. **Fail-closed no se puede adoptar tal cual.** SQLite bajo contención de dos sesiones devuelve
+   `SQLITE_BUSY`; con fail-closed eso deniega **cada llamada a herramienta** hasta que se libere.
+   Un gate que inutiliza la sesión el día que la base está ocupada se desinstala esa tarde — y
+   alimenta exactamente los issues negativos que el estudio teme.
 
-El segundo ordena los mecanismos por fiabilidad de despacho: los ganchos de framework (incluidos
-los de Claude Code) están **un escalón arriba en facilidad de despliegue y un escalón abajo en
-determinismo** frente a la aplicación a nivel de SO (Seatbelt en macOS, Bubblewrap en Linux).
+   **La tercera opción es la correcta:** *fail-open ruidoso*. El commit pasa, y batten dice que
+   **no evaluó nada**. Es el principio #3 aplicado a los fallos internos, no solo a la atribución.
 
-**Qué significa para batten:** dos cosas, y la segunda es la que el estudio externo no ve.
+### 3.3 — Concurrencia: adoptar el principio, no la migración
 
-1. El bypass por Bash no es un detalle: los dos control planes de la literatura filtran **cada
-   llamada Bash**, no solo las herramientas de escritura declaradas. batten es el que está
-   incompleto aquí.
-2. **Pero "fail-closed" no se puede adoptar tal cual.** El estudio externo recomienda que
-   *cualquier* retorno nulo por fallo de DB, ausencia de configuración o panic fuerce un DENY.
-   Eso rompe el principio #2 de batten —*degradar, nunca romper*— de una forma concreta: un
-   `busy_timeout` de SQLite bajo contención de dos sesiones denegaría cada llamada a herramienta y
-   dejaría la sesión inutilizable. Un gate que brickea el día que la DB está ocupada se
-   desinstala esa misma tarde.
+**[CoAgent](https://arxiv.org/abs/2606.15376)** — arXiv:2606.15376, 13 jun 2026. Su diagnóstico
+aplica: las transacciones de agentes *"abarcan minutos de inferencia"*, los bloqueos bloquean esos
+minutos, y el OCC clásico descarta el trabajo en cada conflicto. Su protocolo MTPO fija un orden
+al lanzar, aplica escrituras especulativamente, y notifica al lector afectado para que **re-juzgue
+y parche su plan**.
 
-   **La respuesta correcta es una tercera:** *fail-open ruidoso*. El commit pasa, y batten emite un
-   `systemMessage` explícito diciendo que **la compuerta no se ejecutó**. El silencio nunca debe
-   ser indistinguible de la aprobación — que es literalmente el principio #3 del proyecto, hoy
-   aplicado a la atribución pero no a los fallos internos. Ver §4.2.
+La frase que importa:
 
-### 3.3 — La concurrencia: CoAgent valida la dirección, no la migración inmediata
+> el control se vuelve **advisory** — el runtime informa y el agente repara
 
-**[CoAgent: Concurrency Control for Multi-Agent
-Systems](https://arxiv.org/abs/2606.15376)** — arXiv:2606.15376, 13 de junio de 2026 (Shanghai
-Jiao Tong University).
+batten ya tiene ese vocabulario: distingue `deny()` de `advise()`. Extender `advise()` a
+colisiones de baja severidad es barato y está alineado.
 
-Su diagnóstico aplica a batten con precisión incómoda: las transacciones de agentes *"abarcan
-minutos de inferencia, con conjuntos de lectura amplios y opacos"*; los bloqueos bloquean
-intervalos largos de inferencia, y el OCC clásico de abortar-y-reintentar **descarta minutos de
-trabajo en cada conflicto**.
+**Lo que NO hay que hacer** —y el estudio lo propone— es que el modelo decida si su propio
+conflicto de escritura "importa". Eso reintroduce el fallo del 78 % de §3.1 en la otra mitad del
+producto.
 
-Su protocolo **MTPO** (Monotonic Trajectory Pre-Order) fija un orden de serialización al lanzar,
-sirve a cada lectura el valor filtrado por ese orden, aplica escrituras especulativamente in
-situ, y envía una **notificación unidireccional** pidiendo al lector afectado que re-juzgue y
-parche su plan; el framework deshace y reordena mecánicamente mediante inversas estilo saga.
+**Y falta el dato previo.** batten no tiene **ninguna medición** de cuánto se bloquean los
+subagentes. **[S-Bus](https://arxiv.org/pdf/2605.17076)** (arXiv:2605.17076) aporta el número que
+decide si el problema existe: los agentes **sobre-declaran su uso de recursos entre 32 % y 49 %**.
+batten confía enteramente en que el subagente declare honestamente vía `batten claim`. Medir
+primero (§6.1 punto 4 produce ese dato gratis), rediseñar después.
 
-La frase clave, y la razón de que esto importe más de lo que parece:
+### 3.4 — La memoria procedimental como categoría está respaldada
 
-> el control se vuelve **advisory**, donde el runtime informa y el agente repara.
+**[Managing Procedural Memory in LLM Agents](https://arxiv.org/abs/2606.23127)** (arXiv:2606.23127,
+22 jun 2026) introduce el benchmark **AFTER**: 382 tareas empresariales, 6 roles, 22 skills. Una
+ronda de refinamiento mejora **3,7–6,7 puntos**; las skills evolucionadas desde trazas multi-modelo
+alcanzan **73,1 % cross-model**.
 
-**Qué significa para batten:** eso es exactamente la filosofía del `advise()` que batten ya tiene
-para la atribución — informar y dejar que el agente actúe — aplicada a la concurrencia. batten ya
-tiene el vocabulario conceptual correcto; lo que no tiene es aplicarlo al write-set.
+**Consecuencia:** batten hoy **impone** proceso pero no **aprende** de las corridas cuál funciona.
+Eso es un horizonte, no este ciclo — pero el prerrequisito de datos es la fase B de §7.
 
-**Pero la migración a OCC no está justificada hoy**, y conviene decir por qué en vez de asumirlo:
+También: **[Neural Procedural Memory](https://arxiv.org/abs/2606.29824)** y
+**[Autoformalization of Agent Instructions into Policy-as-Code](https://arxiv.org/pdf/2606.26649)**,
+que es literalmente la generalización de `batten init --from` cuando llegue a funcionar.
 
-- MTPO requiere inversas saga por operación, versionado de estado y un orden preacordado. Es un
-  proyecto grande.
-- batten no tiene aún **ninguna medición** de `T_bloqueo` real. No sabemos si los subagentes se
-  bloquean entre sí lo suficiente como para que importe: un fan-out con write-sets bien
-  planeados es *disjunto por construcción*, y el bloqueo solo aparece cuando el plan estuvo mal.
-- El paso barato y previo es **medirlo**: registrar cada denegación del write-set guard con su
-  duración, y ver si el bloqueo es un problema real antes de rediseñar por él.
+### 3.5 — TOON: descarte confirmado, por una razón peor que la mía
 
-**[S-Bus: Automatic Read-Set Reconstruction for Multi-Agent LLM State
-Coordination](https://arxiv.org/pdf/2605.17076)** — arXiv:2605.17076, mayo de 2026, aporta el
-dato más accionable de todos para batten:
-
-> **Los agentes sobre-declararon su uso de recursos entre 32 % y 49 %**, según el método de
-> evaluación.
-
-Y por eso S-Bus reconstruye el read-set observando el tráfico real en vez de confiar en la
-declaración del agente. **batten depende enteramente de que el subagente declare su write-set
-honestamente vía `batten claim`.** Si los agentes sobre-declaran entre un tercio y la mitad, el
-bloqueo pesimista de batten está cercando muchos más archivos de los que realmente toca — lo que
-convierte el punto de CoAgent sobre `T_bloqueo` en algo mucho más probable de lo que parecía.
-
-**Acción concreta y barata que sale de aquí:** comparar el write-set *declarado* con el
-*efectivamente escrito* (batten ya ve ambos: la tabla `writesets` y los eventos `PostToolUse`) y
-reportar la sobre-declaración. Es medición, no rediseño, y decide si §7.1 vale la pena.
-
-### 3.4 — La memoria procedimental como categoría queda respaldada
-
-**[Managing Procedural Memory in LLM Agents: Control, Adaptation, and
-Evaluation](https://arxiv.org/abs/2606.23127)** — arXiv:2606.23127, 22 de junio de 2026.
-
-Introduce el benchmark **AFTER**: 382 tareas empresariales realistas, seis roles profesionales,
-22 skills procedimentales. Resultados: una sola ronda de refinamiento mejora el desempeño
-agregado **3,7–6,7 puntos**, y las skills evolucionadas desde trazas de ejecución multi-modelo
-alcanzan **73,1 % de exactitud cross-model**.
-
-**[Neural Procedural Memory: Empowering LLM Agents with Implicit Activation
-Steering](https://arxiv.org/abs/2606.29824)** — arXiv:2606.29824, junio de 2026. Representa la
-memoria procedimental como vectores de dirección en el espacio de activaciones, sin entrenamiento.
-
-**Qué significa para batten:** la tripartición que batten usa —estructural (graphify) / episódica
-(engram) / procedimental (batten)— es la que la literatura de 2026 también usa. La memoria
-procedimental como *dato de primera clase* es una línea de investigación activa, no una
-invención local. Y el resultado de AFTER —que refinar la memoria procedimental mejora el
-desempeño de forma medible— sugiere que el paso siguiente natural de batten no es solo *imponer*
-el proceso sino **aprender de las corridas cuál funciona**, que es algo que el schema hoy no
-contempla en absoluto.
-
-**[Autoformalization of Agent Instructions into
-Policy-as-Code](https://arxiv.org/pdf/2606.26649)** — arXiv:2606.26649, junio de 2026. Gobierna
-al agente vía un motor de políticas determinista externo que evalúa acciones contra reglas
-formales. Es, literalmente, la generalización de lo que hace `batten init --from` **cuando llegue
-a funcionar** (hoy solo imprime su argumento — hallazgo #0 del field test).
-
-### 3.5 — TOON: la literatura confirma el descarte, y por una razón peor
-
-**[Notation Matters: A Benchmark Study of Token-Optimized Formats in Agentic AI
-Systems](https://arxiv.org/html/2605.29676v1)** — arXiv:2605.29676, 28 de mayo de 2026. Compara
-JSON, TOON y TRON en cuatro benchmarks, incluyendo interacciones MCP.
-
-Sus hallazgos coinciden con mi medición y añaden algo que yo no medí:
+**[Notation Matters](https://arxiv.org/html/2605.29676v1)** — arXiv:2605.29676, 28 may 2026.
 
 | hallazgo | número |
 |---|---|
-| TOON reduce tokens | hasta **−18 %** |
+| TOON reduce tokens | hasta −18 % |
 | TOON **pierde exactitud** | hasta **−9 pp** |
-| TRON gana en datos estructuralmente repetitivos | hasta −27 % |
-| TRON **pierde** en esquemas dispersos | hasta **+21 % tokens** |
-| la sensibilidad al formato **depende del modelo** | Mistral-Small-24B: **+13 pp** en un benchmark, **−36 pp** en otro |
-| penalización multi-turno | fallos de parseo dispararon iteraciones extra: Qwen3-32B terminó en **+8–11 % tokens totales** pese a comprimir por llamada |
+| sensibilidad **dependiente del modelo** | Mistral-Small-24B: **+13 pp** en un benchmark, **−36 pp** en otro |
+| penalización multi-turno | fallos de parseo → Qwen3-32B terminó en **+8–11 % tokens totales** |
 
-**La conclusión del paper coincide exactamente con mi medición**: el formato tabular solo paga
-cuando el lote tiene patrones estructurales repetidos, y **cuesta más** cuando cada payload
-referencia pocos esquemas únicos — que es la forma de `batten_spec` y `batten_run_graph`.
+Coincide con mi medición: el formato tabular solo paga con patrones estructurales repetidos, y
+**cuesta más** cuando cada payload referencia pocos esquemas únicos — la forma de `batten_spec` y
+`batten_run_graph`.
 
-**Descarte confirmado, y reforzado.** Mi razón era el costo (+5,7 %); la literatura añade una
-peor: **riesgo de exactitud dependiente del modelo**, de hasta −9 pp para TOON y con varianza
-brutal entre benchmarks. Un plugin cuyo propósito es *no mentir sobre lo que sabe* no puede
-adoptar un formato de serialización que degrada la comprensión del modelo de forma impredecible.
+**Un plugin cuyo propósito es no mentir sobre lo que sabe no puede adoptar un formato que degrada
+la comprensión del modelo de forma impredecible.**
 
 ---
 
-## 4. Prioridad máxima — antes de construir nada encima
+# VÍA A — Correcciones
 
-### 4.1 — El payload MCP: batten usa el patrón exactamente al revés
+## 4. Prioridad máxima
 
-**Mi medición.** Capturé los payloads reales del servidor MCP contra la base del demo:
+### 4.1 — Deuda propia: el tercer sitio del un-solo-veredicto
 
-| herramienta | `content[].text` | `structuredContent` | idénticos |
-|---|---:|---:|:--:|
-| `batten_runs` | 932 chars | 932 chars | sí |
-| `batten_run_graph` | 1176 | 1176 | sí |
-| `batten_verdict_status` | 885 | 885 | sí |
-| `batten_spec` | 1466 | 1466 | sí |
+`internal/export/export.go:58` usa `LatestVerdict`. Ya arreglé `batten show` (`92ae1cb`) y la TUI
+(`24d7cd2`); el que escribe la nota de Obsidian y el canvas quedó leyendo solo el último — así que
+la nota tapa la evidencia del revisor con la salida de checks.
 
-**Lo que la investigación añade, y que cambia el diagnóstico.** No es simplemente "se cobra dos
-veces". Los dos campos tienen **propósitos distintos**: `structuredContent` está pensado para el
-cliente —renderiza un widget interactivo— y **nunca entra al contexto del modelo, así que cuesta
-cero tokens**. El patrón recomendado es dividir la respuesta: `content` con un **resumen textual
-compacto** (solo para el modelo) y `structuredContent` con los datos ricos (solo para el cliente)
-([futuresearch.ai](https://futuresearch.ai/blog/mcp-results-widget/); ver también el
-[release candidate 2026-07-28 de la especificación
-MCP](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/), que amplía
-`structuredContent` a cualquier valor JSON).
+**Arreglo:** `LatestVerdictBySource(...,"batten")` + `LatestVerdictNotBySource(...,"batten")`, y
+que `canvas.Render` reciba ambos. **~30 min con test.** Hacerlo primero por higiene.
 
-**batten hace lo contrario:** mete el JSON completo en `content` —donde el modelo lo paga, y en
-la forma más cara posible— y el mismo JSON completo en `structuredContent`, donde no hay widget
-que lo consuma.
+### 4.2 — Validar los 8 fixes contra la réplica de proyecto_ui
 
-**Arreglo propuesto:** que `content[].text` sea prosa compacta y `structuredContent` conserve el
-JSON íntegro. Concretamente, `batten_verdict_status` pasaría de ~885 caracteres de JSON a algo así:
+**No se hizo.** Los 63 hallazgos se verificaron y los 8 fixes se validaron sobre sandboxes
+sintéticos y sobre `taskly`. La réplica de proyecto_ui se usó en la corrida original y ese sandbox
+ya no existe.
 
-```
-US-034 · gate qa · BLOQUEADO
-Falta el pase batten-verificado: los checks no se corrieron.
-Corré: batten check US-034
-```
+| | `taskly` | réplica de proyecto_ui |
+|---|---|---|
+| repo git | sí | **no lo es** |
+| código | Go con tests | **ninguno**: 4 dominios con solo su `AGENTS.md` |
+| backlog | 5 items | 40+ `US-0NN` |
+| build files | `Makefile` | ninguno → **`gates.checks` vacío** |
 
-Eso es la información que el agente necesita para actuar, en ~25 tokens en vez de ~260. **Y de
-paso resuelve la pregunta de TOON sin adoptar TOON**: el ahorro viene de mandar menos, no de
-codificar distinto.
+La última fila es la que muerde: **un repo sin build files cae en la rama del gate sin checks**,
+exactamente donde vivía la regresión de `on_exceed: block`.
 
-**Costo:** ~1 día para las 6 herramientas. **Ahorro estimado: 70–90 % del contexto MCP**, contra
-el −5,7 % que TOON *habría empeorado*. **Prioridad: la más alta del documento.**
+**Matriz mínima** (sandbox, `BATTEN_DB` exportado siempre, nunca el original):
 
-> **Validación pendiente antes de escribir código:** confirmar empíricamente que Claude Code no
-> mete `structuredContent` al contexto. Un turno con una llamada MCP y `/context` antes y
-> después lo resuelve en una hora. Si resulta que sí lo mete, el arreglo sigue siendo correcto
-> pero el ahorro es aún mayor.
+1. `init` sobre 4 dominios sin código y 40+ items → ¿unit `US-\d{3}`, dominios completos, `gates.checks` vacío reportado como vacío?
+2. Gate **sin checks** + presupuesto excedido → debe DENEGAR
+3. Dos units en la misma fase → los dos canvas intactos
+4. `git -c user.name=... commit` → debe entrar al gate
+5. Primer commit tras adoptar → debe **avisar**, no callar
+6. Commit cuyo mensaje nombra otro unit → debe denegar
+7. `ingest` con transcript previo al run → debe reportar lo descartado
+8. **Repo sin `git init`** → ¿degrada con aviso o revienta? *Ningún test cubre esto, y es el estado literal de proyecto_ui*
 
-### 4.2 — Fail-open ruidoso (NO fail-closed)
+**~medio día. Es lo único que puede invalidar trabajo ya hecho.**
 
-**El defecto, confirmado.** [`cmd/batten/main.go:163-197`](../../cmd/batten/main.go#L163):
+### 4.3 — Fail-open ruidoso
+
+**El defecto**, en [`cmd/batten/main.go:163-197`](../../cmd/batten/main.go#L163):
 
 ```go
 defer func() {
@@ -333,381 +252,447 @@ out, err := h.Dispatch(event, raw)
 if err != nil || out == nil { return nil }          // error de dispatch → silencio
 ```
 
-Seis causas distintas producen exit 0 sin salida, y Claude Code las lee todas igual: ALLOW.
-
-**Por qué NO fail-closed, pese a lo que recomiendan el estudio y la literatura.** El principio #2
-de batten es *degradar, nunca romper*, y tiene una razón operativa concreta: SQLite bajo
-contención de dos sesiones devuelve `SQLITE_BUSY`. Con fail-closed, eso deniega **cada llamada a
-herramienta** hasta que se libere. Una herramienta de gobierno que inutiliza la sesión el día que
-la base está ocupada no sobrevive a la primera semana. El paper de control plane puede permitirse
-fail-closed porque su plano de política es un proceso separado con su propia disponibilidad; el
-de batten corre dentro del ciclo de vida de cada llamada a herramienta.
-
-**La tercera opción, que es la correcta:** el commit pasa, **y batten dice que no evaluó nada.**
+**El arreglo:**
 
 ```
 batten (advertencia — no bloqueando): la compuerta NO se ejecutó para este commit.
   causa: no se pudo abrir el store (database is locked)
-  este commit NO fue verificado. Reintentá, o usá `batten doctor` para diagnosticar.
+  este commit NO fue verificado. Reintentá, o corré `batten doctor`.
 ```
 
-Eso preserva el principio #2 y satisface el #3 —*fallar abierto solo en voz alta*— que hoy se
-aplica a la atribución pero **no a los fallos internos de batten**. Es la misma corrección que ya
-hicimos para los commits no atribuibles (commit `f6aeba2`), extendida al camino de excepción.
+**Detalle:** distinguir "acá no hay `batten.yaml`" (silencio correcto: no gobernamos donde no nos
+invitaron) de "hay `batten.yaml` y algo se rompió" (aviso obligatorio). Hoy ambos caen en el mismo
+`return nil`. **~medio día.**
 
-**Detalle de implementación:** distinguir "acá no hay batten.yaml" (silencio correcto: no
-gobernamos donde no nos invitaron) de "hay batten.yaml y algo se rompió" (aviso obligatorio). Hoy
-ambos caen en el mismo `return nil`.
+### 4.4 — Rediseñar el payload MCP
 
-**Costo:** ~medio día. **Prioridad: máxima**, junto con 4.1.
+**Medición propia:** cada respuesta lleva el payload **dos veces**, byte por byte idéntico
+(`batten_runs` 932/932, `run_graph` 1176/1176, `verdict_status` 885/885, `spec` 1466/1466).
 
-### 4.3 — Validar los 8 fixes contra la réplica de proyecto_ui
+**Lo que la investigación corrigió de mi diagnóstico:** no es "se cobra dos veces".
+`structuredContent` está pensado para el **cliente** —renderiza un widget— y **nunca entra al
+contexto del modelo, cuesta cero tokens**. El patrón correcto es `content` con un **resumen
+compacto** (modelo) y `structuredContent` con los datos ricos (cliente)
+([futuresearch.ai](https://futuresearch.ai/blog/mcp-results-widget/),
+[MCP spec RC 2026-07-28](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/)).
 
-**No se hizo, y es el hueco real.** Los 63 hallazgos se verificaron y los 8 fixes se validaron
-sobre **sandboxes sintéticos** y sobre `taskly`, el demo desde cero. La réplica de proyecto_ui se
-usó en la corrida original —sesión anterior— y ese sandbox ya no existe.
+**batten lo hace al revés.** `batten_verdict_status` pasaría de ~885 caracteres de JSON a:
 
-| | `taskly` (demo nuevo) | réplica de proyecto_ui |
-|---|---|---|
-| repo git | sí | **no lo es** — todo el modelo cuelga de git |
-| código | sí, Go con tests | **ninguno**: 4 dominios con solo su `AGENTS.md` |
-| dominios | 2 | 4 |
-| backlog | 5 items | 40+ `US-0NN` |
-| skills / agentes | 0 | 47 skills, 9 agentes custom |
-| build files | `Makefile` | ninguno → `gates.checks` **vacío** |
+```
+US-034 · gate qa · BLOQUEADO
+Falta el pase batten-verificado: los checks no se corrieron.
+Corré: batten check US-034
+```
 
-Las dos últimas filas son las que muerden: **un repo sin build files cae en la rama del gate sin
-checks**, que es exactamente donde vivía la regresión de `on_exceed: block`.
+~25 tokens en vez de ~260. **Y resuelve la pregunta de TOON sin adoptar TOON:** el ahorro viene de
+mandar menos, no de codificar distinto.
 
-**Matriz mínima** (sandbox, `BATTEN_DB` exportado siempre, nunca el original):
+**~1 día para las 6 herramientas. Ahorro estimado 70–90 % del contexto MCP.**
 
-1. `init` sobre 4 dominios sin código y 40+ items → ¿unit `US-\d{3}`, dominios completos,
-   `gates.checks` vacío reportado como vacío?
-2. Gate **sin checks** + presupuesto excedido → debe DENEGAR (la regresión de `24d8e4c`)
-3. Dos units abiertos en la misma fase → los dos canvas intactos
-4. `git -c user.name=... commit` → debe entrar al gate
-5. Primer commit tras adoptar → debe **avisar**, no callar
-6. Commit cuyo mensaje nombra otro unit → debe denegar
-7. `ingest` con transcript previo al run → debe reportar lo descartado
-8. **Repo sin `git init`** → ¿degrada con aviso o revienta? *No hay ningún test que cubra esto, y
-   es el estado literal de proyecto_ui*
-
-**Costo:** ~medio día. **Prioridad: máxima.** Es lo único que puede *invalidar* trabajo ya hecho.
-
-### 4.4 — Deuda propia: el tercer sitio del un-solo-veredicto
-
-`internal/export/export.go:58` usa `LatestVerdict`. Arreglé `batten show` (`92ae1cb`) y la TUI
-(`24d7cd2`); el que escribe la nota de Obsidian y el canvas quedó leyendo solo el último — así
-que la nota del vault tapa la evidencia del revisor con la salida de checks.
-
-**Costo:** ~30 min con test. **Hacerlo primero por higiene**, es una inconsistencia conocida.
+> Validación previa (~1 h): confirmar con `/context` que Claude Code no mete `structuredContent`.
+> Si resulta que sí, el arreglo sigue siendo correcto y el ahorro es mayor.
 
 ---
 
-## 5. Prioridad alta
+## 5. Prioridad alta — vía A
 
-### 5.1 — Cerrar el bypass por Bash del write-set guard
+### 5.1 — Cerrar el bypass por Bash
 
-**Evidencia convergente:** hallazgo #6 del field test (reproducido: `Edit` denegado, la misma
-escritura por `Bash` pasa en silencio y el archivo se sobrescribe de verdad), el estudio externo,
-y los dos control planes de la literatura que filtran **cada** llamada Bash.
+Evidencia convergente: hallazgo #6 reproducido (`Edit` denegado, la misma escritura por `Bash`
+pasa en silencio y el archivo se sobrescribe de verdad), el estudio externo, y los dos control
+planes de la literatura.
 
-**Lo que lo hace peor que un fail-open deliberado:** en ese punto batten **sí** atribuye —nombra
-al dueño una llamada antes— y aun así no dice nada. No es "no puedo determinar culpa", es "no
-miré".
+**Lo que lo hace peor que un fail-open deliberado:** ahí batten **sí** atribuye —nombra al dueño
+una llamada antes— y aun así no dice nada. No es "no puedo determinar culpa", es "no miré".
 
-**Arreglo por etapas, de menor a mayor riesgo de falsos positivos:**
+**Por etapas, de menor a mayor riesgo de falsos positivos:**
 
-1. **Detección de redirecciones y utilidades comunes** (`>`, `>>`, `tee`, `sed -i`, `mv`, `cp`,
-   `patch`, `dd of=`). Cubre la mayoría de los casos reales con parseo simple.
-2. **Resolver rutas relativas** contra el `cwd` del payload y contrastarlas con `writesets`.
-3. **Advisory primero, deny después.** Empezar avisando durante un ciclo, medir falsos positivos
-   sobre corridas reales, y solo entonces endurecer. El guard de `Edit` puede permitirse DENY
-   porque la ruta es un campo estructurado; una línea de shell no lo es.
-4. **`scan-diff` post-hoc como red de seguridad**, siguiendo a
-   [arXiv:2606.26924](https://arxiv.org/html/2606.26924v1): tras el fan-out, contrastar el diff
-   de git contra los write-sets declarados y reportar cada archivo escrito por quien no lo
-   reclamó. Esto **no requiere parsear shell** y atrapa todo, incluidos los scripts de terceros
-   que el punto 1 nunca verá.
+1. Detección de redirecciones y utilidades (`>`, `>>`, `tee`, `sed -i`, `mv`, `cp`, `patch`, `dd of=`) — ~1 día
+2. Resolver rutas relativas contra el `cwd` del payload — ~medio día
+3. **Advisory primero, deny después.** Un ciclo avisando, medir falsos positivos, endurecer — 1 ciclo
+4. **`scan-diff` post-fan-out** siguiendo a [arXiv:2606.26924](https://arxiv.org/html/2606.26924v1): contrastar el diff de git contra los write-sets declarados — ~1 día
 
-> El punto 4 es la mejor relación valor/riesgo de los cuatro y probablemente debería ir primero:
-> es determinista, no tiene falsos positivos, y produce exactamente el dato que §7.1 necesita
-> (cuánto sobre-declaran los agentes, el 32–49 % de S-Bus).
-
-**Costo:** 1 ~1 día · 2 ~medio día · 3 ~un ciclo de uso · 4 ~1 día. **Prioridad: alta.**
+> **El punto 4 debería ir primero.** Es determinista, sin falsos positivos, atrapa incluso los
+> scripts de terceros que el punto 1 nunca verá, y produce gratis el dato que §3.3 necesita:
+> cuánto sobre-declaran los agentes de batten frente al 32–49 % de S-Bus.
 
 ### 5.2 — Claim de directorio y colisión entre runs
 
-- **#7** — un claim de directorio se acepta, se reporta como protector y no cerca nada.
-  Arreglo: o rechazarlo con la forma de lista de archivos, o soportar `dir/**` de verdad en
-  `writeSetGuard`. Cualquiera de las dos, pero no la actual.
-- **#4** — `claim` no mira otros runs abiertos: dos sesiones creen poseer el mismo archivo, y
-  después el guard las deniega a **ambas**. `store.WriteSetOwnerAcrossOpenRuns` ya existe; falta
-  llamarla en el momento del claim, para que el error del plan falle temprano en vez de
-  detonar como denegación mutua.
+- **#7** — un claim de directorio se acepta, se reporta como protector y no cerca nada. O rechazarlo con la forma de lista, o soportar `dir/**` de verdad.
+- **#4** — `claim` no mira otros runs abiertos: dos sesiones creen poseer el mismo archivo y el guard las deniega a **ambas**. `store.WriteSetOwnerAcrossOpenRuns` ya existe; falta llamarla al reclamar.
 
-**Costo:** ~1 día los dos. **Prioridad: alta.**
+**~1 día los dos.**
 
 ### 5.3 — La cadena graphify → engram para el subagente
 
-**No estaba considerada, y el hueco es real.**
-
 | dónde | qué hace |
 |---|---|
-| `/batten-plan` | usa `graphify god-nodes --json` y `graphify affected "X"`, y `mem_search` antes de planear |
-| `/batten-verify` | `mem_search "<el bug>"` antes de juzgar |
+| `/batten-plan` | `graphify god-nodes --json`, `graphify affected "X"`, `mem_search` |
+| `/batten-verify` | `mem_search "<el bug>"` |
 | `/batten-close` | escribe la decisión a engram |
-| **`/batten-build`** | **nada.** Cero menciones de graphify o engram |
+| **`/batten-build`** | **nada** |
 
-**El subagente del fan-out —el que efectivamente escribe código— no consulta nada.** Arranca
-directo a leer archivos, que es el paso más caro en tokens de los tres.
+**El subagente del fan-out —el que escribe código— no consulta nada.** Arranca directo a leer
+archivos, el paso más caro de los tres. Y los dos campos que pedirían esa cadena
+(`capabilities.graph.query_before_read`, `phases[].graph_query`) tienen **cero consumidores**.
 
-Y los dos campos del spec que pedirían esa cadena **tienen cero consumidores**:
-`capabilities.graph.query_before_read` y `phases[].graph_query`. Se escriben en el `batten.yaml`
-que genera `init`, aparecen en README y DESIGN, y no gobiernan nada.
+**El orden correcto son las tres memorias:** graphify (*qué es* el código) → engram (*qué
+decidimos*) → grep (fallback, el más caro).
 
-**El orden correcto corresponde a las tres memorias:**
-
-1. **graphify** — *qué es* el código: quién llama a esto, qué se rompe si lo cambio. Barato,
-   exacto, sin API key en modo `--code-only`.
-2. **engram** — *qué decidimos*: si ya se resolvió, por qué se hizo así, qué falló la vez pasada.
-3. **leer archivos / grep** — el fallback, y el más caro de los tres.
-
-**Propuesta:**
-
-- **Paso 1 (~2 h, es prompt):** que `/batten-build` inyecte en el prompt de cada subagente, cuando
-  `query_before_read: true`, la instrucción de consultar el grafo, luego la memoria, y solo
-  entonces leer — **y de declarar en su retorno si ninguno estaba disponible**, en vez de simular
-  que consultó. Eso último es el principio #3 aplicado a la orientación.
-- **Paso 2 (~2 h):** que `doctor` cruce la declaración con la realidad — `query_before_read: true`
-  sin graphify en PATH debe avisar. Hoy no cruza esos dos datos.
-- **Paso 3 (~medio día):** medirlo. batten ya marca cada run con si el grafo estaba fresco
-  (`SetCodeGraph`) y ya cuenta tokens por nodo; `measure` puede comparar el costo de orientación
-  con y sin grafo. Mismo trato que headroom: *admitido, pero medido*.
-
-**Prioridad: alta** para el paso 1 — mejor relación esfuerzo/impacto del documento después de
-§4.1, y cierra una promesa que el spec ya hace.
+- **Paso 1 (~2 h, es prompt):** que `/batten-build` inyecte la instrucción cuando `query_before_read: true`, **y exija declarar en el retorno si ninguno estaba disponible** en vez de simular que consultó. Principio #3 aplicado a la orientación.
+- **Paso 2 (~2 h):** que `doctor` cruce declaración con realidad — `query_before_read: true` sin graphify en PATH debe avisar.
+- **Paso 3 (~medio día):** medirlo. `SetCodeGraph` ya marca cada run; `measure` puede comparar el costo de orientación con y sin grafo. Mismo trato que headroom: *admitido, pero medido*.
 
 ---
 
-## 6. Declarado y no leído — la decisión de fondo
+# VÍA B — Adopción
 
-Cinco campos del spec tienen **cero consumidores** en todo el código Go. Medido grepeando, no
-inferido:
+> **Ningún ítem de esta vía toca el motor.** Todos leen del mismo SQLite canónico o son
+> presentación. Se pueden hacer en paralelo con la vía A, por otra persona.
 
-| campo | qué promete | consumidores |
+## 6. Lo visual: qué renderiza de verdad y dónde
+
+Antes de proponer, verifiqué qué superficies renderizan sin infraestructura:
+
+| superficie | ¿renderiza? | verificado |
 |---|---|---|
-| `phases[].diff_from: anchor` | operar solo sobre el diff del unit | **0** (hallazgo #24) |
-| `phases[].graph_query` | consultar el grafo en vez de grepear | **0** |
-| `capabilities.graph.query_before_read` | preguntar al grafo antes de leer | **0** |
-| `models.tiers` / `models.phases` | *"batten routes subagents and verifies it from the ledger"* | **0** — no rutea nada |
-| `provenance.format` | metadatos de procedencia para auditoría | **0** |
-| `edges.rel = retry_of` | reintentos visibles en el grafo | 4 consumidores, **0 productores** (#41) |
+| **Mermaid en descripción de PR, issues, comentarios, wikis de GitHub** | **sí, nativo desde feb 2022** | sin plugin, sin hospedar imágenes, sin sanitización de SVG |
+| HTML autocontenido abierto en el navegador | sí | es lo que hace `graph.html` de graphify |
+| GIF de terminal en el README | sí | [VHS](https://github.com/charmbracelet/vhs) genera GIF/MP4/WebM desde un `.tape` |
+| SVG embebido en markdown de GitHub | **parcial** | GitHub sanitiza SVG inline; hay que commitearlo como archivo |
+| Canvas de Obsidian | solo con Obsidian instalado | es la limitación actual |
 
-Un campo que el usuario escribe creyendo que gobierna, y que no gobierna, es **peor que su
-ausencia**. Categorización útil para clasificar cualquier campo:
+**El hallazgo que cambia el plan:** Mermaid renderiza nativo en descripciones de PR. batten **ya
+tiene el DAG de la corrida en SQLite con aristas tipadas**. Emitirlo como Mermaid dentro del cuerpo
+del PR es visual, es gratis, y **se distribuye solo** — cada PR que pasa por batten es un anuncio
+de batten que otras personas ven.
 
-- **(a) impuesto por el binario** = mecanismo real
-- **(b) pasado al agente vía MCP `batten_spec`** = una *declaración* que el modelo puede honrar
-- **(c) leído por nadie** = ficción
+## 6.1 — ⭐ El PR que se escribe solo
 
-**Recomendación campo por campo:**
+**La mejor idea del estudio, y no cuesta nada de esencia.** El gate sigue denegando igual, sigue
+exigiendo dos veredictos, sigue citando evidencia. Cambia **qué recibís cuando pasás**.
 
-| campo | decisión | por qué |
+`batten pr <unit>` emite un cuerpo de PR en markdown, listo para `gh pr create --body-file`:
+
+````markdown
+## US-034 — límite de tasa en órdenes
+
+**batten-verified** · 2 veredictos · 3 checks corridos · 4 subagentes
+
+```mermaid
+graph LR
+  P1[build]:::ok --> A1[api ✓<br/>3 archivos]:::ok
+  P1 --> A2[store ✓<br/>2 archivos]:::ok
+  P1 --> A3[web ✗ → reintento]:::fail
+  A3 -.retry_of.-> A4[web ✓<br/>1 archivo]:::ok
+  P1 --> P2[verify]:::ok
+  P2 --> V{{qa: ok}}:::ok
+  classDef ok fill:#1a7f37,color:#fff
+  classDef fail fill:#cf222e,color:#fff
+```
+
+### Verificación
+
+| productor | resultado | evidencia |
 |---|---|---|
-| `query_before_read`, `graph_query` | **implementar** | §5.3; es prompt, no motor |
-| `retry_of` | **implementar** | barato, y hace legible un fan-out con reintentos — lo que CoAgent llama reparación necesita exactamente esta arista |
-| `diff_from: anchor` | **implementar** | el ancla ya se graba; falta que `check` y `verify` la usen para acotar el diff |
-| `models.tiers` / `models.phases` | **sacar del spec generado** | batten no puede cambiar el modelo del ciclo principal; sí podría rutear subagentes, pero eso es un proyecto. Documentarlo como futuro, no generarlo |
-| `provenance.format` | **sacar del spec generado** | igual |
+| batten (mecánico) | ✅ ok | `go build ./...` PASS (0, 585 ms) · `go vet ./...` PASS (0, 686 ms) · `go test ./...` PASS (0, 637 ms) |
+| revisor (criterios) | ✅ ok | AC-1 cubierto por `TestRateLimit` · AC-2 por `TestRateLimitBurst` · invariante de `store` intacta |
+
+### Qué costó
+
+| | |
+|---|---|
+| tokens | 1,24 M en 4 subagentes |
+| imputado | $18,60 *(no es una factura: es el valor extraído del plan)* |
+| ventana de 5 h | 18 % de un techo de 40 % |
+| ancla | `44630cd` · 11 archivos, +284 −37 |
+
+<sub>Generado por [batten](https://github.com/ArthurZizumbo/batten). El DAG y la evidencia salen
+del registro de la corrida, no de un resumen del modelo.</sub>
+````
+
+**Por qué esto es la palanca principal:**
+
+- **La distribución está construida en el artefacto.** Un PR lo ven revisores, y cada uno ve el pie.
+- **Renderiza nativo.** Cero infraestructura, cero imágenes hospedadas.
+- **Invierte la valencia emocional** sin tocar un mecanismo: la disciplina deja de ser un peaje y pasa a ser lo que hace posible el reporte.
+- **Refuerza el principio #2**, no lo debilita: el PR es el lugar natural para mostrar `tokens: NO MEDIDO` con honestidad.
+
+**Costo: ~2 días.** Los datos ya están todos en SQLite; es renderizado.
+
+**Detalle no negociable:** si el usage no fue medido, la tabla dice **NO MEDIDO**, no `$0.00`. Si
+falta el veredicto del revisor, la tabla lo dice. Un PR generado que miente es peor que no
+generarlo.
+
+## 6.2 — `batten report`: valor antes que fricción
+
+**El problema, medido contra los tres proyectos de referencia:**
+
+| proyecto | pasos al primer valor | qué ves |
+|---|---|---|
+| caveman | 1 comando | 65 % menos tokens |
+| graphify | 3 comandos | grafo interactivo en el navegador |
+| superpowers | 2 comandos | metodología activa |
+| **batten hoy** | **~8 pasos** | **un commit denegado** |
+
+En modo `report` —el default de `init`— batten **no bloquea nada: observa**. Ese modo hoy no tiene
+salida propia. `batten report` la da:
+
+```
+taskly · sesión de hoy
+
+  US-002  ok        3 fases · 2 subagentes · ancla ca015de
+          api       3 archivos    412k tokens
+          store     1 archivo      98k tokens
+          verificado: 3 checks corridos + criterios juzgados
+
+  US-003  bloqueado 2 fases
+          go test ./... falló: TestAMissingTaskIs404NotA500
+          el gate habría denegado este commit
+
+  gastado hoy   1,4 M tokens · 22 % de la ventana de 5 h
+```
+
+**Eso es valor puro, sin fricción, sin bloquear nada.** La compuerta pasa a ser algo que **elegís
+encender** cuando ya confiás en lo que ves — que es exactamente el patrón de graphify: empujón
+suave por default, `GRAPHIFY_HOOK_STRICT=1` opt-in.
+
+**Costo: ~1 día.** Es una vista sobre datos que ya existen.
+
+## 6.3 — Canvas HTML autocontenido
+
+`batten canvas --html` emite un archivo único que se abre en cualquier navegador: nodos por fase,
+subagentes coloreados por estado, write-sets al pasar el mouse, tokens por nodo. Sin Obsidian, sin
+servidor, sin dependencias.
+
+Es lo que hace `graph.html` de graphify, y es lo que la gente captura y postea.
+
+**Dos condiciones para que sirva:**
+
+- **Generable durante la corrida**, no solo en `Stop`. Un artefacto que solo existe al final no se comparte en el momento en que la persona está entusiasmada.
+- **Un solo archivo.** Nada de assets externos.
+
+**Costo: ~2 días.** El `canvas.Render` ya produce la geometría; falta un template HTML con el JSON
+embebido.
+
+## 6.4 — `batten demo`: probar sin configurar
+
+El obstáculo de §6.2 es que aun con `report` hay que instalar y configurar antes de ver nada.
+
+`batten demo` crea un sandbox temporal, arma un repo mínimo, corre el flujo completo —fan-out,
+denegación, `check`, aprobación, PR— e imprime el recorrido. **No toca tu repo, no toca tu DB, se
+borra al terminar.**
+
+Es el "probalo antes de configurarlo" que hoy no existe. Y de paso es un test de integración
+end-to-end que hoy tampoco existe.
+
+**Costo: ~1 día.** El recorrido ya está escrito y capturado en
+[`../QUICKSTART.md`](../QUICKSTART.md); esto lo automatiza.
+
+## 6.5 — El GIF del README
+
+[VHS](https://github.com/charmbracelet/vhs) graba GIFs de terminal desde un archivo `.tape` — y
+batten ya usa bubbletea/lipgloss de charm, así que es el mismo ecosistema.
+
+**Qué mostrar, en ~20 segundos:** el agente intenta commitear → **DENY con la razón** → `batten
+check` corre los tests de verdad → uno falla → el diff se arregla → el check pasa → el commit
+entra. La negación en vivo es genuinamente dramática, y es la única forma de transmitir en un
+README que *esto no es un lint, esto realmente te para*.
+
+Y un segundo `.tape` para la TUI.
+
+**Costo: ~medio día.** Y el `.tape` es código: se regenera cuando cambia la salida, no envejece.
+
+## 6.6 — El README que lidera con lo correcto
+
+Cambios de posicionamiento, cero código:
+
+| hoy | debería |
+|---|---|
+| abre con "El producto son dos negaciones" | abre con el número de terceros: **"El 78 % de las fallas de agentes son silenciosas. Las compuertas deterministas triplican la fiabilidad. batten es una."** ([fuente](https://arxiv.org/html/2607.07405v1)) |
+| el write-set guard se describe como bloqueo | describirlo como lo que es: **el motor que hace seguro el fan-out en paralelo** |
+| no menciona que el default no bloquea | decir en la primera pantalla: **`report` es el default — batten observa y no te frena hasta que vos lo decidas** |
+| el quickstart empieza con `batten init` | empezar con `batten demo`, luego `batten report`, y el gate al final |
+| sin GIF | el GIF de §6.5 arriba de todo |
+| sin PR de ejemplo | link a un PR real generado por §6.1 |
+
+**Y un diferenciador que no se está contando.** Existe un ecosistema de observabilidad de costo
+(Langfuse, OpenTelemetry, ccusage, CloudZero) pero **todos miden dólares de API**. batten es el
+único que mide **porcentaje de la ventana rodante de suscripción** — la métrica correcta cuando el
+costo marginal de un token es cero. Un usuario de plan Max no quiere saber cuántos dólares "habría
+costado": quiere saber si le alcanza hasta las 5 de la tarde. Ya está construido
+(`batten statusline` es el único sensor local de cuota que existe) y no aparece en el README.
+
+**Costo: ~1 día.**
 
 ---
 
-## 7. Lo que se evaluó y NO se hace en este ciclo
+## 7. La TUI y el seguimiento de cumplimiento
 
-Decisiones negativas, con su razón — para que otra sesión no las reabra sin evidencia nueva.
-
-### 7.1 — Migrar a concurrencia optimista (OCC / MTPO)
-
-El estudio externo lo recomienda citando CoAgent. **La dirección es correcta; el momento no.**
-
-Razones para esperar:
-- MTPO requiere inversas saga, versionado y orden preacordado. Es un rediseño, no una mejora.
-- **No hay ninguna medición de `T_bloqueo` en batten.** No sabemos si los subagentes se bloquean
-  lo suficiente como para que importe. Un fan-out con write-sets bien planeados es disjunto por
-  construcción; el bloqueo solo aparece cuando el plan estuvo mal.
-- El dato de S-Bus (**32–49 % de sobre-declaración**) sugiere que sí podría importar — pero eso
-  es una hipótesis a medir, no a asumir.
-
-**Paso previo, barato:** instrumentar. Registrar cada denegación del guard con duración, y
-comparar write-set *declarado* contra *efectivamente escrito* (§5.1 punto 4 produce ese dato). Si
-la sobre-declaración de batten se parece al 32–49 % de S-Bus y el bloqueo es medible, entonces
-§7.1 se reabre con evidencia.
-
-**Lo que sí se puede adoptar ya, sin migrar nada:** el principio de CoAgent de que *el control
-sea advisory — el runtime informa, el agente repara*. batten ya tiene `advise()`; extenderlo a
-las colisiones de write-set de baja severidad, en vez de denegar siempre, es barato y está
-alineado con la literatura.
-
-### 7.2 — TOON
-
-**Descartado.** Mi medición: +5,7 % de tokens en el conjunto real. La literatura
-([arXiv:2605.29676](https://arxiv.org/html/2605.29676v1)) añade la razón que pesa más: **hasta
-−9 pp de exactitud**, con sensibilidad dependiente del modelo tan grande que el mismo modelo ganó
-13 pp en un benchmark y perdió 36 en otro.
-
-Reevaluar solo si aparece un payload genuinamente tabular y grande (un `batten_runs` histórico de
-50+ filas, o un export del ledger de usage) **y** midiendo exactitud, no solo tokens.
-
-### 7.3 — Obsidian bidireccional en vivo
-
-El estudio propone evolucionar a un servidor MCP interactivo estilo `graph-context-for-claude-code`.
-Es una idea razonable y **no está descartada en el largo plazo**, pero no en este ciclo:
-
-- El valor está sin demostrar: nadie ha pedido que batten *lea* el vault. batten proyecta
-  procedimiento hacia afuera; leer notas del usuario es un producto distinto.
-- El costo es alto: servidor persistente, invalidación de caché, y un modo de falla nuevo
-  (¿qué hace el gate si el servidor de vault no responde?) justo en el componente cuyo problema
-  principal hoy es fallar en silencio (§4.2).
-- **Lo que sí falta y es barato:** que la nota del vault muestre los dos veredictos (§4.4), y
-  documentar que los `.base` no se pueden leer por script — son vistas humanas, SQLite sigue
-  canónico.
-
----
-
-## 8. El resto de los hallazgos confirmados
-
-52 confirmados, 8 corregidos. Los 44 restantes están en
-[`../field-test/verified.json`](../field-test/verified.json), cada uno con repro, evidencia y un
-`fix_hint` con file:line. Agrupados por causa:
-
-### 8.1 — Honestidad de superficie (la familia del principio #1)
-
-| # | qué | costo |
-|---|---|---|
-| 31 | `measure` omite los buckets de caché: subestima hasta 21,9× | S |
-| 32 | `measure` imprime `$0.00` para un modelo sin precio: presenta lo desconocido como gratis | S |
-| 33 | `budget`/`runs` presentan el total imputado como completo cuando parte del run no tiene precio | M |
-| 10 | un override es invisible en todo el CLI, y `show` afirma lo contrario de la verdad | M |
-
-Los cuatro son la misma falla: reportar como sabido algo que no se sabe. Van juntos.
-
-### 8.2 — Ciclo de vida
-
-| # | qué | costo |
-|---|---|---|
-| 12 | `check` sobre un unit cerrado bifurca en silencio un segundo run sin ancla | S |
-| 21 | los ids de unit nunca se validan contra `unit.pattern`: un typo abre un run fantasma permanente | S |
-| 23 | los runs cerrados son inalcanzables desde el CLI (`show --run <id>` descarta la bandera) | S |
-| 19 | el aviso de run rancio nunca se puede limpiar: `events.run_id` es siempre NULL | S |
-| 24 | entrar a una fase con `diff_from: anchor` sin ancla es completamente silencioso | S |
-
-### 8.3 — Presentación
-
-Menores con arreglo de una línea: exit codes de Windows como basura sin signo (#13), solapamiento
-de tarjetas en el canvas (#45), `batten tui` con stdout no-terminal entra a alt-screen y no sale
-(#46), `'1 runs'` (#48), `%.1fM` que muestra 42,6k como `0.0M` (#36), `init --help` escribe el
-archivo en vez de imprimir ayuda (#54), `init --from` no lee el documento (#0).
-
----
-
-## 9. La TUI y el seguimiento de cumplimiento
-
-**Hoy la TUI sigue *runs*, no cumplimiento.** Dos razones de naturaleza distinta.
-
-**Ya corregido (`24d7cd2`):** cargaba solo `LatestVerdict`, así que `batten check` —que siempre
-escribe último— tapaba la evidencia del revisor. Ahora muestra los dos y **nombra la mitad
-ausente**.
+**Ya corregido (`24d7cd2`):** cargaba solo `LatestVerdict`, así que `batten check` tapaba la
+evidencia del revisor. Ahora muestra los dos y **nombra la mitad ausente**.
 
 **Estructural, pendiente:** no existe modelo de criterios de aceptación. `evidence` es un
-`[]string` plano; la palabra "criterios" aparece 10 veces en prosa del código y **cero veces como
-dato**. Y `unit.plan` / `unit.locator` —el backlog que `init` se esfuerza en encontrar— tienen
-**un solo consumidor**: `internal/mcp/mcp.go:794`, que los copia de vuelta en `batten_spec`.
+`[]string` plano; "criterios" aparece 10 veces en prosa del código y **cero como dato**. Y
+`unit.plan` / `unit.locator` —el backlog que `init` se esfuerza en encontrar— tienen **un solo
+consumidor**: `internal/mcp/mcp.go:794`, que los copia de vuelta en `batten_spec`.
 
-**Propuesta en tres fases:**
+- **Fase A (~1 día)** — leer el backlog. Un `internal/plan` que resuelva `unit.plan` + `unit.locator` a units con su bloque. Es parseo de markdown por encabezado.
+- **Fase B (~2 días)** — criterios como dato. Tabla `criteria(run_id, unit_id, idx, text, status)`, y `evidence` que pueda citar un criterio por índice **sin romper el formato actual**. *Cuidado:* el hallazgo #27 mostró que pasar objetos donde se esperan strings escupe un error de Go crudo.
+- **Fase C (~1 día)** — la vista: `US-001 ✓ · US-002 ✓ · US-003 ◐ · US-004 ·` en la TUI, y `batten status` en el CLI.
 
-- **A (~1 día)** — leer el backlog. Un `internal/plan` que resuelva `unit.plan` + `unit.locator` a
-  una lista de units con su bloque de texto. Es parseo de markdown por encabezado; el locator ya
-  está en el spec.
-- **B (~2 días)** — criterios como dato. Extraer del bloque del unit los ítems (viñetas /
-  checkboxes) a una tabla `criteria(run_id, unit_id, idx, text, status)`, y extender el envelope
-  para que `evidence` pueda citar un criterio por índice **sin romper el formato actual**.
-  *Cuidado:* el hallazgo #27 ya mostró que pasar objetos donde se esperan strings escupe un error
-  de Go crudo. Cualquier extensión tiene que aceptar las dos formas y fallar con mensaje humano.
-- **C (~1 día)** — la vista. En la TUI, un pane de backlog:
-  `US-001 ✓ · US-002 ✓ · US-003 ◐ · US-004 ·`. En el CLI, `batten status`.
-
-**Conexión con la literatura:** el benchmark AFTER
-([arXiv:2606.23127](https://arxiv.org/abs/2606.23127)) muestra que refinar la memoria
-procedimental mejora el desempeño de forma medible (3,7–6,7 puntos). batten hoy **impone**
-proceso pero no **aprende** de las corridas cuáles funcionan. La fase B es el prerrequisito de
-datos para eso: sin criterios como dato, no hay señal de qué proceso produjo qué resultado.
+**La fase B además desbloquea §6.1**: un PR que dice *"AC-1 cubierto por X, AC-2 por Y"* es mucho
+más impresionante que uno que lista evidencia suelta. Y es el prerrequisito de datos para el
+horizonte de §3.4 — aprender qué proceso produjo qué resultado.
 
 ---
 
-## 10. Orden propuesto
+## 8. Declarado y no leído — la decisión de fondo
 
-**Antes de construir nada encima:**
+Cinco campos con **cero consumidores**, medido grepeando:
 
-| | qué | § | por qué primero |
+| campo | promete | consumidores | decisión |
 |---|---|---|---|
-| 1 | el tercer sitio del un-solo-veredicto | 4.4 | inconsistencia conocida, 30 min |
-| 2 | validar los 8 fixes contra la réplica de proyecto_ui | 4.3 | lo único que puede invalidar trabajo hecho |
-| 3 | rediseñar el payload MCP (`content` compacto / `structuredContent` completo) | 4.1 | 70–90 % de ahorro de contexto |
-| 4 | fail-open ruidoso en el camino de excepción del hook | 4.2 | el silencio es indistinguible de la aprobación |
+| `capabilities.graph.query_before_read` | preguntar al grafo antes de leer | 0 | **implementar** (§5.3) |
+| `phases[].graph_query` | consultar el grafo en vez de grepear | 0 | **implementar** (§5.3) |
+| `phases[].diff_from: anchor` | operar solo sobre el diff del unit | 0 | **implementar** — el ancla ya se graba |
+| `edges.rel = retry_of` | reintentos visibles en el grafo | 4 consumidores, **0 productores** | **implementar** — barato, y §6.1 lo necesita para dibujar el reintento |
+| `models.tiers` / `models.phases` | *"batten routes subagents and verifies it from the ledger"* | 0 | **sacar del spec generado** |
+| `provenance.format` | metadatos de procedencia | 0 | **sacar del spec generado** |
 
-**Después, por valor:**
+Un campo que el usuario escribe creyendo que gobierna, y que no gobierna, es **peor que su
+ausencia**. Es el principio #1 aplicado al propio spec.
+
+---
+
+## 9. El resto de los hallazgos confirmados
+
+52 confirmados, 8 corregidos. Los 44 restantes en
+[`../field-test/verified.json`](../field-test/verified.json) con repro, evidencia y `fix_hint`.
+
+**Honestidad de superficie** (la familia del principio #1, van juntos): `measure` omite los
+buckets de caché y subestima hasta 21,9× (#31) · `measure` imprime `$0.00` para un modelo sin
+precio (#32) · `budget`/`runs` presentan el total imputado como completo (#33) · un override es
+invisible en todo el CLI (#10).
+
+**Ciclo de vida:** `check` sobre un unit cerrado bifurca un run sin ancla (#12) · los ids de unit
+nunca se validan (#21) · los runs cerrados son inalcanzables (#23) · el aviso de run rancio nunca
+se limpia (#19) · `diff_from: anchor` sin ancla es silencioso (#24).
+
+**Presentación** (una línea cada uno): exit codes de Windows como basura sin signo (#13) ·
+solapamiento de tarjetas en el canvas (#45) · `tui` con stdout no-terminal (#46) · `'1 runs'`
+(#48) · `%.1fM` muestra 42,6k como `0.0M` (#36) · `init --help` escribe el archivo (#54) ·
+`init --from` no lee el documento (#0).
+
+---
+
+## 10. Lo que NO se hace en este ciclo
+
+Decisiones negativas con su razón, para que no se reabran sin evidencia nueva.
+
+**Migrar a OCC / MTPO.** Rediseño, no mejora: requiere inversas saga, versionado y orden
+preacordado. Y **no hay ninguna medición de bloqueo real**. §6.1 punto 4 produce ese dato gratis;
+si la sobre-declaración de batten se parece al 32–49 % de S-Bus y el bloqueo es medible, se
+reabre con evidencia.
+
+**Autorreparación de conflictos por LLM.** Rechazado por principio: poner al modelo a juzgar si su
+propio conflicto "importa" reintroduce el fallo del 78 % en la otra mitad del producto.
+
+**TOON.** +5,7 % de tokens medido, y hasta −9 pp de exactitud según la literatura. Reevaluar solo
+con un payload genuinamente tabular y grande, **y midiendo exactitud, no solo tokens**.
+
+**Fail-closed.** Ver §4.3 — brickearía la sesión con un `SQLITE_BUSY`.
+
+**Obsidian bidireccional en vivo.** Valor sin demostrar (nadie pidió que batten *lea* el vault),
+costo alto, y un modo de falla nuevo justo en el componente cuyo problema es fallar en silencio.
+Lo barato sí: la nota con los dos veredictos (§4.1), y documentar que los `.base` no se leen por
+script.
+
+---
+
+## 11. Orden de trabajo
+
+### Bloque 1 — antes de construir nada encima
+
+| | qué | § | costo |
+|---|---|---|---|
+| 1 | tercer sitio del un-solo-veredicto | 4.1 | 30 min |
+| 2 | validar los 8 fixes contra la réplica de proyecto_ui | 4.2 | ½ día |
+| 3 | fail-open ruidoso | 4.3 | ½ día |
+| 4 | rediseñar el payload MCP | 4.4 | 1 día |
+
+### Bloque 2 — adopción (paralelizable, no toca el motor)
+
+| | qué | § | costo |
+|---|---|---|---|
+| 5 | `batten report` | 6.2 | 1 día |
+| 6 | `batten pr` con DAG Mermaid | 6.1 | 2 días |
+| 7 | canvas HTML autocontenido | 6.3 | 2 días |
+| 8 | `batten demo` | 6.4 | 1 día |
+| 9 | GIF con VHS | 6.5 | ½ día |
+| 10 | README reposicionado | 6.6 | 1 día |
+
+### Bloque 3 — cerrar las brechas de confianza
+
+| | qué | § | costo |
+|---|---|---|---|
+| 11 | `scan-diff` post-fan-out | 5.1 pto. 4 | 1 día |
+| 12 | cadena graphify→engram en `/batten-build` | 5.3 | 2 h |
+| 13 | parseo de Bash, advisory primero | 5.1 pto. 1–3 | 1½ días |
+| 14 | claim de directorio y colisión entre runs | 5.2 | 1 día |
+| 15 | `retry_of` y `diff_from` (los necesita §6.1) | 8 | 1 día |
+
+### Bloque 4 — profundidad
 
 | | qué | § |
 |---|---|---|
-| 5 | `scan-diff` post-fan-out (red de seguridad + dato de sobre-declaración) | 5.1 pto. 4 |
-| 6 | la cadena graphify→engram en `/batten-build` | 5.3 |
-| 7 | parseo de Bash para el write-set guard, advisory primero | 5.1 pto. 1–3 |
-| 8 | claim de directorio y colisión entre runs | 5.2 |
-| 9 | criterios como dato + vista de cumplimiento | 9 |
-| 10 | la familia de honestidad de superficie | 8.1 |
-| 11 | decidir campo por campo: implementar o sacar | 6 |
-| 12 | ciclo de vida y presentación | 8.2, 8.3 |
+| 16 | criterios como dato + vista de cumplimiento | 7 |
+| 17 | la familia de honestidad de superficie | 9 |
+| 18 | sacar del spec lo que no se va a implementar | 8 |
+| 19 | ciclo de vida y presentación | 9 |
 
-**Descartado en este ciclo:** TOON (§7.2) · migración a OCC (§7.1) · Obsidian bidireccional (§7.3).
+**Camino más corto a "funcional y compartible":** bloque 1 completo, luego 5 → 8 → 9 → 6 → 10.
+Eso son ~7 días de trabajo y produce: un plugin que no miente cuando falla, un comando que da
+valor sin configurar, un demo de 30 segundos, un GIF, un PR que se escribe solo con un diagrama
+que renderiza nativo, y un README que lidera con un número de terceros.
 
 ---
 
-## 11. Lo que este plan NO resuelve
+## 12. Lo que este plan NO resuelve
 
-- **batten nunca fue adoptado por un proyecto ajeno**, con gente que no lo escribió. El field
-  test usó agentes que no lo conocían —lo más cerca posible sin usuarios reales— pero no es lo
-  mismo.
-- **No hay release taggeado.** El camino de release está verificado leyéndolo de punta a punta,
-  no ejecutándolo.
-- **El formato de transcript que batten parsea no es una API pública** y puede cambiar sin aviso.
-  Cuando se rompe, batten reporta el conteo como no disponible en vez de adivinar — correcto,
-  pero significa que el ledger puede quedarse ciego sin previo aviso.
-- **La comparación de mercado no está verificada de forma independiente.** El estudio externo
-  nombra plugins concretos (`rpw-published`, `superpowers`, `grainulator`, `harness-claude`,
-  `claude-obsidian`, `graph-context-for-claude-code`, `claude-canvas`) con descripciones
-  funcionales detalladas. **No verifiqué ninguna de esas descripciones contra su código.** Si el
-  posicionamiento competitivo va a sostener una decisión, hay que hacerlo.
+- **batten nunca fue adoptado por un proyecto ajeno**, con gente que no lo escribió.
+- **No hay release taggeado.** El camino de release está verificado leyéndolo, no ejecutándolo.
+- **El formato de transcript que batten parsea no es una API pública.** Cuando se rompe, batten reporta el conteo como no disponible en vez de adivinar — correcto, pero el ledger puede quedarse ciego sin aviso.
+- **La comparación competitiva no está verificada de forma independiente.** El estudio nombra plugins concretos (`rpw-published`, `grainulator`, `harness-claude`, `claude-obsidian`, `graph-context-for-claude-code`, `claude-canvas`) con descripciones funcionales detalladas que **no verifiqué contra su código**. Las tres cifras de estrellas sí las verifiqué.
+- **Ningún número de estrellas es predecible.** La distribución es de ley de potencias y depende de un momento viral que no se planifica. Lo que sí es predecible es el orden relativo: el techo no lo pone la esencia, lo pone el tiempo hasta el primer "ah, mirá esto".
 
 ---
 
 ## Fuentes
 
-Papers (ventana junio–julio de 2026, más tres de mayo que resultaron load-bearing):
+**Papers** (ventana jun–jul 2026, más tres de mayo que resultaron load-bearing):
 
-1. [Reason Less, Verify More: Deterministic Gates Recover a Silent Policy-Violation Failure Mode in Tool-Using LLM Agents](https://arxiv.org/html/2607.07405v1) — arXiv:2607.07405, 8 jul 2026
+1. [Reason Less, Verify More](https://arxiv.org/html/2607.07405v1) — arXiv:2607.07405, 8 jul 2026
 2. [CoAgent: Concurrency Control for Multi-Agent Systems](https://arxiv.org/abs/2606.15376) — arXiv:2606.15376, 13 jun 2026
-3. [Managing Procedural Memory in LLM Agents: Control, Adaptation, and Evaluation](https://arxiv.org/abs/2606.23127) — arXiv:2606.23127, 22 jun 2026
+3. [Managing Procedural Memory in LLM Agents](https://arxiv.org/abs/2606.23127) — arXiv:2606.23127, 22 jun 2026
 4. [A Deterministic Control Plane for LLM Coding Agents](https://arxiv.org/html/2606.26924v1) — arXiv:2606.26924, jun 2026
-5. [ActPlane: Programmable OS-Level Policy Enforcement for Agent Harnesses](https://arxiv.org/html/2606.25189v2) — arXiv:2606.25189, jun 2026
+5. [ActPlane: Programmable OS-Level Policy Enforcement](https://arxiv.org/html/2606.25189v2) — arXiv:2606.25189, jun 2026
 6. [Autoformalization of Agent Instructions into Policy-as-Code](https://arxiv.org/pdf/2606.26649) — arXiv:2606.26649, jun 2026
-7. [Neural Procedural Memory: Empowering LLM Agents with Implicit Activation Steering](https://arxiv.org/abs/2606.29824) — arXiv:2606.29824, jun 2026
-8. [S-Bus: Automatic Read-Set Reconstruction for Multi-Agent LLM State Coordination](https://arxiv.org/pdf/2605.17076) — arXiv:2605.17076, may 2026
-9. [Notation Matters: A Benchmark Study of Token-Optimized Formats in Agentic AI Systems](https://arxiv.org/html/2605.29676v1) — arXiv:2605.29676, 28 may 2026
-10. [Reframing LLM Agent Security as an Agent–Human Interaction Problem](https://arxiv.org/pdf/2605.24309) — arXiv:2605.24309, may 2026
+7. [Neural Procedural Memory](https://arxiv.org/abs/2606.29824) — arXiv:2606.29824, jun 2026
+8. [S-Bus: Automatic Read-Set Reconstruction](https://arxiv.org/pdf/2605.17076) — arXiv:2605.17076, may 2026
+9. [Notation Matters: Token-Optimized Formats in Agentic AI](https://arxiv.org/html/2605.29676v1) — arXiv:2605.29676, 28 may 2026
+10. [Reframing LLM Agent Security](https://arxiv.org/pdf/2605.24309) — arXiv:2605.24309, may 2026
 
-Fuentes web:
+**Proyectos de referencia** (estrellas verificadas):
 
-11. [MCP structuredContent: How to Return Large Results Without Flooding the Context Window](https://futuresearch.ai/blog/mcp-results-widget/)
-12. [The 2026-07-28 MCP Specification Release Candidate](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/)
-13. [Claude Code Plugins: Inside Anthropic's Official Directory (2026 Guide)](https://claudecamp.ai/blog/claude-code-plugins-official-directory)
+11. [superpowers](https://github.com/obra/superpowers) — ~224.700 ★
+12. [graphify](https://github.com/Graphify-Labs/graphify) — ~97.500 ★
+13. [caveman](https://github.com/juliusbrussee/caveman) — ~54.000 ★
+
+**Técnicas:**
+
+14. [MCP structuredContent y el contexto](https://futuresearch.ai/blog/mcp-results-widget/)
+15. [MCP Specification Release Candidate 2026-07-28](https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/)
+16. [VHS — grabador de GIFs de terminal](https://github.com/charmbracelet/vhs)
+17. [Mermaid en markdown: compatibilidad por plataforma](https://devpane.tools/mermaid/mermaid-in-markdown)
+18. [8 Spend Management Tools for Claude Code](https://www.toriihq.com/articles/spend-management-tools-claude-code)
