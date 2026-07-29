@@ -378,27 +378,52 @@ func GateShortfall(st *store.Store, runID, gate, requires string) string {
 // GateShortfallAt is GateShortfall with the repo root, which lets it also check that the tree
 // the checks passed against is still the tree being committed.
 func GateShortfallAt(st *store.Store, root, runID, gate, requires string) string {
+	return gateShortfall(st, root, runID, gate, requires).Message
+}
+
+// gateShortfall is the same answer with its reason code and its fix attached. The exported
+// string form stays for `batten close`, which prints to a human; the hook uses this one, because
+// an unattended loop should not have to infer the remedy from the wording.
+func gateShortfall(st *store.Store, root, runID, gate, requires string) envelope {
+	unit := shortUnit(st, runID)
+
 	bv, err := st.LatestVerdictBySource(runID, gate, "batten")
 	if err != nil || bv.Result != "ok" {
-		return "has no batten-verified pass. The gate's checks must be RUN, not asserted.\n" +
-			"Run: batten check " + shortUnit(st, runID)
+		return envelope{
+			Code: CodeChecksNotRun,
+			Fix:  "batten check " + unit,
+			Message: "has no batten-verified pass. The gate's checks must be RUN, not asserted.\n" +
+				"Run: batten check " + unit,
+		}
 	}
-	if s := staleTarget(root, bv, shortUnit(st, runID)); s != "" {
-		return s
+	if e := staleTarget(root, bv, unit); e.Code != "" {
+		return e
 	}
 	av, err := st.LatestVerdictNotBySource(runID, gate, "batten")
 	switch {
 	case err != nil:
-		return "has only batten's own check result. `batten check` proves the checks ran; it does " +
-			"not judge whether the work meets its acceptance criteria.\n" +
-			"Record a verdict from the verify phase: batten verdict --file v.json"
+		return envelope{
+			Code: CodeNotReviewed,
+			Fix:  "batten verdict --unit " + unit + " --file v.json",
+			Message: "has only batten's own check result. `batten check` proves the checks ran; it does " +
+				"not judge whether the work meets its acceptance criteria.\n" +
+				"Record a verdict from the verify phase: batten verdict --file v.json",
+		}
 	case len(av.Evidence) == 0:
-		return "has a verdict with an empty evidence[]. An approval must cite something."
+		return envelope{
+			Code:    CodeNoEvidence,
+			Fix:     "batten verdict --unit " + unit + " --file v.json",
+			Message: "has a verdict with an empty evidence[]. An approval must cite something.",
+		}
 	case av.Result != requires && av.Result != "ok":
-		return fmt.Sprintf("verdict is %q, not %q. %s\nsafe_next_step: %s",
-			av.Result, requires, av.Why, av.SafeNextStep)
+		return envelope{
+			Code: CodeWrongResult,
+			Fix:  av.SafeNextStep,
+			Message: fmt.Sprintf("verdict is %q, not %q. %s\nsafe_next_step: %s",
+				av.Result, requires, av.Why, av.SafeNextStep),
+		}
 	}
-	return ""
+	return envelope{}
 }
 
 // staleTarget reports that the working tree drifted since the checks ran, or "" when it did not
@@ -414,13 +439,13 @@ func GateShortfallAt(st *store.Store, root, runID, gate, requires string) string
 // digest means "not measurable here" — a repo that is not a git repo, which is a real shape
 // batten has been field-tested against — and a comparison against "not measurable" would be a
 // denial invented out of an absence.
-func staleTarget(root string, bv *store.Verdict, unit string) string {
+func staleTarget(root string, bv *store.Verdict, unit string) envelope {
 	if root == "" || bv.TargetDigest == "" {
-		return ""
+		return envelope{}
 	}
 	now := store.TargetDigest(root)
 	if now == "" || now == bv.TargetDigest {
-		return ""
+		return envelope{}
 	}
 
 	// Named, not generic, and carrying its own way out. An error the agent loop cannot act on
@@ -433,25 +458,32 @@ func staleTarget(root string, bv *store.Verdict, unit string) string {
 	wasHead, wasContent := store.SplitDigest(bv.TargetDigest)
 	nowHead, nowContent := store.SplitDigest(now)
 
+	// Neither is retryable: running the same commit again does not re-run a check or move an
+	// anchor. Saying so is the difference between a loop that fixes this and one that spends the
+	// night re-issuing the identical command.
+	reanchor := "batten recover " + unit + " && batten check " + unit
 	switch {
 	case wasHead != "" && wasHead != nowHead && wasContent == nowContent:
-		return "has a MOVED BASE: the checks passed on commit " + wasHead + ", and HEAD is now " +
-			nowHead + ". Your uncommitted work is untouched — the history moved under it " +
-			"(a rebase, an amend, a checkout, or a commit landing underneath).\n" +
-			"The anchor this run recorded no longer describes what you are building on.\n" +
-			"Re-anchor and re-verify: batten recover " + unit + " && batten check " + unit
+		return envelope{Code: CodeMovedBase, Fix: reanchor,
+			Message: "has a MOVED BASE: the checks passed on commit " + wasHead + ", and HEAD is now " +
+				nowHead + ". Your uncommitted work is untouched — the history moved under it " +
+				"(a rebase, an amend, a checkout, or a commit landing underneath).\n" +
+				"The anchor this run recorded no longer describes what you are building on.\n" +
+				"Re-anchor and re-verify: " + reanchor}
 
 	case wasHead != "" && wasHead != nowHead:
-		return "has a MOVED BASE and a changed tree: the checks passed on commit " + wasHead +
-			", HEAD is now " + nowHead + ", and the uncommitted work changed too.\n" +
-			"Re-anchor and re-verify: batten recover " + unit + " && batten check " + unit
+		return envelope{Code: CodeMovedBase, Fix: reanchor,
+			Message: "has a MOVED BASE and a changed tree: the checks passed on commit " + wasHead +
+				", HEAD is now " + nowHead + ", and the uncommitted work changed too.\n" +
+				"Re-anchor and re-verify: " + reanchor}
 	}
 
-	return "has a STALE TARGET: the working tree changed after `batten check` ran, so the pass " +
-		"batten recorded describes a state that no longer exists.\n" +
-		"Something edited the tree between the check and this commit — a formatter, a build " +
-		"step, a file watcher, or the agent itself.\n" +
-		"Re-verify against what you are actually committing: batten check " + unit
+	return envelope{Code: CodeStaleTarget, Fix: "batten check " + unit,
+		Message: "has a STALE TARGET: the working tree changed after `batten check` ran, so the pass " +
+			"batten recorded describes a state that no longer exists.\n" +
+			"Something edited the tree between the check and this commit — a formatter, a build " +
+			"step, a file watcher, or the agent itself.\n" +
+			"Re-verify against what you are actually committing: batten check " + unit}
 }
 
 // shortUnit resolves a run back to its unit for a message. Falls back to the run id, which is
@@ -492,20 +524,28 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 			// statement of intent, and it is the unit whose work is about to land.
 			unit = r.UnitID
 		case unit != "":
-			return h.gate("PreToolUse", fmt.Sprintf(
-				"batten: this commit message names %s, but this session is working %s and %s has "+
-					"no open run.\nCommitting it under %s's verdict would credit one unit's review "+
-					"to another's work.\nOpen it (`batten phase %s %s`) or fix the commit message.",
-				named, unit, named, unit, named, firstPhaseID(h.Spec))), nil
+			return h.gateWith("PreToolUse", envelope{
+				Code: CodeWrongUnit,
+				Fix:  "batten phase " + named + " " + firstPhaseID(h.Spec),
+				Message: fmt.Sprintf(
+					"batten: this commit message names %s, but this session is working %s and %s has "+
+						"no open run.\nCommitting it under %s's verdict would credit one unit's review "+
+						"to another's work.\nOpen it (`batten phase %s %s`) or fix the commit message.",
+					named, unit, named, unit, named, firstPhaseID(h.Spec)),
+			}), nil
 		default:
 			// Nothing else resolved a unit either, so this message is the only evidence there
 			// is about what the commit is for — and the unit it names was never opened. Falling
 			// through here would reach the "nothing to attribute" path and say nothing at all,
 			// which is the silence this whole class of fix exists to remove.
-			return advise("PreToolUse", fmt.Sprintf(
-				"batten: this commit is NOT gated. Its message names %s, which has no run on "+
-					"record, so nothing was verified.\nOpen one with `batten phase %s %s`.",
-				named, named, firstPhaseID(h.Spec))), nil
+			return adviseWith("PreToolUse", envelope{
+				Code: CodeUnattributed,
+				Fix:  "batten phase " + named + " " + firstPhaseID(h.Spec),
+				Message: fmt.Sprintf(
+					"batten: this commit is NOT gated. Its message names %s, which has no run on "+
+						"record, so nothing was verified.\nOpen one with `batten phase %s %s`.",
+					named, named, firstPhaseID(h.Spec)),
+			}), nil
 		}
 	}
 
@@ -523,11 +563,15 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 			// once, at the start of a session whose commit may be two hundred turns later. At the
 			// moment of the ungated commit, nobody was told anything, and this hook's silence is
 			// indistinguishable from an approval.
-			return advise("PreToolUse", fmt.Sprintf(
-				"batten: this commit is NOT gated. No run is open and nothing identifies which unit "+
-					"this commit is for, so there was no verdict to check and nothing was verified.\n"+
-					"Open one with `batten phase <%s> %s` — the gate governs from there.",
-				h.Spec.Unit.Name, firstPhaseID(h.Spec))), nil
+			return adviseWith("PreToolUse", envelope{
+				Code: CodeUnattributed,
+				Fix:  "batten phase <" + h.Spec.Unit.Name + "> " + firstPhaseID(h.Spec),
+				Message: fmt.Sprintf(
+					"batten: this commit is NOT gated. No run is open and nothing identifies which unit "+
+						"this commit is for, so there was no verdict to check and nothing was verified.\n"+
+						"Open one with `batten phase <%s> %s` — the gate governs from there.",
+					h.Spec.Unit.Name, firstPhaseID(h.Spec)),
+			}), nil
 		}
 		var names []string
 		for _, r := range open {
@@ -535,22 +579,30 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 		}
 		// One open run the session does not own is not less ambiguous than five — it is the same
 		// failure with a shorter list, and batten still cannot say this commit belongs to it.
-		return advise("PreToolUse", fmt.Sprintf(
-			"batten: this commit is NOT gated. %d unit(s) are open (%s) and this session is bound "+
-				"to none of them, so batten cannot tell which one you are committing.\n"+
-				"Bind it with `batten phase <unit> <phase>`, or use a worktree per unit.",
-			len(open), strings.Join(names, ", "))), nil
+		return adviseWith("PreToolUse", envelope{
+			Code: CodeUnattributed,
+			Fix:  "batten phase " + names[0] + " <phase>",
+			Message: fmt.Sprintf(
+				"batten: this commit is NOT gated. %d unit(s) are open (%s) and this session is bound "+
+					"to none of them, so batten cannot tell which one you are committing.\n"+
+					"Bind it with `batten phase <unit> <phase>`, or use a worktree per unit.",
+				len(open), strings.Join(names, ", ")),
+		}), nil
 	}
 	run, err := h.Store.ActiveRun(h.Spec.Project, unit)
 	if err != nil {
 		// The unit is known — the branch names it — but no run was ever opened for it. This is
 		// the first commit after adopting batten: the newcomer branches, codes, commits, sees it
 		// succeed, and reasonably concludes the gate is on.
-		return advise("PreToolUse", fmt.Sprintf(
-			"batten: this commit is NOT gated. %s has no run on record, so there is no verdict to "+
-				"check and nothing was verified.\n"+
-				"Open one with `batten phase %s %s` — the gate starts governing from there.",
-			unit, unit, firstPhaseID(h.Spec))), nil
+		return adviseWith("PreToolUse", envelope{
+			Code: CodeUnattributed,
+			Fix:  "batten phase " + unit + " " + firstPhaseID(h.Spec),
+			Message: fmt.Sprintf(
+				"batten: this commit is NOT gated. %s has no run on record, so there is no verdict to "+
+					"check and nothing was verified.\n"+
+					"Open one with `batten phase %s %s` — the gate starts governing from there.",
+				unit, unit, firstPhaseID(h.Spec)),
+		}), nil
 	}
 
 	if ok, _ := h.Store.HasOverride(run.RunID, closing.Gate); ok {
@@ -569,24 +621,38 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 
 	v, err := h.Store.LatestVerdict(run.RunID, gateName)
 	if err != nil {
-		return h.gate("PreToolUse", fmt.Sprintf(
-			"batten: %s has no verdict envelope. Run the %q phase before committing.\n"+
-				"To proceed anyway (recorded in the audit log): batten override %s --reason \"...\"",
-			unit, gateGuess(h.Spec), unit)), nil
+		return h.gateWith("PreToolUse", envelope{
+			Code: CodeNoVerdict,
+			// Not retryable: running the same commit again changes nothing, and an unattended
+			// loop that retries it burns the window on an identical denial.
+			Fix: "batten phase " + unit + " " + gateGuess(h.Spec),
+			Message: fmt.Sprintf(
+				"batten: %s has no verdict envelope. Run the %q phase before committing.\n"+
+					"To proceed anyway (recorded in the audit log): batten override %s --reason \"...\"",
+				unit, gateGuess(h.Spec), unit),
+		}), nil
 	}
 
 	switch {
 	case v.Result == "ok" && len(v.Evidence) == 0:
 		// Belt and braces: SaveVerdict already refuses this, but if a verdict got in
 		// by another path, the gate still catches it.
-		return h.gate("PreToolUse", fmt.Sprintf(
-			"batten: %s has result=ok but an empty evidence[]. An approval must cite something.\n%s",
-			unit, store.ErrNoEvidence)), nil
+		return h.gateWith("PreToolUse", envelope{
+			Code: CodeNoEvidence,
+			Fix:  "batten verdict --unit " + unit + " --file v.json",
+			Message: fmt.Sprintf(
+				"batten: %s has result=ok but an empty evidence[]. An approval must cite something.\n%s",
+				unit, store.ErrNoEvidence),
+		}), nil
 	case v.Result != closing.RequiresVerdict && v.Result != "ok":
-		return h.gate("PreToolUse", fmt.Sprintf(
-			"batten: %s verdict is %q, not %q. %s\nsafe_next_step: %s\n"+
-				"To proceed anyway (recorded): batten override %s --reason \"...\"",
-			unit, v.Result, closing.RequiresVerdict, v.Why, v.SafeNextStep, unit)), nil
+		return h.gateWith("PreToolUse", envelope{
+			Code: CodeWrongResult,
+			Fix:  v.SafeNextStep,
+			Message: fmt.Sprintf(
+				"batten: %s verdict is %q, not %q. %s\nsafe_next_step: %s\n"+
+					"To proceed anyway (recorded): batten override %s --reason \"...\"",
+				unit, v.Result, closing.RequiresVerdict, v.Why, v.SafeNextStep, unit),
+		}), nil
 	}
 
 	// A warning we owe the user even when nothing below denies. It is held rather than
@@ -598,10 +664,11 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	// produced by running those checks. This is what closes the "I typed 'tests pass' without
 	// running them" hole — the mechanical part of the gate becomes true by construction.
 	if g, ok := h.Spec.Gates[gateName]; ok && len(g.Checks) > 0 {
-		if reason := GateShortfallAt(h.Store, h.Spec.Root, run.RunID, gateName, closing.RequiresVerdict); reason != "" {
-			return h.gate("PreToolUse", fmt.Sprintf(
+		if e := gateShortfall(h.Store, h.Spec.Root, run.RunID, gateName, closing.RequiresVerdict); e.Code != "" {
+			e.Message = fmt.Sprintf(
 				"batten: %s %s\nTo proceed anyway (recorded): batten override %s --reason \"...\"",
-				unit, reason, unit)), nil
+				unit, e.Message, unit)
+			return h.gateWith("PreToolUse", e), nil
 		}
 	} else {
 		// A gate with no checks cannot be verified by construction — batten has nothing to run,
@@ -615,10 +682,14 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 		// missing declaration, not a violation, and denying is not the user's fix for it.
 		//
 		// It is an advisory, so it must never outrank a denial. Hold it and fall through.
-		pending = advise("PreToolUse", fmt.Sprintf(
-			"batten: gate %q declares no checks, so %s was approved on the agent's word alone — "+
-				"nothing was run to verify it. Add gates.%s.checks to make this gate mean something.",
-			gateName, unit, gateName))
+		pending = adviseWith("PreToolUse", envelope{
+			Code: CodeNoChecks,
+			Fix:  "add gates." + gateName + ".checks to " + spec.Filename,
+			Message: fmt.Sprintf(
+				"batten: gate %q declares no checks, so %s was approved on the agent's word alone — "+
+					"nothing was run to verify it. Add gates.%s.checks to make this gate mean something.",
+				gateName, unit, gateName),
+		})
 	}
 
 	// Budget is also a closing condition: a run that blew its ceiling should not quietly land.
@@ -631,10 +702,17 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 			// Its own rule, not the verdict gate's: "stopped for spending too much" and
 			// "stopped for having no evidence" are different facts, and a report that merges
 			// them tells the user nothing they can act on.
-			return withRule(h.gate("PreToolUse", fmt.Sprintf(
-				"batten: %s is over budget. budget.on_exceed=block.\n%s\n"+
-					"To proceed anyway (recorded): batten override %s --reason \"...\"",
-				unit, formatCeilings(cs), unit)), store.RuleBudget), nil
+			return withRule(h.gateWith("PreToolUse", envelope{
+				Code: CodeOverBudget,
+				// The only honest "fix" is a decision a human takes: raise the ceiling, or
+				// override on the record. Neither is something a loop should do on its own at
+				// 3am, which is exactly why the ceiling exists.
+				Fix: "batten override " + unit + " --reason \"...\"",
+				Message: fmt.Sprintf(
+					"batten: %s is over budget. budget.on_exceed=block.\n%s\n"+
+						"To proceed anyway (recorded): batten override %s --reason \"...\"",
+					unit, formatCeilings(cs), unit),
+			}), store.RuleBudget), nil
 		}
 	}
 	return pending, nil
@@ -725,10 +803,17 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 			// a real trespass is recoverable; silently blocking every legitimate write is
 			// not. So: attributed collision -> gate; unattributed -> always advisory.
 			if myNode == "" {
-				return advise("PreToolUse", fmt.Sprintf(
-					"batten: %s is claimed by a fanned-out agent (%s) in this run. If you are that "+
-						"agent, ignore this; if you are the orchestrator, let the agent own its file.",
-					rel, store.DisplayNodeID(owner))), nil
+				return adviseWith("PreToolUse", envelope{
+					Code: CodeWriteSet,
+					// Retryable in the one sense that matters to a loop: batten could not
+					// attribute this write, so the same call from a payload that carries an
+					// agent_id would get a real answer instead of a guess.
+					Retry: true,
+					Message: fmt.Sprintf(
+						"batten: %s is claimed by a fanned-out agent (%s) in this run. If you are that "+
+							"agent, ignore this; if you are the orchestrator, let the agent own its file.",
+						rel, store.DisplayNodeID(owner)),
+				}), nil
 			}
 			// Both ids are shown as the agent was launched, not as the store keys it. The
 			// message names who you are and tells you to run `batten claim`, and an internal
@@ -739,21 +824,34 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 			if len(mine) > 0 {
 				owned = strings.Join(mine, "\n  ")
 			}
-			return h.gate("PreToolUse", fmt.Sprintf(
-				"batten: write-set collision. %s belongs to another agent's write-set (%s); you are %s.\n"+
-					"Two agents must never write the same file — that is what makes the fan-out safe.\n"+
-					"Your write-set:\n  %s\n"+
-					"If this file genuinely belongs to you, the plan is wrong: fix the plan, do not cross the fence.",
-				rel, store.DisplayNodeID(owner), store.DisplayNodeID(myNode), owned)), nil
+			return h.gateWith("PreToolUse", envelope{
+				Code: CodeWriteSet,
+				// Deliberately NO fix command. Every other denial hands over the way out; this
+				// one must not, because there is no legitimate way through: if two agents both
+				// need this file the PLAN is wrong, and the repair is to merge or sequence the
+				// sub-tasks. A `fix:` here would be an instruction to cross the fence.
+				Message: fmt.Sprintf(
+					"batten: write-set collision. %s belongs to another agent's write-set (%s); you are %s.\n"+
+						"Two agents must never write the same file — that is what makes the fan-out safe.\n"+
+						"Your write-set:\n  %s\n"+
+						"If this file genuinely belongs to you, the plan is wrong: fix the plan, do not cross the fence.",
+					rel, store.DisplayNodeID(owner), store.DisplayNodeID(myNode), owned),
+			}), nil
 		}
 	}
 
 	// Cross-run collision (another session is working this file right now).
 	if cross, err := h.Store.WriteSetOwnerAcrossOpenRuns(h.Spec.Project, rel, myRun); err == nil && cross != nil {
-		return h.gate("PreToolUse", fmt.Sprintf(
-			"batten: %s is being worked by %s in another open session (run %s).\n"+
-				"Editing it now races that work. Coordinate, or use a worktree per unit so each has its own branch.",
-			rel, cross.UnitID, cross.RunID)), nil
+		return h.gateWith("PreToolUse", envelope{
+			Code: CodeWriteSet,
+			// Retryable, unlike the within-run collision: the other session finishing is a
+			// thing that happens on its own, and this same write succeeds afterwards.
+			Retry: true,
+			Message: fmt.Sprintf(
+				"batten: %s is being worked by %s in another open session (run %s).\n"+
+					"Editing it now races that work. Coordinate, or use a worktree per unit so each has its own branch.",
+				rel, cross.UnitID, cross.RunID),
+		}), nil
 	}
 	return nil, nil
 }

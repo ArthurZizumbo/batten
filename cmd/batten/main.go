@@ -251,7 +251,7 @@ func degraded(event, cause string) {
 	}
 	// Not journalled: the reason batten is degraded is usually that it cannot write to the
 	// store, so a row recording that it could not write a row is not something to count on.
-	_ = json.NewEncoder(os.Stdout).Encode(hooks.Advise(event, fmt.Sprintf(
+	_ = json.NewEncoder(os.Stdout).Encode(hooks.AdviseDegraded(fmt.Sprintf(
 		"batten did NOT run for this tool call — neither the commit gate nor the write-set "+
 			"guard was applied, and nothing here was verified.\ncause: %s\n"+
 			"Retry, or diagnose it with `batten doctor`.", cause)))
