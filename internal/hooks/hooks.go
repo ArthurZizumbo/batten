@@ -414,8 +414,31 @@ func staleTarget(root string, bv *store.Verdict, unit string) string {
 	if now == "" || now == bv.TargetDigest {
 		return ""
 	}
+
 	// Named, not generic, and carrying its own way out. An error the agent loop cannot act on
-	// sends it hunting; this one says what happened and exactly what clears it.
+	// sends it hunting; these say what happened and exactly what clears it.
+	//
+	// And the two causes get different answers. Telling someone to re-run their checks is the
+	// right advice when a formatter edited a file and beside the point when they rebased —
+	// there, the news is that the history moved under them, and the anchor the run recorded is
+	// no longer the commit they are building on.
+	wasHead, wasContent := store.SplitDigest(bv.TargetDigest)
+	nowHead, nowContent := store.SplitDigest(now)
+
+	switch {
+	case wasHead != "" && wasHead != nowHead && wasContent == nowContent:
+		return "has a MOVED BASE: the checks passed on commit " + wasHead + ", and HEAD is now " +
+			nowHead + ". Your uncommitted work is untouched — the history moved under it " +
+			"(a rebase, an amend, a checkout, or a commit landing underneath).\n" +
+			"The anchor this run recorded no longer describes what you are building on.\n" +
+			"Re-anchor and re-verify: batten recover " + unit + " && batten check " + unit
+
+	case wasHead != "" && wasHead != nowHead:
+		return "has a MOVED BASE and a changed tree: the checks passed on commit " + wasHead +
+			", HEAD is now " + nowHead + ", and the uncommitted work changed too.\n" +
+			"Re-anchor and re-verify: batten recover " + unit + " && batten check " + unit
+	}
+
 	return "has a STALE TARGET: the working tree changed after `batten check` ran, so the pass " +
 		"batten recorded describes a state that no longer exists.\n" +
 		"Something edited the tree between the check and this commit — a formatter, a build " +

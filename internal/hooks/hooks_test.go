@@ -816,3 +816,82 @@ func gitAddCommit(t *testing.T, dir, msg string) {
 		}
 	}
 }
+
+// TestARebaseIsReportedAsAMovedBaseNotAsAnEditedFile.
+//
+// Both are drift, and they need opposite advice. "Re-run your checks" is right when a formatter
+// edited a file and beside the point when you rebased — there, the news is that the history moved
+// under work that nobody touched, and the anchor the run recorded no longer describes what is
+// being built on.
+//
+// gentle-ai calls this distinction `scope-changed` and answers it with an exact recovery command
+// rather than a generic refusal. A single opaque hash cannot make the distinction: it can only
+// say "different". So the digest keeps the commit and the working-tree fingerprint apart.
+func TestARebaseIsReportedAsAMovedBaseNotAsAnEditedFile(t *testing.T) {
+	h, run := gateFixture(t, []string{"go test ./..."}, "enforce")
+	gitBranchAt(t, h.Spec.Root, "feature/TASK-1")
+
+	src := filepath.Join(h.Spec.Root, "app.go")
+	if err := os.WriteFile(src, []byte("package app\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAddCommit(t, h.Spec.Root, "add app.go")
+
+	// Uncommitted work on top — the state anyone is in mid-unit.
+	if err := os.WriteFile(src, []byte("package app\n\nfunc F() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	digest := store.TargetDigest(h.Spec.Root)
+	if digest == "" {
+		t.Skip("git is unavailable here")
+	}
+	for _, v := range []store.Verdict{
+		{RunID: run.RunID, Gate: "qa", CheckID: "review", Result: "ok", Source: "agent",
+			Evidence: []string{"criteria judged"}},
+		{RunID: run.RunID, Gate: "qa", CheckID: "checks", Result: "ok", Source: "batten",
+			Evidence: []string{"go test ./...: PASS"}, TargetDigest: digest},
+	} {
+		if err := h.Store.SaveVerdict(v, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if reason := GateShortfallAt(h.Store, h.Spec.Root, run.RunID, "qa", "ok"); reason != "" {
+		t.Fatalf("control failed: nothing has moved yet, got: %s", reason)
+	}
+
+	// A commit lands underneath. The uncommitted work is untouched — only HEAD moved.
+	other := filepath.Join(h.Spec.Root, "unrelated.md")
+	if err := os.WriteFile(other, []byte("notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAddCommitPaths(t, h.Spec.Root, "unrelated notes", "unrelated.md")
+
+	reason := GateShortfallAt(h.Store, h.Spec.Root, run.RunID, "qa", "ok")
+	if reason == "" {
+		t.Fatal("the base commit moved and the gate still called the run verified")
+	}
+	if !strings.Contains(reason, "MOVED BASE") {
+		t.Errorf("a history move must be reported as one, not as an edited file:\n%s", reason)
+	}
+	if !strings.Contains(reason, "untouched") {
+		t.Errorf("the message should say the uncommitted work was not the thing that changed:\n%s", reason)
+	}
+	// The recovery command the denial promises has to be one that exists.
+	if !strings.Contains(reason, "batten recover") {
+		t.Errorf("the denial must name the recovery command:\n%s", reason)
+	}
+}
+
+// gitAddCommitPaths commits only the paths named, so the test can move HEAD without sweeping the
+// uncommitted work it is deliberately leaving in place.
+func gitAddCommitPaths(t *testing.T, dir, msg string, paths ...string) {
+	t.Helper()
+	for _, args := range [][]string{append([]string{"add"}, paths...), {"commit", "-q", "-m", msg}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git unavailable (%v): %s", err, out)
+		}
+	}
+}

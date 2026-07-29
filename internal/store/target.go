@@ -63,10 +63,32 @@ func TargetDigest(root string) string {
 		}
 	}
 
+	// TWO parts, not one hash, because the two ways a tree drifts need opposite answers.
+	//
+	// "A formatter touched your files" and "you rebased" are both drift, and telling someone to
+	// re-run their checks is right for the first and beside the point for the second — they need
+	// to know the history moved under them. gentle-ai calls this distinction `scope-changed`, and
+	// reports the exact recovery rather than a generic refusal. A single opaque hash cannot make
+	// it: it can only say "different".
 	h := sha256.New()
-	h.Write([]byte("head\x00" + head + "\x00status\x00" + withoutBattensOwnState(status) +
-		"\x00diff\x00" + diff))
-	return hex.EncodeToString(h.Sum(nil))[:32]
+	h.Write([]byte(withoutBattensOwnState(status) + "\x00" + diff))
+	return head[:min(len(head), 12)] + ":" + hex.EncodeToString(h.Sum(nil))[:24]
+}
+
+// SplitDigest separates a target digest into the commit it was taken at and the fingerprint of
+// the uncommitted work on top of it. Either may be empty for a digest this version did not write.
+func SplitDigest(d string) (head, content string) {
+	if i := strings.IndexByte(d, ':'); i >= 0 {
+		return d[:i], d[i+1:]
+	}
+	return "", d
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 // withoutBattensOwnState drops batten's own files from the fingerprint.
