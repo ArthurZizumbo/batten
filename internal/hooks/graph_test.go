@@ -372,6 +372,31 @@ func TestSessionStartTellsYouWhatTheGateWillDo(t *testing.T) {
 	}
 }
 
+// TestGatePhaseBriefingListsTheCriteriaToCite is ítem 21: the reviewer can only cite `AC-n:`
+// if something tells it the numbering. The briefing on a gate-bearing phase lists the seeded
+// criteria with their indices and the citation convention — and shows nothing when none were
+// seeded, because inventing a list the agent will judge against is worse than none.
+func TestGatePhaseBriefingListsTheCriteriaToCite(t *testing.T) {
+	h, _ := guardFixture(t)
+	r, _ := h.Store.EnsureRun("p", "TASK-1", "sess-a")
+	_ = h.Store.SetPhase(r.RunID, "close")
+	if err := h.Store.SeedCriteria(r.RunID, "TASK-1", []string{"returns 429", "names the window"}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := h.sessionStart(hookInput("SessionStart", "sess-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := out.HookSpecific.AdditionalContext
+	if !strings.Contains(ctx, "AC-1") || !strings.Contains(ctx, "returns 429") {
+		t.Errorf("the gate-phase briefing must list the criteria with their AC numbers:\n%s", ctx)
+	}
+	if !strings.Contains(ctx, "AC-<n>") {
+		t.Errorf("the briefing must state the citation convention, or nobody can use it:\n%s", ctx)
+	}
+}
+
 // TestSessionBriefRendersTokensAtTheirOwnScale is finding #36: the brief hand-rolled `%.1fM`
 // while every other surface used the shared renderer, so a measured 42,600 tokens appeared
 // as "0.0M" — an apparent zero, in the one line the agent reads before deciding whether

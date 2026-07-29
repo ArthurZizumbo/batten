@@ -162,6 +162,22 @@ O=$(hook SessionStart '{"session_id":"s1","hook_event_name":"SessionStart","sour
 check "$(has "$O" 'orient BEFORE you read')" "la instrucción se inyecta"
 check "$(has "$O" 'say so')" "exige declarar si ninguna memoria respondió"
 
+# ---- 11b · criterios como dato (ítem 21) --------------------------------
+echo "11b · los criterios del backlog se vuelven filas, y el PR los cuenta"
+# US-003 está en docs/backlog.md con dos criterios; phase los siembra.
+"$B" phase US-003 build >/dev/null 2>&1
+O=$("$B" status 2>&1)
+check "$(has "$O" 'US-003')" "batten status muestra el unit del backlog"
+check "$(has "$O" 'AC 0/2 covered')" "y sus criterios sembrados, sin cubrir todavía"
+check "$(has "$O" 'not started')" "los units que nadie arrancó también aparecen"
+printf '{"check_id":"qa","result":"ok","why":"revisado","evidence":["AC-1: criterio A verificado a mano"]}' > "$SB/.v21.json"
+"$B" verdict --unit US-003 --file "$SB/.v21.json" >/dev/null 2>&1
+O=$("$B" status 2>&1)
+check "$(has "$O" 'AC 1/2 covered')" "la evidencia que cita AC-1 lo cubre; AC-2 sigue abierto"
+O=$("$B" pr US-003 2>&1)
+check "$(has "$O" '1 of 2 covered')" "el PR dice cuántos criterios cubrió"
+check "$(has "$O" 'not covered')" "y nombra el que NO — un tablero que solo muestra lo verde adula"
+
 # ---- 12 · degradación sin git, sin checks, sin build files -------------
 echo "12 · el repo entero degradó sin reventar"
 check "$([ -f .batten/batten.db ] && echo y || echo n)" "la base quedó DENTRO del sandbox"

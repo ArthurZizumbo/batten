@@ -75,6 +75,144 @@ const partialPricingSpec = "version: 1\nproject: p\nunit:\n  name: TASK\n  patte
 	"phases:\n  - id: build\n    anchor: git_sha\n" +
 	"budget:\n  tokens_per_run: 3000000\n  imputed_usd_per_run: 2.0\n  on_exceed: warn\n"
 
+// TestCriteriaFlowFromPlanToPR is ítem 21 end to end: the unit's acceptance criteria leave
+// the markdown (fase A), become rows when the phase opens (fase B), get covered by the
+// verdict's `AC-n:` citations, and the PR then says "AC-1 covered by X" — which is a
+// materially stronger claim than loose evidence, because the reader sees what is NOT covered.
+func TestCriteriaFlowFromPlanToPR(t *testing.T) {
+	criteriaSpec := "version: 1\nproject: p\nunit:\n  name: US\n  pattern: 'US-\\d{3}'\n" +
+		"  plan: docs/backlog.md\n  locator: '### {id}'\n" +
+		"phases:\n  - id: build\n    anchor: git_sha\n  - id: close\n    gate: qa\n    requires_verdict: ok\n" +
+		"gates:\n  qa:\n    verdict: required\n    evidence: required\n"
+	dir := gitRepoWithSpec(t, criteriaSpec)
+	t.Setenv("BATTEN_DB", filepath.Join(dir, "state.db"))
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	backlog := "# B\n\n### US-001 — rate limit\n\n**Criterios de aceptacion**\n" +
+		"- returns 429 over the limit\n- the header names the window\n"
+	if err := os.WriteFile(filepath.Join(dir, "docs", "backlog.md"), []byte(backlog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	inDir(t, dir, func() {
+		_ = captureStdout(t, func() {
+			if err := cmdPhase([]string{"US-001", "build"}); err != nil {
+				t.Fatalf("phase: %v", err)
+			}
+		})
+
+		vf := filepath.Join(dir, "v.json")
+		v := `{"check_id":"qa","result":"ok","why":"criteria judged",` +
+			`"evidence":["AC-1: curl -i shows 429 on request 11","go test ./...: PASS"]}`
+		if err := os.WriteFile(vf, []byte(v), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_ = captureStdout(t, func() {
+			if err := cmdVerdict([]string{"--unit", "US-001", "--file", vf}); err != nil {
+				t.Fatalf("verdict: %v", err)
+			}
+		})
+
+		pr := captureStdout(t, func() {
+			if err := cmdPR([]string{"US-001"}); err != nil {
+				t.Fatalf("pr: %v", err)
+			}
+		})
+		if !strings.Contains(pr, "1 of 2 covered") {
+			t.Errorf("the PR must count coverage honestly (1 of 2):\n%s", pr)
+		}
+		if !strings.Contains(pr, "AC-1") || !strings.Contains(pr, "curl -i shows 429") {
+			t.Errorf("AC-1 must name the evidence that covered it:\n%s", pr)
+		}
+		if !strings.Contains(pr, "not covered") {
+			t.Errorf("AC-2 was never cited and the PR must say so, not hide the row:\n%s", pr)
+		}
+	})
+}
+
+// TestStatusReportsTheBacklogAgainstTheRecord is ítem 21 fase C: the one view `batten runs`
+// cannot be — a unit nobody started has no run to list, and the backlog is where those live.
+// Every backlog unit appears with its run state and criteria coverage; work the record knows
+// that the backlog does not is named too, or this view would claim the backlog is the world.
+func TestStatusReportsTheBacklogAgainstTheRecord(t *testing.T) {
+	criteriaSpec := "version: 1\nproject: p\nunit:\n  name: US\n  pattern: 'US-\\d{3}'\n" +
+		"  plan: docs/backlog.md\n  locator: '### {id}'\n" +
+		"phases:\n  - id: build\n    anchor: git_sha\n  - id: close\n    gate: qa\n    requires_verdict: ok\n" +
+		"gates:\n  qa:\n    verdict: required\n    evidence: required\n"
+	dir := gitRepoWithSpec(t, criteriaSpec)
+	t.Setenv("BATTEN_DB", filepath.Join(dir, "state.db"))
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	backlog := "# B\n\n### US-001 — rate limit\n\n**Criterios de aceptacion**\n- a\n- b\n\n" +
+		"### US-002 — nobody started this\n"
+	if err := os.WriteFile(filepath.Join(dir, "docs", "backlog.md"), []byte(backlog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	inDir(t, dir, func() {
+		_ = captureStdout(t, func() { _ = cmdPhase([]string{"US-001", "build"}) })
+		vf := filepath.Join(dir, "v.json")
+		_ = os.WriteFile(vf, []byte(`{"check_id":"qa","result":"ok","why":"w","evidence":["AC-1: proven"]}`), 0o644)
+		_ = captureStdout(t, func() { _ = cmdVerdict([]string{"--unit", "US-001", "--file", vf}) })
+		// Ad-hoc work the backlog does not know about.
+		_ = captureStdout(t, func() { _ = cmdPhase([]string{"US-099", "build"}) })
+
+		out := captureStdout(t, func() {
+			if err := cmdStatus(); err != nil {
+				t.Fatalf("status: %v", err)
+			}
+		})
+		if !strings.Contains(out, "US-001") || !strings.Contains(out, "AC 1/2 covered") {
+			t.Errorf("US-001 must show its criteria coverage:\n%s", out)
+		}
+		if !strings.Contains(out, "US-002") || !strings.Contains(out, "not started") {
+			t.Errorf("a backlog unit nobody started must still appear:\n%s", out)
+		}
+		if !strings.Contains(out, "not in the backlog") || !strings.Contains(out, "US-099") {
+			t.Errorf("ad-hoc work must be named, or the view claims the backlog is the world:\n%s", out)
+		}
+	})
+}
+
+// TestDoctorCrossesUnitPlanWithReality is ítem 21 fase A: unit.plan and unit.locator were
+// written by init and read by NOBODY — the classic declared-not-consumed shape. Now that
+// internal/plan reads them, doctor cross-checks the declaration against the document: a
+// backlog the locator finds nothing in is a spec pointing at nothing.
+func TestDoctorCrossesUnitPlanWithReality(t *testing.T) {
+	planSpec := "version: 1\nproject: p\nunit:\n  name: US\n  pattern: 'US-\\d{3}'\n" +
+		"  plan: docs/backlog.md\n  locator: '### {id}'\n" +
+		"phases:\n  - id: build\n    anchor: git_sha\n"
+	dir := gitRepoWithSpec(t, planSpec)
+	t.Setenv("BATTEN_DB", filepath.Join(dir, "state.db"))
+	if err := os.MkdirAll(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "docs", "backlog.md"),
+		[]byte("# B\n\n### US-001 — a\n\n### US-002 — b\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	inDir(t, dir, func() {
+		out := captureStdout(t, func() { _ = cmdDoctor() })
+		if !strings.Contains(out, "unit.plan: 2 unit(s)") {
+			t.Errorf("doctor must count what the locator actually finds:\n%s", out)
+		}
+
+		// A locator that finds nothing is a declared backlog batten cannot read — the state
+		// every criteria surface would silently render as an empty world.
+		if err := os.WriteFile(filepath.Join(dir, "docs", "backlog.md"),
+			[]byte("# B\n\n#### US-001 — wrong level\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out = captureStdout(t, func() { _ = cmdDoctor() })
+		if !strings.Contains(out, "NO unit matching") {
+			t.Errorf("a locator that matches nothing must be a loud warning:\n%s", out)
+		}
+	})
+}
+
 // TestNarrowExitFoldsWindowsWraparound is finding #13. A Windows process that dies abnormally
 // reports a negative NTSTATUS, and the raw ExitCode() renders as its unsigned 32-bit
 // wraparound: `npm test` in a repo with no package.json printed `exit 4294963238` instead of

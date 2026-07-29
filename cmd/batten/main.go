@@ -34,6 +34,7 @@ import (
 	"github.com/ArthurZizumbo/batten/internal/gitx"
 	"github.com/ArthurZizumbo/batten/internal/hooks"
 	"github.com/ArthurZizumbo/batten/internal/mcp"
+	"github.com/ArthurZizumbo/batten/internal/plan"
 	"github.com/ArthurZizumbo/batten/internal/render"
 	"github.com/ArthurZizumbo/batten/internal/scan"
 	"github.com/ArthurZizumbo/batten/internal/spec"
@@ -64,6 +65,8 @@ func main() {
 		err = cmdClaim(os.Args[2:])
 	case "runs":
 		err = cmdRuns()
+	case "status":
+		err = cmdStatus()
 	case "show":
 		err = cmdShow(os.Args[2:])
 	case "canvas":
@@ -141,7 +144,8 @@ func printUsage() {
   batten recover <unit>              re-anchor a run whose base moved (rebase, amend, pull)
   batten report [--since d|--week]   what batten saw, and what it stopped (--share for markdown)
   batten runs                        list runs
-  batten show <unit>                 run detail
+  batten status                      the backlog against the record: runs and criteria coverage
+  batten show <unit> [--run <id>]    run detail
   batten canvas <unit> [--out p]     emit the run DAG as JSON Canvas (--html for a standalone page)
   batten budget [<unit>]             governor status (tokens / imputed $ / quota)
   batten override <unit> --reason    audited escape from the gate
@@ -451,6 +455,17 @@ func cmdPhase(args []string) error {
 	if err != nil {
 		return err
 	}
+	// Seed the run's acceptance criteria from the unit's block in unit.plan (ítem 21). Once
+	// per run — SeedCriteria is a no-op when rows exist, so statuses survive phase changes.
+	// Best-effort: an ad-hoc unit that is not in the backlog, or no backlog at all, is a
+	// normal state and must never block a phase.
+	if units, perr := plan.Load(sp); perr == nil {
+		if u, ok := plan.Find(units, unit); ok {
+			if crit := u.Criteria(); len(crit) > 0 {
+				_ = st.SeedCriteria(run.RunID, unit, crit)
+			}
+		}
+	}
 	if err := st.SetPhase(run.RunID, phaseID); err != nil {
 		return err
 	}
@@ -586,6 +601,85 @@ func cmdRuns() error {
 	}
 	if floor {
 		fmt.Println("≥ / not priced: part of those tokens are on models with no published rate — the dollar figure is a floor, never a total")
+	}
+	return nil
+}
+
+// cmdStatus is the compliance view (ítem 21, fase C): the backlog against the record. Every
+// unit the plan document defines, whether batten has seen it or not — which is the half
+// `batten runs` cannot show, because a unit nobody started has no run to list.
+func cmdStatus() error {
+	sp, st, err := load()
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	units, err := plan.Load(sp)
+	if err != nil {
+		if errors.Is(err, plan.ErrNoPlan) {
+			return errors.New("status: no unit.plan declared in batten.yaml — there is no backlog to " +
+				"report against. `batten runs` lists what batten has seen")
+		}
+		return err
+	}
+	if len(units) == 0 {
+		return fmt.Errorf("status: unit.plan %s has no unit matching locator %q — batten doctor explains",
+			sp.Unit.Plan, sp.Unit.Locator)
+	}
+
+	fmt.Printf("backlog %s — %d unit(s)\n\n", sp.Unit.Plan, len(units))
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	seen := map[string]bool{}
+	for _, u := range units {
+		seen[u.ID] = true
+		run, err := st.LatestRun(sp.Project, u.ID)
+		state, criteria := "· not started", ""
+		if err == nil {
+			switch run.Status {
+			case "running":
+				state = "◐ " + run.Status + " (" + run.Phase + ")"
+			case "ok":
+				state = "✓ closed ok"
+			default:
+				state = "✗ " + run.Status
+			}
+			// The coverage column never invents: no rows seeded means the unit declares no
+			// criteria (or predates the table) — which is not the same fact as 0 covered.
+			if cs, err := st.Criteria(run.RunID); err == nil && len(cs) > 0 {
+				covered := 0
+				for _, c := range cs {
+					if c.Status == store.StatusCovered {
+						covered++
+					}
+				}
+				criteria = fmt.Sprintf("AC %d/%d covered", covered, len(cs))
+			} else {
+				criteria = "no criteria seeded"
+			}
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", u.ID, firstLineOf(u.Title), state, criteria)
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+
+	// Work the record knows that the backlog does not: ad-hoc units are normal, and hiding
+	// them here would make this view claim the backlog is the whole world.
+	runs, err := st.ListRuns(sp.Project, 200)
+	if err != nil {
+		return err
+	}
+	var adhoc []string
+	adhocSeen := map[string]bool{}
+	for _, r := range runs {
+		if !seen[r.UnitID] && !adhocSeen[r.UnitID] {
+			adhocSeen[r.UnitID] = true
+			adhoc = append(adhoc, fmt.Sprintf("%s (%s)", r.UnitID, r.Status))
+		}
+	}
+	if len(adhoc) > 0 {
+		fmt.Printf("\nnot in the backlog: %s\n", strings.Join(adhoc, ", "))
 	}
 	return nil
 }
@@ -1780,6 +1874,21 @@ func checkSpecOnly(d *dx, sp *spec.Spec) {
 			d.ok("obsidian vault: %s", p)
 		} else {
 			d.warn("obsidian vault not found: %s (canvas falls back to .batten/)", p)
+		}
+	}
+	// unit.plan crossed with reality, same spirit as query_before_read: a declared backlog
+	// that the locator cannot find a single unit in is a spec pointing at nothing, and every
+	// surface built on it (criteria, `batten status`) would quietly show an empty world.
+	if sp.Unit.Plan != "" {
+		switch units, err := plan.Load(sp); {
+		case err != nil:
+			d.warn("unit.plan: %v", err)
+		case len(units) == 0:
+			d.warn("unit.plan %s has NO unit matching locator %q + pattern %q — the backlog "+
+				"is declared and unreadable, which is worse than undeclared",
+				sp.Unit.Plan, sp.Unit.Locator, sp.Unit.Pattern)
+		default:
+			d.ok("unit.plan: %d unit(s) in %s", len(units), sp.Unit.Plan)
 		}
 	}
 	for name, dom := range sp.Domains {

@@ -60,9 +60,8 @@ var declaredAsFuture = map[string]string{
 	"Resource.Priority": "ordering when capacity is short; nothing serializes on it (plan §8)",
 	"Domain.Coverage":   "a coverage floor per domain that no check enforces (plan §8)",
 	"Domain.Resources":  "which resources a domain contends for; see Resource.* (plan §8)",
-	"Unit.Locator": "how to find a unit's block inside the plan document. `batten init` writes it " +
-		"from the backlog's real heading shape, and nothing reads it back (plan §8)",
-
+	// Unit.Locator left the list with ítem 21 (fase A): internal/plan resolves unit.plan +
+	// unit.locator into unit blocks, and doctor cross-checks that the locator finds anything.
 	// ObsidianCap.Export — THE TENTH INSTANCE, found by this guard on the first run it ever
 	// made — was here until ítem 23 wired it up: export.Run now honours the list.
 }

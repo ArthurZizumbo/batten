@@ -109,6 +109,7 @@ type detail struct {
 	battenVerdict *store.Verdict
 	usage         map[string]store.Usage // node_id -> that node's share of the ledger
 	ceils         []store.Ceiling
+	criteria      []store.Criterion // the run's acceptance criteria; empty = none seeded
 	// writesets[nodeID] = the files that node owns
 	writesets map[string][]string
 }
@@ -185,6 +186,7 @@ func (m *Model) reload() {
 	// check output. A screen that shows half a two-half rule is a screen you can misread.
 	d.battenVerdict, _ = m.store.LatestVerdictBySource(r.RunID, "", "batten")
 	d.verdict, _ = m.store.LatestVerdictNotBySource(r.RunID, "", "batten")
+	d.criteria, _ = m.store.Criteria(r.RunID)
 	for _, n := range d.nodes {
 		if ws, err := m.store.WriteSet(r.RunID, n.NodeID); err == nil && len(ws) > 0 {
 			d.writesets[n.NodeID] = ws
@@ -429,8 +431,35 @@ func (m *Model) detailHead(d *detail) []string {
 	if mi := m.spec.Budget.MaxIterations; mi > 0 {
 		out = append(out, stDim.Render(fmt.Sprintf("iters   %d / %d", r.Iterations, mi)))
 	}
+	if line := criteriaLine(d.criteria); line != "" {
+		out = append(out, line)
+	}
 	out = append(out, "")
 	return out
+}
+
+// criteriaLine is the compliance glance (ítem 21): which acceptance criteria an approving
+// verdict has cited, and which are still open. Empty when none were seeded — a run with no
+// criteria on record must not show a satisfied empty scoreboard.
+func criteriaLine(cs []store.Criterion) string {
+	if len(cs) == 0 {
+		return ""
+	}
+	covered := 0
+	var marks []string
+	for _, c := range cs {
+		if c.Status == store.StatusCovered {
+			covered++
+			marks = append(marks, fmt.Sprintf("AC-%d✓", c.Idx))
+		} else {
+			marks = append(marks, fmt.Sprintf("AC-%d·", c.Idx))
+		}
+	}
+	line := fmt.Sprintf("criteria %d/%d covered  %s", covered, len(cs), strings.Join(marks, " "))
+	if covered < len(cs) {
+		return stWarn.Render(line)
+	}
+	return stDim.Render(line)
 }
 
 // detailTree renders phases and the subagents each phase spawned. Cross-edges (retry_of,

@@ -372,3 +372,19 @@ func TestTheTUIShowsBothVerdictsAndNamesTheMissingHalf(t *testing.T) {
 		t.Errorf("the missing-half warning survived the verdict that satisfies it:\n%s", out)
 	}
 }
+
+// criteriaLine is ítem 21's compliance glance. The empty case is the honest one: a run with
+// no criteria on record must render NOTHING, never a satisfied empty scoreboard.
+func TestCriteriaLineNeverShowsAnEmptyScoreboardAsSatisfied(t *testing.T) {
+	if got := criteriaLine(nil); got != "" {
+		t.Errorf("no criteria seeded must render nothing, got %q", got)
+	}
+	cs := []store.Criterion{
+		{Idx: 1, Status: store.StatusCovered},
+		{Idx: 2, Status: "open"},
+	}
+	got := criteriaLine(cs)
+	if !strings.Contains(got, "1/2 covered") || !strings.Contains(got, "AC-1✓") || !strings.Contains(got, "AC-2·") {
+		t.Errorf("criteriaLine = %q, want per-criterion marks and an honest count", got)
+	}
+}

@@ -1090,6 +1090,23 @@ func phaseBriefing(sp *spec.Spec, st *store.Store, run *store.Run) string {
 		fmt.Fprintf(&b, "- this is the CLOSING phase: a commit is denied without a verdict `%s` "+
 			"citing evidence.\n", p.RequiresVerdict)
 	}
+	// The acceptance criteria, numbered, on every gate-bearing phase — so the reviewer can
+	// cite `AC-n:` in its evidence and the scoreboard fills itself (ítem 21). Only shown when
+	// they were actually seeded from unit.plan: inventing a list here would be worse than
+	// none, because the agent would judge against it.
+	if run != nil && (p.Gate != "" || p.RequiresVerdict != "") {
+		if cs, err := st.Criteria(run.RunID); err == nil && len(cs) > 0 {
+			b.WriteString("- acceptance criteria (cite as `AC-<n>: <evidence>` in the verdict — " +
+				"a cited criterion is a covered one):\n")
+			for _, c := range cs {
+				mark := "·"
+				if c.Status == store.StatusCovered {
+					mark = "✓"
+				}
+				fmt.Fprintf(&b, "  %s AC-%d %s\n", mark, c.Idx, c.Text)
+			}
+		}
+	}
 	return b.String()
 }
 

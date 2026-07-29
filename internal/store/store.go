@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -261,7 +263,7 @@ CREATE TABLE IF NOT EXISTS overrides (
 // schemaVersion is bumped whenever an additive migration is added below. The base schema
 // (CREATE TABLE IF NOT EXISTS ...) always runs; versioned steps run once, in order, so a
 // database created by an older batten upgrades in place instead of needing a rebuild.
-const schemaVersion = 10
+const schemaVersion = 11
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
@@ -336,6 +338,23 @@ func (s *Store) migrate() error {
 		// One flag on the run turns all four into denials, with no new orchestration: batten still
 		// does not run the loop, it just stops being the only participant that cannot say no.
 		`ALTER TABLE runs ADD COLUMN mode TEXT`,
+		// v11: acceptance criteria as data (plan §7, ítem 21).
+		//
+		// "Criteria" appeared ten times in the codebase's prose and zero times as data:
+		// evidence was a flat []string and nothing could say WHICH criterion a piece of
+		// evidence covered. This table is seeded from the unit's block in unit.plan when a
+		// phase opens, and a verdict's evidence marks rows covered by citing `AC-<idx>:`.
+		// The format of the verdict envelope does not change — the citation is a string
+		// prefix, because #27 showed what handing objects to string fields does.
+		`CREATE TABLE IF NOT EXISTS criteria (
+		  run_id   TEXT NOT NULL,
+		  unit_id  TEXT NOT NULL,
+		  idx      INTEGER NOT NULL,
+		  text     TEXT NOT NULL,
+		  status   TEXT NOT NULL DEFAULT 'open',
+		  evidence TEXT,
+		  PRIMARY KEY (run_id, idx)
+		)`,
 	}
 	for i := have; i < schemaVersion; i++ {
 		if _, err := s.db.Exec(migrations[i]); err != nil {
@@ -957,7 +976,99 @@ func (s *Store) SaveVerdict(v Verdict, evidenceRequired bool) error {
 	  VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
 		v.RunID, v.NodeID, v.Gate, v.CheckID, v.Result, string(ev), v.Why, v.SafeNextStep, rc, src, v.TS,
 		nullable(v.TargetDigest))
+	if err != nil {
+		return err
+	}
+	// An approving verdict covers the criteria its evidence CITES — `AC-3: ...` marks
+	// criterion 3. Only an ok result covers anything: a blocked verdict naming AC-3 is
+	// describing what failed, and marking it covered would invert its meaning. Best-effort
+	// by contract: the verdict is already saved, and a citation to a criterion this run
+	// never seeded simply covers nothing.
+	if v.Result == "ok" {
+		for _, e := range v.Evidence {
+			if m := citationRe.FindStringSubmatch(e); m != nil {
+				idx, _ := strconv.Atoi(m[1])
+				_, _ = s.db.Exec(`UPDATE criteria SET status='covered', evidence=?
+				   WHERE run_id=? AND idx=?`, firstLineStr(e), v.RunID, idx)
+			}
+		}
+	}
 	return err
+}
+
+// citationRe is the evidence-to-criterion link: an evidence item that BEGINS with `AC-<n>`
+// cites acceptance criterion n. A string prefix on the existing []string, deliberately —
+// finding #27 showed what handing objects to string fields does, so the envelope's shape
+// does not change.
+var citationRe = regexp.MustCompile(`^\s*AC-(\d+)\b`)
+
+func firstLineStr(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+// Criterion is one acceptance criterion of a run, seeded from the unit's block in unit.plan.
+type Criterion struct {
+	RunID    string
+	UnitID   string
+	Idx      int // 1-based: the n in AC-n
+	Text     string
+	Status   string // open | covered
+	Evidence string // first line of the evidence item that covered it
+}
+
+// StatusCovered is the one non-default criterion state. `open` is the default, and it means
+// exactly "no approving evidence has cited this yet" — never "failed".
+const StatusCovered = "covered"
+
+// SeedCriteria records a run's acceptance criteria, once: re-seeding an already-seeded run is
+// a no-op, so statuses survive phase changes — every `batten phase` call passes through here.
+func (s *Store) SeedCriteria(runID, unitID string, texts []string) error {
+	if len(texts) == 0 {
+		return nil
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM criteria WHERE run_id=?`, runID).Scan(&n); err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for i, t := range texts {
+		if _, err := tx.Exec(`INSERT INTO criteria (run_id, unit_id, idx, text, status)
+		   VALUES (?,?,?,?,'open')`, runID, unitID, i+1, t); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// Criteria lists a run's acceptance criteria in index order. Empty means none were seeded —
+// the unit has no criteria in the plan document, or no plan document at all — which every
+// surface must report as "no criteria declared", never as a fully-satisfied empty list.
+func (s *Store) Criteria(runID string) ([]Criterion, error) {
+	rows, err := s.db.Query(`SELECT run_id, unit_id, idx, text, status, COALESCE(evidence,'')
+	   FROM criteria WHERE run_id=? ORDER BY idx`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Criterion
+	for rows.Next() {
+		var c Criterion
+		if err := rows.Scan(&c.RunID, &c.UnitID, &c.Idx, &c.Text, &c.Status, &c.Evidence); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }
 
 const verdictCols = `gate, check_id, result, evidence_json, COALESCE(why,''),
