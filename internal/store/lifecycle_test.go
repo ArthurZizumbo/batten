@@ -270,6 +270,43 @@ func TestStaleRunsFindsWhatNobodyClosed(t *testing.T) {
 	}
 }
 
+// TestRecentActivityClearsTheStaleWarning is finding #19. The predicate reads "open >48h with
+// no activity", but events.run_id was NULL on every row the hook wrote, so the activity half
+// was dead code: a run being worked RIGHT NOW was reported stale purely by its age, and the
+// advice ("close or resume them") could never be satisfied by resuming. An attributed event
+// must clear it.
+func TestRecentActivityClearsTheStaleWarning(t *testing.T) {
+	s := open(t)
+	worked := run(t, s, "US-1", "sess-a")
+	idle := run(t, s, "US-2", "sess-b")
+
+	// Both runs opened three days ago.
+	old := time.Now().Add(-72 * time.Hour).Unix()
+	for _, r := range []*Run{worked, idle} {
+		if _, err := s.db.Exec(`UPDATE runs SET started_at=? WHERE run_id=?`, old, r.RunID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// One of them saw a hook event five minutes ago — the shape record() writes when the
+	// session is bound to the run.
+	if err := s.LogEvent(worked.RunID, "", "PreToolUse", []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	stale, err := s.StaleRuns("p", 48*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stale) != 1 || stale[0].RunID != idle.RunID {
+		ids := make([]string, len(stale))
+		for i, r := range stale {
+			ids[i] = r.UnitID
+		}
+		t.Errorf("stale = %v, want exactly US-2 — a run with a recent attributed event is being "+
+			"worked, not rotting", ids)
+	}
+}
+
 func TestListRunsAndEventLog(t *testing.T) {
 	s := open(t)
 	a := run(t, s, "US-1", "sess-a")

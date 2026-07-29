@@ -318,6 +318,18 @@ func (s *Spec) MatchUnit(text string) string {
 	return s.Unit.re.FindString(text)
 }
 
+// ValidUnitID reports whether id IS a unit id — the whole string, not a substring. MatchUnit
+// is for arbitrary text (a commit message, a branch name) and is the wrong tool for argv:
+// with pattern `US-\d{3}`, FindString accepts US-0001 by matching its US-000 prefix, so a
+// typo quietly becomes a different unit. Anchored with ^$, or it is not an identifier (#21).
+func (s *Spec) ValidUnitID(id string) bool {
+	re, err := regexp.Compile("^(?:" + s.Unit.Pattern + ")$")
+	if err != nil {
+		return false
+	}
+	return re.MatchString(id)
+}
+
 // Artifact resolves an artifact path for a unit, relative to the spec root.
 func (s *Spec) Artifact(kind, unitID string) (string, bool) {
 	tmpl, ok := s.Artifacts[kind]

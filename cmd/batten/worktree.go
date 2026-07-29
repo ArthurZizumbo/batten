@@ -90,6 +90,12 @@ func cmdWorktree(args []string) error {
 	if merge && remove {
 		return errors.New("worktree: --merge and --remove do different things; run them in that order")
 	}
+	// Same rigor a phase id gets: creating a tree also opens a run, and a typo'd unit would
+	// open a phantom one with exit 0 (#21). Merge/remove operate on what exists and resolve
+	// by name anyway.
+	if !merge && !remove && !sp.ValidUnitID(unit) {
+		return fmt.Errorf("worktree: %q does not match unit.pattern %q — no tree was created", unit, sp.Unit.Pattern)
+	}
 
 	// Every git-level operation here writes into the area SHARED by all worktrees, so it is taken
 	// under the one lock that is actually shared. See gitx.Lock for why the location matters.

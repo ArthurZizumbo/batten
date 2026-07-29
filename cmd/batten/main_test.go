@@ -93,6 +93,156 @@ const partialPricingSpec = "version: 1\nproject: p\nunit:\n  name: TASK\n  patte
 	"phases:\n  - id: build\n    anchor: git_sha\n" +
 	"budget:\n  tokens_per_run: 3000000\n  imputed_usd_per_run: 2.0\n  on_exceed: warn\n"
 
+const lifecycleSpec = "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
+	"phases:\n  - id: build\n    anchor: git_sha\n  - id: close\n    gate: qa\n    requires_verdict: ok\n" +
+	"gates:\n  qa:\n    checks: ['git --version']\n    verdict: required\n    evidence: required\n"
+
+// TestCheckAndVerdictRefuseToForkAClosedUnit is finding #12. `batten check` on a closed unit
+// silently INSERTed a second run — phase NULL, anchor NULL, status running — and exit 0 made
+// it look right; `batten show` then displayed only the empty fork. Opening a run is `batten
+// phase`'s job alone: the other verbs operate on the run that is open, or say there is none.
+func TestCheckAndVerdictRefuseToForkAClosedUnit(t *testing.T) {
+	dir := gitRepoWithSpec(t, lifecycleSpec)
+	db := filepath.Join(dir, "state.db")
+	t.Setenv("BATTEN_DB", db)
+
+	inDir(t, dir, func() {
+		_ = captureStdout(t, func() { _ = cmdPhase([]string{"TASK-1", "build"}) })
+
+		st, err := store.Open(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := st.ActiveRun("p", "TASK-1")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.CloseRun(r.RunID, "ok"); err != nil {
+			t.Fatal(err)
+		}
+		st.Close()
+
+		var checkErr error
+		_ = captureStdout(t, func() { checkErr = cmdCheck([]string{"TASK-1"}) })
+		if checkErr == nil || !strings.Contains(checkErr.Error(), "no open run") {
+			t.Errorf("check on a closed unit must refuse and say why; got err=%v", checkErr)
+		}
+
+		vf := filepath.Join(dir, "v.json")
+		if err := os.WriteFile(vf, []byte(`{"check_id":"qa","result":"ok","evidence":["x"],"why":"y"}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var verdictErr error
+		_ = captureStdout(t, func() { verdictErr = cmdVerdict([]string{"--unit", "TASK-1", "--file", vf}) })
+		if verdictErr == nil || !strings.Contains(verdictErr.Error(), "no open run") {
+			t.Errorf("verdict on a closed unit must refuse and say why; got err=%v", verdictErr)
+		}
+
+		// The real damage was the silent fork: exactly one run may exist afterwards.
+		st, err = store.Open(db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		runs, err := st.ListRuns("p", 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(runs) != 1 {
+			t.Errorf("%d runs exist for one unit — a read verb forked a new one", len(runs))
+		}
+	})
+}
+
+// TestAUnitIdThatDoesNotMatchThePatternIsRejected is finding #21. `batten phase FOO-9 build`
+// opened a run with exit 0 while the same command hard-rejects a phase that does not exist —
+// and there is no way to delete the phantom afterwards. The pattern is anchored whole-string:
+// with `US-\d{3}`, US-0001 must not slide through as its US-000 prefix.
+func TestAUnitIdThatDoesNotMatchThePatternIsRejected(t *testing.T) {
+	spec3 := "version: 1\nproject: p\nunit:\n  name: US\n  pattern: 'US-\\d{3}'\n" +
+		"phases:\n  - id: build\n    anchor: git_sha\n"
+	dir := gitRepoWithSpec(t, spec3)
+	db := filepath.Join(dir, "state.db")
+	t.Setenv("BATTEN_DB", db)
+
+	inDir(t, dir, func() {
+		for _, bad := range []string{"FOO-9", "US-0001", "us-001", "US-1"} {
+			var err error
+			_ = captureStdout(t, func() { err = cmdPhase([]string{bad, "build"}) })
+			if err == nil || !strings.Contains(err.Error(), "unit.pattern") {
+				t.Errorf("cmdPhase(%q) = %v, want a refusal naming unit.pattern", bad, err)
+			}
+		}
+		var err error
+		_ = captureStdout(t, func() { err = cmdPhase([]string{"US-001", "build"}) })
+		if err != nil {
+			t.Fatalf("the control must pass: a valid id opens its run; got %v", err)
+		}
+
+		st, e := store.Open(db)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer st.Close()
+		runs, e := st.ListRuns("p", 50)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if len(runs) != 1 || runs[0].UnitID != "US-001" {
+			t.Errorf("runs = %v, want exactly US-001 — a rejected id must leave no phantom behind", runs)
+		}
+	})
+}
+
+// TestShowRunFlagSelectsTheExactRun is finding #23: `batten show <unit> --run <id>` discarded
+// the flag and its value, printed the unit's LATEST run and exited 0 — even for an id that
+// does not exist. A flag that is accepted and ignored shows the user a run they did not ask
+// for and tells them it succeeded.
+func TestShowRunFlagSelectsTheExactRun(t *testing.T) {
+	dir := gitRepoWithSpec(t, diffFromSpec)
+	db := filepath.Join(dir, "state.db")
+	t.Setenv("BATTEN_DB", db)
+
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := st.EnsureRun("p", "TASK-1", "sess-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.CloseRun(first.RunID, "ok"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.EnsureRun("p", "TASK-1", "sess-a"); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	inDir(t, dir, func() {
+		out := captureStdout(t, func() {
+			if err := cmdShow([]string{"TASK-1", "--run", first.RunID}); err != nil {
+				t.Errorf("show --run with a real id: %v", err)
+			}
+		})
+		if !strings.Contains(out, first.RunID) {
+			t.Errorf("show --run %s printed some other run:\n%s", first.RunID, out)
+		}
+
+		var bogusErr error
+		_ = captureStdout(t, func() { bogusErr = cmdShow([]string{"TASK-1", "--run", "no-such-run"}) })
+		if bogusErr == nil {
+			t.Error("an id that does not exist must be an error, not the latest run with exit 0")
+		}
+
+		var flagErr error
+		_ = captureStdout(t, func() { flagErr = cmdShow([]string{"TASK-1", "--totally-bogus"}) })
+		if flagErr == nil {
+			t.Error("an unknown flag must fail loudly, not vanish")
+		}
+	})
+}
+
 // TestAnOverrideIsVisibleOnEveryReadingSurface is finding #10. After `batten override`, the
 // hook allows the commit — it checks the override before anything else — while `batten show`
 // kept printing "the close gate will deny a commit" (the literal opposite of the truth),

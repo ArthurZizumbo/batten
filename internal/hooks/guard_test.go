@@ -1,6 +1,7 @@
 package hooks
 
 import (
+	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/ArthurZizumbo/batten/internal/spec"
 	"github.com/ArthurZizumbo/batten/internal/store"
+
+	_ "modernc.org/sqlite" // read the events table directly: no production reader exists on purpose
 )
 
 // guardFixture builds a handler whose spec root is a real temp directory, because the write-set
@@ -30,6 +33,39 @@ func guardFixture(t *testing.T) (*Handler, string) {
 	}
 	t.Cleanup(func() { st.Close() })
 	return &Handler{Spec: sp, Store: st}, dir
+}
+
+// TestHookEventsAreAttributedToTheSessionsRun is half of finding #19. The doctor's stale-run
+// predicate reads events.run_id ("open >48h with NO ACTIVITY"), and the journal used to write
+// NULL into that column on every row — so the activity half was dead code and a run being
+// worked right now was reported stale purely by its age. The event must land on the run its
+// session is bound to.
+func TestHookEventsAreAttributedToTheSessionsRun(t *testing.T) {
+	h, dir := guardFixture(t)
+	r, err := h.Store.EnsureRun("p", "TASK-1", "sess-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	payload := []byte(`{"session_id":"sess-a","hook_event_name":"PreToolUse","tool_name":"Bash",` +
+		`"tool_input":{"command":"echo hi"}}`)
+	if _, err := h.Dispatch("PreToolUse", payload); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := sql.Open("sqlite", filepath.Join(dir, "batten.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var attributed int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM events WHERE run_id=?`, r.RunID).Scan(&attributed); err != nil {
+		t.Fatal(err)
+	}
+	if attributed == 0 {
+		t.Error("the hook event was journalled with run_id NULL — the stale-run predicate reads " +
+			"this column, and an unattributed journal can never clear the warning")
+	}
 }
 
 func writeInputFor(root, rel string) Input {

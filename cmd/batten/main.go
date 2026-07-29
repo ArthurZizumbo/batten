@@ -12,6 +12,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -354,8 +355,15 @@ func cmdVerdict(args []string) error {
 		return fmt.Errorf("cannot tell which %s this verdict is for; pass --unit", sp.Unit.Name)
 	}
 
-	run, err := st.EnsureRun(sp.Project, unit, "")
+	// ActiveRun, never EnsureRun: a verdict judges an OPEN run. On a closed unit, EnsureRun
+	// silently opened a second run with no anchor and no phase, filed the verdict there, and
+	// exit 0 made it look right (#12). Opening a run is `batten phase`'s job alone.
+	run, err := st.ActiveRun(sp.Project, unit)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("no open run for %s — a verdict judges an open run, and recording one "+
+				"cannot start one.\nReopen with: batten phase %s %s", unit, unit, sp.Phases[0].ID)
+		}
 		return err
 	}
 	if gate == "" {
@@ -430,6 +438,12 @@ func cmdPhase(args []string) error {
 	ph, ok := sp.Phase(phaseID)
 	if !ok {
 		return fmt.Errorf("no phase %q in %s", phaseID, spec.Filename)
+	}
+	// The same command hard-rejects a phase that does not exist; a unit id deserved the same
+	// rigor and got none — `batten phase FOO-9 build` opened a phantom run with exit 0, listed
+	// forever by `batten runs` with no way to delete it (#21).
+	if !sp.ValidUnitID(unit) {
+		return fmt.Errorf("%q does not match unit.pattern %q — no run was opened", unit, sp.Unit.Pattern)
 	}
 	run, err := st.EnsureRun(sp.Project, unit, "")
 	if err != nil {
@@ -585,19 +599,44 @@ func humanTokens(n int64) string {
 }
 
 func cmdShow(args []string) error {
-	if len(args) < 1 {
-		return errors.New("show: batten show <unit>")
+	if len(args) < 1 || strings.HasPrefix(args[0], "--") {
+		return errors.New("show: batten show <unit> [--run <id>]")
+	}
+	unit, runID := args[0], ""
+	for i := 1; i < len(args); i++ {
+		switch args[i] {
+		case "--run":
+			if i+1 >= len(args) {
+				return errors.New("show: --run needs a run id (batten mcp's batten_runs lists them)")
+			}
+			runID, i = args[i+1], i+1
+		default:
+			// A flag this command does not know must fail, not vanish: `--run <id>` was being
+			// swallowed here, showing the LATEST run under the id the user asked for (#23).
+			return fmt.Errorf("show: unknown flag %q", args[i])
+		}
 	}
 	sp, st, err := load()
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	// Latest run regardless of status: the run you just closed is the one you most
-	// want to inspect, and "no active run" right after a clean close reads like a bug.
-	run, err := st.LatestRun(sp.Project, args[0])
-	if err != nil {
-		return fmt.Errorf("no run recorded for %s", args[0])
+	var run *store.Run
+	if runID != "" {
+		run, err = st.Run(runID)
+		if err != nil {
+			return fmt.Errorf("no run %q recorded — exact ids come from `batten show <unit>` or MCP's batten_runs", runID)
+		}
+		if run.UnitID != unit {
+			return fmt.Errorf("run %q belongs to %s, not %s", runID, run.UnitID, unit)
+		}
+	} else {
+		// Latest run regardless of status: the run you just closed is the one you most
+		// want to inspect, and "no active run" right after a clean close reads like a bug.
+		run, err = st.LatestRun(sp.Project, unit)
+		if err != nil {
+			return fmt.Errorf("no run recorded for %s", unit)
+		}
 	}
 	fmt.Printf("%s  run=%s  status=%s  phase=%s  base=%s\n",
 		run.UnitID, run.RunID, run.Status, run.Phase, run.BaseSHA)
@@ -1072,8 +1111,15 @@ func cmdCheck(args []string) error {
 	if len(gate.Checks) == 0 {
 		return fmt.Errorf("gate %q declares no checks to run", gateName)
 	}
-	run, err := st.EnsureRun(sp.Project, unit, "")
+	// ActiveRun, never EnsureRun: `batten check` verifies an open run. On a closed unit it
+	// silently forked a second run — no anchor, no phase, exit 0 — and `batten show` then
+	// displayed only that empty fork, hiding the closed run it grew out of (#12).
+	run, err := st.ActiveRun(sp.Project, unit)
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("no open run for %s — `batten check` verifies an open run, it does not "+
+				"start one.\nReopen with: batten phase %s %s", unit, unit, sp.Phases[0].ID)
+		}
 		return err
 	}
 
