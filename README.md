@@ -1,5 +1,25 @@
 # batten
 
+> **78% of agent failures are silent.** They do not raise an error — the agent reports success and
+> the work is wrong. In the same measurements, **deterministic gates tripled reliability**, and they
+> did it by refusing things rather than by asking an agent to be careful.
+> ([arXiv:2607.07405](https://arxiv.org/html/2607.07405v1))
+>
+> **batten is one of those gates**, for the workflow your repo already declares.
+
+See it before you configure anything — it builds a throwaway repo, runs the whole flow, and deletes
+it. It does not touch your repository or your database:
+
+```console
+$ batten demo
+```
+
+**And it does not block you by default.** `batten init` writes `enforcement: report`: the gates
+watch and warn, nothing is refused, and you flip it to `enforce` when you trust what you have been
+reading. `batten report` is what you read.
+
+---
+
 **A workflow written in prose cannot enforce itself.**
 
 Every serious team writes its process down. Phases, review gates, "two agents never touch the same
@@ -85,7 +105,12 @@ $ git commit -m "feat: add order rate limiting"
 the envelope proves somebody judged the work against its acceptance criteria. Neither one
 substitutes for the other, and `batten check` on its own does not close a unit.
 
-### 2. The write-set guard
+### 2. The write-set guard — what makes parallel fan-out safe
+
+This one reads like a restriction and is the opposite. **Running four agents at once is only safe
+if they cannot land on the same file**, and "they won't, because the plan says so" is not a
+property — it is a hope that holds until hour six. The guard is what turns it into a property, and
+the property is what lets you fan out at all.
 
 A fan-out is running. Four subagents, disjoint write-sets, each one claimed at launch with
 `batten claim`. Agent `ml/A` — which owns the data loader — decides it also needs to fix the
@@ -109,6 +134,10 @@ owner, and what to do about it.
 And note what the message refuses to do: it does not offer a way through. **If two agents both need
 that file, the plan was wrong** — the fix is to merge the sub-tasks or sequence them, not to open
 the fence. The fence is the feature.
+
+One owner per file is a `PRIMARY KEY` in SQLite, not a paragraph asking agents to be careful. And
+because a path is only a *name* for a file, the guard also asks the operating system: two names for
+one file on disk — a hard link, a symlinked directory — resolve to the same owner.
 
 ---
 
@@ -214,6 +243,19 @@ batten cannot see it — and it says so rather than printing `0%`.
 **batten never invents a number.** A budget that quietly reports zero for what it failed to measure
 is worse than no budget at all, because it will be believed.
 
+#### The metric nobody else reports
+
+There is a whole ecosystem measuring what agents cost — Langfuse, OpenTelemetry, ccusage,
+CloudZero. **Every one of them measures API dollars.** On a subscription that is the wrong unit: the
+marginal cost of a token is zero, and the thing that actually runs out is the rolling window.
+
+Nobody on a Max plan wants to know what their afternoon "would have cost" on the API. They want to
+know whether they will still have quota at five o'clock.
+
+`quota_pct_per_run` is that number, and `batten statusline` is the only local sensor for it — the
+quota is exposed to the status line and nowhere else, which is why batten can read it and a
+dashboard cannot.
+
 ---
 
 ## Install
@@ -276,13 +318,20 @@ The CLI underneath them is small enough to use directly, and
 [`docs/QUICKSTART.md`](docs/QUICKSTART.md) walks the whole adoption path that way — from an empty
 directory to a denied commit and back — with output captured from a real run:
 
+Read in that order — the gate is the last thing you turn on, not the first:
+
 | command | what it does |
 |---|---|
+| `batten demo` | the whole flow on a repo batten builds and throws away. Touches nothing of yours |
+| `batten report` | what batten saw, and what it stopped. This is what `report` mode is for |
+| `batten init` | read the repo and write `batten.yaml`, in `report` mode |
+| `batten doctor` | one pass, everything it knows, with the fix beside each problem |
 | `batten phase <unit> <phase>` | open or advance a run; records the anchor SHA |
 | `batten verdict --file v.json` | record the reviewer's judgment, with cited evidence |
 | `batten check <unit>` | **run** the gate's declared checks and record what they printed |
 | `batten close <unit>` | close through the gate and release the write-set claims |
-| `batten doctor` | validate the spec and report what is actually live |
+| `batten pr <unit>` | a PR body from the run record: the real DAG as Mermaid, evidence, cost |
+| `batten recover <unit>` | re-anchor a run whose base moved under it (rebase, amend, pull) |
 
 `/batten-night` is the one to read before trusting. It never deletes anything (if it *wanted* to, it
 tells you in the morning report instead), it never overrides the gate, and it stops before the
@@ -300,6 +349,19 @@ fan-out, the retries, the blocked verdict that got fixed and re-verified. It dra
 **actually took**, not the one the plan hoped for.
 
 Zero lines of graph-layout code on our side. Obsidian already renders it.
+
+And the same graph goes into the pull request, where the people reviewing the work will actually
+see it — GitHub renders Mermaid natively in a PR description:
+
+```console
+$ batten pr US-034 --out /tmp/body.md
+$ gh pr create --body-file /tmp/body.md
+```
+
+The body carries the DAG the run actually took (including the retry a plan diagram cannot show),
+both verdicts with their cited evidence, and what it cost. If the usage was never measured the
+table says **NOT MEASURED**, not `$0.00`; if nobody reviewed the work, the badge says so instead of
+claiming `batten-verified`. A generated PR that flatters the run is worse than no generated PR.
 
 ---
 
@@ -368,8 +430,20 @@ Every blocker is fixed, each with a test that fails against the commit before it
 account — what broke, what was refuted and why, and what the method got right — is in
 [docs/FIELD-TEST.md](docs/FIELD-TEST.md).
 
+Since then the field test's replica was **rebuilt as a committed script**
+([`scripts/replica-ui.sh`](scripts/replica-ui.sh)) and the eight fixes were re-run against it — a
+repo with no code, no build files and no git history at all, which is the shape none of the
+synthetic sandboxes had. Nothing previously fixed came undone. What it did turn up was two
+silences and a false green, including the one that mattered most: **the very first commit after
+installing batten used to get no output at all**, which is indistinguishable from approval. That
+is fixed, and the matrix that found it is in
+[docs/field-test/REPLICA-UI.md](docs/field-test/REPLICA-UI.md).
+
 What has **not** happened yet, stated plainly: no release has been tagged, and batten has not yet
-been adopted by a project it does not belong to, with people who did not write it.
+been adopted by a project it does not belong to, with people who did not write it. There is no GIF
+in this README — the `.tape` scripts that generate one are written and verified
+([`docs/tape/`](docs/tape/)), but the machine this was built on has no `vhs` installed, and
+`batten demo` is the live version anyway.
 
 The transcript format batten reads for token accounting is **not a public API** and can change
 without notice; if parsing breaks, batten reports the count as unavailable rather than guessing.
