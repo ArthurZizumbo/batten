@@ -36,8 +36,10 @@ import (
 // discipline into a denial. Add a field to batten.yaml's schema and you must either wire it up
 // or write it down here, with a reason. What you can no longer do is add it and forget.
 
-// declaredAsFuture is the explicit, deliberate list: fields batten.yaml accepts today that
-// nothing in production reads yet. Every entry needs a reason and the plan section that owns it.
+// declaredAsFuture is the explicit, deliberate list: fields batten.yaml accepts today whose
+// promise batten does not keep. Most have no consumer at all. One — Budget.MaxIterations — has
+// two readers that DISPLAY it and no mechanism that honours it, which is the same lie told with
+// more confidence. Every entry needs a reason and the plan section that owns it.
 //
 // This list is DEBT, not a parking lot. It should get shorter. A new entry is a decision to
 // publish a promise batten does not keep, and it should be made on purpose and in a review.
@@ -46,8 +48,6 @@ var declaredAsFuture = map[string]string{
 		"files; nothing enforces or even checks it (plan §5.3, §8)",
 	"Phase.GraphQuery": "same promise at phase level; the fan-out prompt never mentions it " +
 		"(plan §5.3, §8)",
-	"Phase.DiffFrom": "declares that a phase operates only on the unit's diff from its anchor; " +
-		"no consumer computes that diff (plan §8, and §5.4 gives it real meaning per worktree)",
 	"Models.Tiers": "the schema says it 'routes subagents and verifies it from the ledger'. It " +
 		"routes nothing: batten does not spawn subagents, so the routing it promises would have " +
 		"to be advice to the orchestrator, which it never emits (plan §8)",
@@ -163,6 +163,17 @@ func TestDeclaredAsFutureHasNoStaleEntries(t *testing.T) {
 		}
 	}
 }
+
+// A guard for the OTHER end of the list — striking an entry off once its field is wired up — was
+// written and then deleted, and the reason is worth keeping so it is not rebuilt.
+//
+// It flagged an entry as soon as any production selector reached the field, and its first run
+// demanded the removal of `Budget.MaxIterations`: mcp.go returns it and the TUI DRAWS it as
+// `iters %d/%d`. Both read it. Neither honours it — nothing increments the counter and nothing
+// refuses to go past the ceiling. So "has a reader" and "keeps its promise" are different
+// questions, and a mechanical check that cannot tell them apart would have demanded the removal
+// of the single worst entry on the list. The line above ("nothing reads it YET") was the part
+// that was wrong; it now says what the list actually holds.
 
 type declaredField struct {
 	key   string // "GraphCap.QueryBeforeRead" — how declaredAsFuture names it

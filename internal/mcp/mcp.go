@@ -77,10 +77,14 @@ func newServer(sp *spec.Spec, st *store.Store) *sdk.Server {
 	sdk.AddTool(s, &sdk.Tool{
 		Name:  "batten_run_graph",
 		Title: "Inspect one run's graph",
+		// The description names only the relations batten RECORDS. It used to promise rollbacks
+		// too, and batten has never written a rollback edge — a tool description is read by the
+		// model as a statement of fact about the data, so promising a relation that cannot appear
+		// teaches it to expect one and to read its absence as "nothing was rolled back".
 		Description: "Show one run's real execution graph: every node (phase, fanned-out subagent, gate) " +
 			"with its status and per-node token usage, plus the TYPED edges between them " +
-			"(spawn, depends_on, retry_of, rollback). This is the path actually taken — including retries " +
-			"and rollbacks — which a static workflow diagram cannot show. Call it to see what a fan-out " +
+			"(spawn, depends_on, retry_of). This is the path actually taken — including the retries — " +
+			"which a static workflow diagram cannot show. Call it to see what a fan-out " +
 			"really did, which subagent failed, and where the tokens went. Nodes with no recorded usage " +
 			"report null, not zero.",
 	}, q.runGraph)

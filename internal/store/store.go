@@ -20,7 +20,18 @@ import (
 	_ "modernc.org/sqlite" // pure-Go driver; registers as "sqlite" (not "sqlite3")
 )
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db *sql.DB
+	// path is where this database lives, kept so callers can EXCLUDE it. batten must never be
+	// able to report its own bookkeeping as the user's work — the same rule TargetDigest follows,
+	// which learned it the hard way when recording a verdict changed the tree the verdict was
+	// about. TargetDigest can only guess at the name (`.batten/`, `batten.db*`); anything holding
+	// a Store can just ask.
+	path string
+}
+
+// Path is where this store's database file is. Its sidecars (-wal, -shm, -journal) sit beside it.
+func (s *Store) Path() string { return s.path }
 
 // Open prepares the database for the concurrency situation batten actually lives in:
 // several short-lived hook processes, one MCP subprocess, and the CLI, all writing
@@ -51,7 +62,7 @@ func Open(path string) (*Store, error) {
 			return nil, fmt.Errorf("batten: pragma %q: %w", p, err)
 		}
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, path: path}
 	// Retried, because the failure this most often hits is an antivirus holding the file open
 	// for the few milliseconds after it is created — see transient.go. Reporting that as a
 	// broken store would put "batten did NOT run" in front of a user whose machine is fine.
@@ -475,6 +486,24 @@ type Node struct {
 	CostUSD   float64
 	StartedAt int64
 	EndedAt   *int64
+	// Attempt is 1 for the first agent to take a piece of work and N+1 for the one that took it
+	// over after attempt N ended failed. It is what makes two same-domain cards distinguishable
+	// on a surface: without it a reviewer looking at a red `ml` and a green `ml` cannot tell
+	// which one is the retry, only that there are two.
+	Attempt int
+}
+
+const nodeCols = `node_id, run_id, kind, label, COALESCE(domain,''), status,
+	COALESCE(agent_id,''), COALESCE(agent_type,''), cost_usd, started_at, ended_at, attempt`
+
+func scanNode(scan func(...any) error) (*Node, error) {
+	var n Node
+	err := scan(&n.NodeID, &n.RunID, &n.Kind, &n.Label, &n.Domain, &n.Status,
+		&n.AgentID, &n.AgentType, &n.CostUSD, &n.StartedAt, &n.EndedAt, &n.Attempt)
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
 }
 
 // PhaseNodeID and AgentNodeID are the only sanctioned ways to name a node.
@@ -511,10 +540,17 @@ func (s *Store) AddNode(n Node) error {
 	if n.Status == "" {
 		n.Status = "running"
 	}
+	if n.Attempt == 0 {
+		n.Attempt = 1
+	}
+	// attempt is written explicitly because this is INSERT OR REPLACE: leaving it to the column
+	// default would silently reset a retry back to attempt 1 the next time anything re-upserted
+	// the row.
 	_, err := s.db.Exec(`INSERT OR REPLACE INTO nodes
-	   (node_id, run_id, kind, label, domain, status, agent_id, agent_type, cost_usd, started_at)
-	   VALUES (?,?,?,?,?,?,?,?,?,?)`,
-		n.NodeID, n.RunID, n.Kind, n.Label, n.Domain, n.Status, n.AgentID, n.AgentType, n.CostUSD, n.StartedAt)
+	   (node_id, run_id, kind, label, domain, status, agent_id, agent_type, cost_usd, started_at, attempt)
+	   VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+		n.NodeID, n.RunID, n.Kind, n.Label, n.Domain, n.Status, n.AgentID, n.AgentType,
+		n.CostUSD, n.StartedAt, n.Attempt)
 	return err
 }
 
@@ -526,36 +562,76 @@ func (s *Store) FinishNode(nodeID, status string, cost float64) error {
 }
 
 func (s *Store) NodeByAgent(agentID string) (*Node, error) {
-	row := s.db.QueryRow(`SELECT node_id, run_id, kind, label, COALESCE(domain,''), status,
-	   COALESCE(agent_id,''), COALESCE(agent_type,''), cost_usd, started_at, ended_at
+	row := s.db.QueryRow(`SELECT `+nodeCols+`
 	   FROM nodes WHERE agent_id=? ORDER BY started_at DESC, rowid DESC LIMIT 1`, agentID)
-	var n Node
-	err := row.Scan(&n.NodeID, &n.RunID, &n.Kind, &n.Label, &n.Domain, &n.Status,
-		&n.AgentID, &n.AgentType, &n.CostUSD, &n.StartedAt, &n.EndedAt)
-	if err != nil {
-		return nil, err
-	}
-	return &n, nil
+	return scanNode(row.Scan)
 }
 
 func (s *Store) Nodes(runID string) ([]Node, error) {
-	rows, err := s.db.Query(`SELECT node_id, run_id, kind, label, COALESCE(domain,''), status,
-	   COALESCE(agent_id,''), COALESCE(agent_type,''), cost_usd, started_at, ended_at
-	   FROM nodes WHERE run_id=? ORDER BY started_at`, runID)
+	rows, err := s.db.Query(`SELECT `+nodeCols+` FROM nodes WHERE run_id=? ORDER BY started_at`, runID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []Node
 	for rows.Next() {
-		var n Node
-		if err := rows.Scan(&n.NodeID, &n.RunID, &n.Kind, &n.Label, &n.Domain, &n.Status,
-			&n.AgentID, &n.AgentType, &n.CostUSD, &n.StartedAt, &n.EndedAt); err != nil {
+		n, err := scanNode(rows.Scan)
+		if err != nil {
 			return nil, err
 		}
-		out = append(out, n)
+		out = append(out, *n)
 	}
 	return out, rows.Err()
+}
+
+// LastUnretriedFailure finds the attempt that a subagent starting NOW would be retrying, or
+// sql.ErrNoRows when there is none.
+//
+// This is the whole producer side of `edges.rel = retry_of`, which had five readers and no
+// writer: `batten pr` counts retries for its badge and draws the dotted edge, the canvas colours
+// it orange, the vault lists it under Relations, MCP reports `retries: N`, and the TUI hangs it
+// off the node. Every one of those was reading a row nothing ever inserted, and the headline
+// claim of `batten pr` — that the DAG shows what a plan diagram cannot — rests entirely on this.
+//
+// A retry is: a FINISHED subagent, in this run, that ended `failed`, whose logical identity
+// matches the new one, and which nothing has retried yet.
+//
+// Each of those four clauses is load-bearing:
+//
+//   - finished and failed, ended at or before the new agent starts. This is the clause that
+//     keeps a FAN-OUT from reading as a pile of retries: two agents on the same domain running
+//     side by side are the normal case, and the earlier one is still `running` with a NULL
+//     ended_at when the later one starts, so it cannot match.
+//   - identity is the DOMAIN when the agent has one, because the domain is the unit of work the
+//     fan-out divides; agent_type is the fallback for an agent outside the declared domains.
+//   - not already retried, or a run that failed once and succeeded on the second try would mark
+//     every later same-domain agent as a third attempt at work that is long finished.
+//   - scoped to the run, never to the phase: the build → verify → fix → re-verify loop retries a
+//     domain in a DIFFERENT phase from the one that failed, and that is the retry most worth
+//     drawing.
+//
+// What it inherits and cannot fix here: `failed` comes from SubagentStop's reading of the final
+// assistant message, which is a heuristic. A false `failed` produces a false retry edge. The
+// status is the same one every other surface already trusts, so this adds a reader of it, not a
+// new guess.
+func (s *Store) LastUnretriedFailure(runID, domain, agentType string, notAfter int64) (*Node, error) {
+	q := `SELECT ` + nodeCols + ` FROM nodes
+	   WHERE run_id=? AND kind='subagent' AND status='failed'
+	     AND ended_at IS NOT NULL AND ended_at<=?
+	     AND NOT EXISTS (SELECT 1 FROM edges e
+	                     WHERE e.run_id=nodes.run_id AND e.dst_node=nodes.node_id AND e.rel='retry_of')`
+	args := []any{runID, notAfter}
+	if domain != "" {
+		q += ` AND domain=?`
+		args = append(args, domain)
+	} else {
+		// Both sides must be domainless. A node that carries a domain is identified by it, and
+		// pairing it with a domainless node on agent_type alone would cross the fan-out axis.
+		q += ` AND COALESCE(domain,'')='' AND agent_type=?`
+		args = append(args, agentType)
+	}
+	q += ` ORDER BY ended_at DESC, rowid DESC LIMIT 1`
+	return scanNode(s.db.QueryRow(q, args...).Scan)
 }
 
 type Edge struct{ Src, Dst, Rel string }

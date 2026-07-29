@@ -185,6 +185,12 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, ba
 			if name == "" {
 				name = k.Label
 			}
+			// The attempt number, on retries only. Two `ml` cards — one red, one green — are
+			// otherwise indistinguishable apart from colour, which is the exact complaint the
+			// field test recorded: the reader cannot tell a retry from a second independent task.
+			if k.Attempt > 1 {
+				name = fmt.Sprintf("%s #%d", name, k.Attempt)
+			}
 			body := fmt.Sprintf("**%s**\n`%s`", name, k.Status)
 			if k.Domain != "" && k.Label != "" && k.Label != k.Domain {
 				body = fmt.Sprintf("**%s**\n%s\n`%s`", name, k.Label, k.Status)
@@ -202,19 +208,29 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, ba
 	}
 
 	for i, e := range edges {
-		if _, ok := pos[e.Src]; !ok {
+		src, ok := pos[e.Src]
+		if !ok {
 			continue
 		}
-		if _, ok := pos[e.Dst]; !ok {
+		dst, ok := pos[e.Dst]
+		if !ok {
 			continue
 		}
 		lbl := ""
 		if e.Rel != "spawn" {
 			lbl = e.Rel // spawn is obvious from the layout; the others are the interesting ones
 		}
+		// Sides follow the layout, not the relation. `spawn` runs forwards, but the two relations
+		// that matter most — `retry_of` and `depends_on` — point from the LATER node back at the
+		// earlier one, and pinning them to right→left dragged the arrow all the way around the
+		// card it started from.
+		from, to := "right", "left"
+		if src.X > dst.X {
+			from, to = "left", "right"
+		}
 		c.Edges = append(c.Edges, Edge{
 			ID: fmt.Sprintf("e%d", i), FromNode: e.Src, ToNode: e.Dst,
-			FromSide: "right", ToSide: "left", Label: lbl, Color: relColor(e.Rel),
+			FromSide: from, ToSide: to, Label: lbl, Color: relColor(e.Rel),
 		})
 	}
 

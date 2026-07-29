@@ -21,8 +21,10 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ArthurZizumbo/batten/internal/export"
+	"github.com/ArthurZizumbo/batten/internal/gitx"
 	"github.com/ArthurZizumbo/batten/internal/spec"
 	"github.com/ArthurZizumbo/batten/internal/store"
 	"github.com/ArthurZizumbo/batten/internal/usage"
@@ -876,16 +878,36 @@ func (h *Handler) subagentStart(in Input) (*Output, error) {
 	} else {
 		domain, _ = h.Spec.DomainFor(in.AgentType)
 	}
+
+	// Is this agent picking up work a previous one dropped? Asked BEFORE the node exists, so the
+	// query cannot see the row it is about to describe. See store.LastUnretriedFailure for what
+	// counts as a retry and, more importantly, what does not.
+	attempt := 1
+	prior, priorErr := h.Store.LastUnretriedFailure(run.RunID, domain, in.AgentType, storeNow())
+	if priorErr == nil {
+		attempt = prior.Attempt + 1
+	}
+
 	_ = h.Store.AddNode(store.Node{
 		NodeID: nodeID, RunID: run.RunID, Kind: "subagent",
 		Label: in.AgentType, Domain: domain, Status: "running",
-		AgentID: in.AgentID, AgentType: in.AgentType,
+		AgentID: in.AgentID, AgentType: in.AgentType, Attempt: attempt,
 	})
 	if run.Phase != "" {
 		_ = h.Store.AddEdge(run.RunID, store.PhaseNodeID(run.RunID, run.Phase), nodeID, "spawn")
 	}
+	if priorErr == nil {
+		// Direction is new → old, so the edge reads "this attempt is a retry of that one" — which
+		// is how every reader already draws it (`N2 -.retry_of.-> N1`).
+		_ = h.Store.AddEdge(run.RunID, nodeID, prior.NodeID, "retry_of")
+	}
 	return nil, nil
 }
+
+// storeNow is the clock the retry window is measured against. Seconds, matching the resolution
+// nodes.ended_at is written at: a failure and its retry landing in the same second must still
+// count, so the comparison is `<=`.
+func storeNow() int64 { return time.Now().Unix() }
 
 func (h *Handler) subagentStop(in Input) (*Output, error) {
 	node, err := h.Store.NodeByAgent(in.AgentID)
@@ -958,7 +980,11 @@ func (h *Handler) ingest(in Input, runID string) {
 // `phases[].reads` is the field that says what a phase's inputs ARE, and until now its only
 // consumer was batten_spec echoing it back. This is the second one, and the one that reaches the
 // agent without it having to ask.
-func phaseBriefing(sp *spec.Spec, phaseID string) string {
+func phaseBriefing(sp *spec.Spec, st *store.Store, run *store.Run) string {
+	phaseID := ""
+	if run != nil {
+		phaseID = run.Phase
+	}
 	var p *spec.Phase
 	for i := range sp.Phases {
 		if sp.Phases[i].ID == phaseID {
@@ -975,6 +1001,7 @@ func phaseBriefing(sp *spec.Spec, phaseID string) string {
 	if len(p.Reads) > 0 {
 		fmt.Fprintf(&b, "- reads: %s\n", strings.Join(p.Reads, ", "))
 	}
+	b.WriteString(DiffScope(sp, st, p, run))
 	if p.Fanout {
 		var names []string
 		for _, n := range sortedDomains(sp) {
@@ -1002,6 +1029,70 @@ func phaseBriefing(sp *spec.Spec, phaseID string) string {
 			"citing evidence.\n", p.RequiresVerdict)
 	}
 	return b.String()
+}
+
+// DiffScope renders what `diff_from: anchor` MEANS for a run — which, until this, was nothing.
+//
+// The field was parsed into spec.Phase, written into the batten.yaml `batten init` generates,
+// documented in the schema as "operate only on the unit's diff", and read by no production code
+// at all. A phase carrying it behaved exactly like a phase without it, so a verify agent read
+// HEAD~N and graded work that was not the unit's.
+//
+// Two honest outcomes and no third:
+//
+//   - an anchor exists → say the range and list what is in it, so "only the unit's diff" is a
+//     scope the agent can actually hold rather than an adjective.
+//   - no anchor → say so loudly and name the phase that was supposed to record it. This was
+//     completely silent before: skipping the anchor-bearing phase left `base=` empty and every
+//     surface carried on as if the scope were real.
+//
+// It never returns an empty scope on failure. A rebased-away anchor and an unchanged tree are
+// opposite facts and the first one must not be reported as the second.
+func DiffScope(sp *spec.Spec, st *store.Store, ph *spec.Phase, run *store.Run) string {
+	if ph == nil || ph.DiffFrom != "anchor" {
+		return ""
+	}
+	if run == nil || run.BaseSHA == "" {
+		var carriers []string
+		for _, p := range sp.Phases {
+			if p.Anchor == "git_sha" {
+				carriers = append(carriers, "`"+p.ID+"`")
+			}
+		}
+		who := "no phase in this spec records one (`anchor: git_sha`)"
+		if len(carriers) > 0 {
+			who = "the anchor is recorded by " + strings.Join(carriers, ", ") +
+				", which this run has not entered"
+		}
+		return fmt.Sprintf("- ⚠ scope: this phase declares `diff_from: anchor` and **there is no "+
+			"anchor** — %s. Everything you diff from here is a guess.\n", who)
+	}
+
+	base := run.BaseSHA
+	short := base
+	if len(short) > 12 {
+		short = short[:12]
+	}
+	dbPath := ""
+	if st != nil {
+		dbPath = st.Path()
+	}
+	files, err := gitx.ChangedFiles(sp.Root, base, dbPath)
+	if err != nil {
+		return fmt.Sprintf("- scope: `%s..` (the unit's diff), but git could not list it — the "+
+			"anchor may have been rewritten by a rebase. This is NOT an empty diff: run "+
+			"`batten recover %s`.\n", short, run.UnitID)
+	}
+	if len(files) == 0 {
+		return fmt.Sprintf("- scope: `%s..` — the unit has changed **no files** since its anchor.\n", short)
+	}
+	shown := files
+	tail := ""
+	if len(shown) > 12 {
+		shown, tail = shown[:12], fmt.Sprintf(", +%d more", len(files)-12)
+	}
+	return fmt.Sprintf("- scope: `%s..` — this phase operates ONLY on the unit's diff: %d file(s). "+
+		"%s%s\n", short, len(files), strings.Join(shown, ", "), tail)
 }
 
 func sortedDomains(sp *spec.Spec) []string {
@@ -1063,7 +1154,7 @@ func (h *Handler) sessionStart(in Input) (*Output, error) {
 		// about to face a gate. Everything below comes out of the user's batten.yaml — batten
 		// narrows their process, it does not add one.
 		if r, err := h.Store.ActiveRun(h.Spec.Project, mine); err == nil {
-			b.WriteString(phaseBriefing(h.Spec, r.Phase))
+			b.WriteString(phaseBriefing(h.Spec, h.Store, r))
 		}
 	default:
 		open, _ := h.Store.OpenRuns(h.Spec.Project)

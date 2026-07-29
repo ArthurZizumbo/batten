@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -448,6 +449,154 @@ func TestDoctorCatchesAnAnchorTheRepoCannotRecord(t *testing.T) {
 	}
 	if !strings.Contains(out, "build") {
 		t.Errorf("the warning must name the phase that declares it:\n%s", out)
+	}
+}
+
+// ---------- `diff_from: anchor`, and the phase chain ----------
+
+// gitRepoWithSpec makes a real one-commit git repository holding a batten.yaml, because the two
+// things under test here — the anchor and the diff it scopes — do not exist without git.
+func gitRepoWithSpec(t *testing.T, y string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "batten.yaml"), []byte(y), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("seed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"init", "-q"},
+		{"config", "user.email", "t@example.com"},
+		{"config", "user.name", "t"},
+		{"config", "commit.gpgsign", "false"},
+		{"add", "-A"},
+		{"commit", "-q", "-m", "seed"},
+	} {
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git is not usable here (%v): %s", err, out)
+		}
+	}
+	return dir
+}
+
+const diffFromSpec = "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
+	"phases:\n  - id: build\n    anchor: git_sha\n  - id: verify\n    diff_from: anchor\n" +
+	"  - id: close\n    requires_verdict: ok\n"
+
+// TestEnteringAPhaseSaysWhatItsDiffScopeIs.
+//
+// `diff_from: anchor` is documented as "operate only on the unit's diff" and had no consumer at
+// all: the phase behaved exactly like a phase without it. Nothing computed the diff, nothing
+// printed the range, and a verify agent had no way to know what it was supposed to be looking at
+// short of reading the database.
+func TestEnteringAPhaseSaysWhatItsDiffScopeIs(t *testing.T) {
+	dir := gitRepoWithSpec(t, diffFromSpec)
+	// INSIDE the repo, and not called batten.db: that is the shape that exposed the exclusion
+	// bug, and it is the shape the field-test replica actually uses.
+	t.Setenv("BATTEN_DB", filepath.Join(dir, "state.db"))
+
+	inDir(t, dir, func() {
+		_ = captureStdout(t, func() { _ = cmdPhase([]string{"TASK-1", "build"}) })
+		// The unit does its work: one tracked edit and one new file, neither committed — which is
+		// the normal state of a unit that is being verified.
+		if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("changed\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "added.go"), []byte("package p\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := captureStdout(t, func() { _ = cmdPhase([]string{"TASK-1", "verify"}) })
+
+		if !strings.Contains(out, "scope:") {
+			t.Fatalf("a phase declaring `diff_from: anchor` said nothing about its scope:\n%s", out)
+		}
+		for _, f := range []string{"seed.txt", "added.go"} {
+			if !strings.Contains(out, f) {
+				t.Errorf("the scope omits %s — uncommitted work IS the unit's diff:\n%s", f, out)
+			}
+		}
+		// batten's own ledger is not the unit's work. This was only found by pointing the thing
+		// at a real database and reading the output: the exclusion matched the conventional
+		// names (`.batten/`, `batten.db*`) and BATTEN_DB points wherever the user says, so a run
+		// whose database was called `state.db` reported state.db, state.db-wal and state.db-shm
+		// as three files the unit had changed. The database's location is known — it must be
+		// asked for, not guessed at.
+		for _, sidecar := range []string{"state.db", "state.db-wal", "state.db-shm"} {
+			if strings.Contains(out, sidecar) {
+				t.Errorf("batten's own ledger (%s) is being reported as the unit's work:\n%s",
+					sidecar, out)
+			}
+		}
+	})
+}
+
+// The silent half, which is field-test #529: skip the anchor-bearing phase and every later phase
+// carries on as though its scope were real. An empty base with no warning is the worst shape —
+// it reads as "no changes" rather than "I do not know".
+func TestAPhaseThatDiffsFromAMissingAnchorSaysSo(t *testing.T) {
+	dir := gitRepoWithSpec(t, diffFromSpec)
+	t.Setenv("BATTEN_DB", filepath.Join(t.TempDir(), "batten.db"))
+
+	inDir(t, dir, func() {
+		out := captureStdout(t, func() { _ = cmdPhase([]string{"TASK-1", "verify"}) })
+		if !strings.Contains(out, "no anchor") {
+			t.Fatalf("verify declares `diff_from: anchor` with no anchor recorded and batten was "+
+				"silent:\n%s", out)
+		}
+		if !strings.Contains(out, "build") {
+			t.Errorf("the warning must name the phase that records the anchor:\n%s", out)
+		}
+	})
+}
+
+// TestEnteringAPhaseChainsItToThePrevious. The run graph called itself a DAG and had no edge
+// between any two phases: every surface drew a row of unconnected boxes with subagents hanging
+// off them. `depends_on` was the second relation the canvas could colour and nothing could ever
+// produce.
+func TestEnteringAPhaseChainsItToThePrevious(t *testing.T) {
+	dir := gitRepoWithSpec(t, diffFromSpec)
+	db := filepath.Join(t.TempDir(), "batten.db")
+	t.Setenv("BATTEN_DB", db)
+
+	inDir(t, dir, func() {
+		for _, p := range []string{"build", "verify", "close"} {
+			_ = captureStdout(t, func() { _ = cmdPhase([]string{"TASK-1", p}) })
+		}
+	})
+
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	run, err := st.LatestRun("p", "TASK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := st.Edges(run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{ // dependent -> dependency
+		store.PhaseNodeID(run.RunID, "verify"): store.PhaseNodeID(run.RunID, "build"),
+		store.PhaseNodeID(run.RunID, "close"):  store.PhaseNodeID(run.RunID, "verify"),
+	}
+	got := map[string]string{}
+	for _, e := range edges {
+		if e.Rel == "depends_on" {
+			got[e.Src] = e.Dst
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("depends_on edges = %v, want %v", got, want)
+	}
+	for src, dst := range want {
+		if got[src] != dst {
+			t.Errorf("%s depends_on %q, want %q", store.DisplayNodeID(src),
+				store.DisplayNodeID(got[src]), store.DisplayNodeID(dst))
+		}
 	}
 }
 

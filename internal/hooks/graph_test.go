@@ -3,6 +3,8 @@ package hooks
 import (
 	"encoding/json"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -137,6 +139,190 @@ func TestSubagentTakesItsDomainFromTheAgentType(t *testing.T) {
 	// An agent type that is not a domain leaves the field empty rather than guessing at one.
 	if got["something-unknown"] != "" {
 		t.Errorf("an unknown agent type invented the domain %q", got["something-unknown"])
+	}
+}
+
+// ---------- retries ----------
+//
+// `edges.rel = retry_of` had FIVE readers and no writer: `batten pr` counts retries for its badge
+// and draws the dotted edge, the canvas colours it orange, the vault lists it under Relations,
+// MCP answers `retries: N`, and the TUI hangs it off the node. The headline of `batten pr` is
+// that the DAG shows what a plan diagram cannot — and the only thing a plan diagram cannot show
+// IS the retry. It looked like it worked in testing purely because the edge had been inserted
+// into SQLite by hand.
+
+// startAgent / stopAgent drive the two hooks the run graph is built from, so the tests below
+// exercise the real path rather than calling AddEdge themselves.
+func startAgent(t *testing.T, h *Handler, id, typ string) {
+	t.Helper()
+	in := hookInput("SubagentStart", "sess-a")
+	in.AgentID, in.AgentType = id, typ
+	if _, err := h.subagentStart(in); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func stopAgent(t *testing.T, h *Handler, id, msg string) {
+	t.Helper()
+	in := hookInput("SubagentStop", "sess-a")
+	in.AgentID, in.LastAssistantMessage = id, msg
+	if _, err := h.subagentStop(in); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// retriesIn returns the retry_of edges as "new->old" pairs, named by agent id rather than node
+// id so a failure message says which agents batten thinks retried which.
+func retriesIn(t *testing.T, h *Handler, runID string) []string {
+	t.Helper()
+	nodes, err := h.Store.Nodes(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := map[string]string{}
+	for _, n := range nodes {
+		name[n.NodeID] = n.AgentID
+	}
+	edges, err := h.Store.Edges(runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range edges {
+		if e.Rel == "retry_of" {
+			out = append(out, name[e.Src]+"->"+name[e.Dst])
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func attemptOf(t *testing.T, h *Handler, agentID string) int {
+	t.Helper()
+	n, err := h.Store.NodeByAgent(agentID)
+	if err != nil {
+		t.Fatalf("no node for %s: %v", agentID, err)
+	}
+	return n.Attempt
+}
+
+// TestARetryIsRecordedAsARetry is the regression test for the missing producer. Against the
+// commit before this one it fails on the first assertion: the run has zero retry_of edges no
+// matter what happens, because nothing in the binary ever wrote one.
+func TestARetryIsRecordedAsARetry(t *testing.T) {
+	h, _ := domainFixture(t)
+	r, _ := h.Store.EnsureRun("p", "TASK-1", "sess-a")
+	_ = h.Store.SetPhase(r.RunID, "build")
+
+	startAgent(t, h, "ag-1", "backend")
+	stopAgent(t, h, "ag-1", "the backend agent failed: 3 tests are red")
+	startAgent(t, h, "ag-2", "backend")
+
+	if got, want := retriesIn(t, h, r.RunID), []string{"ag-2->ag-1"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("retry_of edges = %v, want %v — a subagent picking up a domain whose previous "+
+			"agent ended failed IS the retry every surface promises to draw", got, want)
+	}
+	if got := attemptOf(t, h, "ag-2"); got != 2 {
+		t.Errorf("the retry is attempt %d, want 2 — without it the canvas draws two identically "+
+			"labelled `backend` cards and a reviewer cannot tell which is the retry", got)
+	}
+	if got := attemptOf(t, h, "ag-1"); got != 1 {
+		t.Errorf("the first attempt is %d, want 1", got)
+	}
+
+	// It chains. A second failure retried again is attempt 3, hanging off attempt 2 — not off
+	// attempt 1, which is already accounted for.
+	stopAgent(t, h, "ag-2", "failed again: the migration is still missing")
+	startAgent(t, h, "ag-3", "backend")
+	if got, want := retriesIn(t, h, r.RunID), []string{"ag-2->ag-1", "ag-3->ag-2"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("retry chain = %v, want %v", got, want)
+	}
+	if got := attemptOf(t, h, "ag-3"); got != 3 {
+		t.Errorf("the third attempt is numbered %d", got)
+	}
+}
+
+// TestParallelAgentsOnOneDomainAreNotRetries is the false positive that would make the feature
+// worse than its absence. A fan-out that puts two agents on one domain is the ordinary case, and
+// calling the second one a retry of the first would report a retry count for a run that never
+// retried anything — a number `batten pr` prints in its badge.
+func TestParallelAgentsOnOneDomainAreNotRetries(t *testing.T) {
+	h, _ := domainFixture(t)
+	r, _ := h.Store.EnsureRun("p", "TASK-1", "sess-a")
+	_ = h.Store.SetPhase(r.RunID, "build")
+
+	startAgent(t, h, "par-1", "backend")
+	startAgent(t, h, "par-2", "backend") // side by side, neither finished
+	if got := retriesIn(t, h, r.RunID); len(got) != 0 {
+		t.Fatalf("two agents running side by side on one domain were recorded as a retry: %v", got)
+	}
+	if got := attemptOf(t, h, "par-2"); got != 1 {
+		t.Errorf("a parallel sibling is attempt %d, want 1", got)
+	}
+
+	// Now one of them fails and a THIRD agent takes the domain. That one is a genuine retry, and
+	// it must attach to the agent that failed — not to the one still running.
+	stopAgent(t, h, "par-1", "error: could not reach the database")
+	startAgent(t, h, "par-3", "backend")
+	if got, want := retriesIn(t, h, r.RunID), []string{"par-3->par-1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("retry_of edges = %v, want %v", got, want)
+	}
+}
+
+// A domain that failed once and was fixed is CLOSED. Every later agent on that domain is new
+// work, not a third attempt at work that finished — which is why the query excludes a failure
+// something has already retried instead of just taking the most recent one.
+func TestAFailureThatWasAlreadyRetriedIsNotRetriedAgain(t *testing.T) {
+	h, _ := domainFixture(t)
+	r, _ := h.Store.EnsureRun("p", "TASK-1", "sess-a")
+	_ = h.Store.SetPhase(r.RunID, "build")
+
+	startAgent(t, h, "a1", "backend")
+	stopAgent(t, h, "a1", "failed")
+	startAgent(t, h, "a2", "backend")
+	stopAgent(t, h, "a2", "done, all green")
+	startAgent(t, h, "a3", "backend")
+
+	if got, want := retriesIn(t, h, r.RunID), []string{"a2->a1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("retry_of edges = %v, want %v — a1 was already retried by a2, so a3 is new work", got, want)
+	}
+	if got := attemptOf(t, h, "a3"); got != 1 {
+		t.Errorf("a3 is attempt %d, want 1", got)
+	}
+}
+
+// Retries are per fan-out axis. A frontend agent starting after the backend agent failed is the
+// fan-out proceeding, not a retry — and the axis is the domain, which is what the fan-out
+// actually divides.
+func TestAFailureInOneDomainIsNotRetriedByAnother(t *testing.T) {
+	h, _ := domainFixture(t)
+	r, _ := h.Store.EnsureRun("p", "TASK-1", "sess-a")
+	_ = h.Store.SetPhase(r.RunID, "build")
+
+	startAgent(t, h, "b1", "backend")
+	stopAgent(t, h, "b1", "failed")
+	startAgent(t, h, "f1", "frontend")
+
+	if got := retriesIn(t, h, r.RunID); len(got) != 0 {
+		t.Errorf("a different domain was recorded as a retry: %v", got)
+	}
+}
+
+// The retry loop batten actually ships — /batten-night's build → verify → fix → re-verify — puts
+// the retry in a DIFFERENT phase from the failure. Scoping retries to a phase would make the one
+// retry batten most wants to draw the one it cannot see.
+func TestARetryInALaterPhaseStillCounts(t *testing.T) {
+	h, _ := domainFixture(t)
+	r, _ := h.Store.EnsureRun("p", "TASK-1", "sess-a")
+	_ = h.Store.SetPhase(r.RunID, "build")
+	startAgent(t, h, "n1", "backend")
+	stopAgent(t, h, "n1", "failed: the gate is red")
+
+	_ = h.Store.SetPhase(r.RunID, "close")
+	startAgent(t, h, "n2", "backend")
+
+	if got, want := retriesIn(t, h, r.RunID), []string{"n2->n1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("retry_of edges = %v, want %v — the fix loop retries in a later phase", got, want)
 	}
 }
 

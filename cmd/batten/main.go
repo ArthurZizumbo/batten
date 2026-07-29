@@ -443,23 +443,40 @@ func cmdPhase(args []string) error {
 	}
 	// Finish the phase this run is leaving, so a phase reads `running` only while it is.
 	// Scoped by run: with a global id this would have closed another unit's phase.
+	prev := ""
 	if run.Phase != "" && run.Phase != phaseID {
-		_ = st.FinishNode(store.PhaseNodeID(run.RunID, run.Phase), "ok", 0)
+		prev = run.Phase
+		_ = st.FinishNode(store.PhaseNodeID(run.RunID, prev), "ok", 0)
 	}
 	_ = st.AddNode(store.Node{
 		NodeID: store.PhaseNodeID(run.RunID, phaseID), RunID: run.RunID,
 		Kind: "phase", Label: phaseID, Status: "running",
 	})
+	// Chain the phases. Without this the run graph is a row of disconnected boxes with subagents
+	// hanging off them: every surface called it a DAG and it had no edge between any two phases.
+	// `depends_on` was the second relation with readers and no producer — the canvas gave it a
+	// colour, and nothing could ever be that colour.
+	if prev != "" {
+		_ = st.AddEdge(run.RunID, store.PhaseNodeID(run.RunID, phaseID),
+			store.PhaseNodeID(run.RunID, prev), "depends_on")
+	}
 
 	// The anchor. Every later phase diffs from here, not from HEAD~N.
 	if ph.Anchor == "git_sha" && run.BaseSHA == "" {
 		sha, err := gitSHA()
 		if err == nil {
 			_ = st.SetBaseSHA(run.RunID, sha)
+			run.BaseSHA = sha
 			fmt.Printf("anchor: %s base SHA = %s\n", unit, sha)
 		}
 	}
 	fmt.Printf("%s -> phase %s\n", unit, phaseID)
+	// And what `diff_from: anchor` means here, if the phase declares it. Entering a phase scoped
+	// to an anchor that was never recorded used to print nothing at all: the run carried an empty
+	// base, the promise was void, and the only way to find out was to read the database.
+	if s := hooks.DiffScope(sp, st, &ph, run); s != "" {
+		fmt.Print(strings.TrimPrefix(s, "- "))
+	}
 	if ph.Gate != "" {
 		fmt.Printf("this phase must emit a verdict for gate %q (evidence required)\n", ph.Gate)
 	}
@@ -547,7 +564,12 @@ func cmdShow(args []string) error {
 	models, _ := st.ModelsByNode(run.RunID) // what each node actually ran on, from the ledger
 	for _, n := range nodes {
 		ws, _ := st.WriteSet(run.RunID, n.NodeID)
-		fmt.Printf("  [%s] %-24s %-8s", n.Kind, n.Label, n.Status)
+		label := n.Label
+		if n.Attempt > 1 {
+			// Two rows reading `ui failed` and `ui ok` are the retry, and nothing said so.
+			label = fmt.Sprintf("%s #%d", label, n.Attempt)
+		}
+		fmt.Printf("  [%s] %-24s %-8s", n.Kind, label, n.Status)
 		if len(ws) > 0 {
 			fmt.Printf(" owns %d file(s)", len(ws))
 		}

@@ -266,6 +266,12 @@ func mermaidLabel(n store.Node, files []string) string {
 		label = "node"
 	}
 	label = mermaidEscape(label)
+	// The attempt number, on retries only. Without it a reviewer looking at a red `backend` and a
+	// green `backend` sees two boxes and no way to tell which one is the second try — the dotted
+	// edge says a retry happened, this says which box IS the retry.
+	if n.Attempt > 1 {
+		label += fmt.Sprintf(" #%d", n.Attempt)
+	}
 
 	switch n.Status {
 	case "ok":
