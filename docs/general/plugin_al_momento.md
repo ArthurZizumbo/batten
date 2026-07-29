@@ -1,8 +1,12 @@
 # batten — el plugin al momento
 
-> Descripción del estado real del plugin a **2026-07-28**, commit `24d7cd2`, versión `0.1.0`,
-> sin release taggeado. Todo lo que sigue está verificado contra el código, no contra la
-> intención. Donde algo se declara pero nadie lo lee, lo digo.
+> Estado real del plugin a **2026-07-29**, rama `refinamiento-plugin`, versión `0.1.0`,
+> **sin release taggeado**. Todo lo que sigue está verificado contra el código o contra salida
+> capturada de una corrida real. Donde algo se declara y nadie lo lee, lo digo y lo cuento.
+>
+> Este documento se reescribe al cerrar cada bloque de [`plan_mejora.md`](plan_mejora.md).
+> La versión anterior describía el commit `24d7cd2` y quedó atrás de los bloques 1, 1b, 2 y de
+> media parte del 3.
 
 ---
 
@@ -13,66 +17,87 @@ estaban resueltas —la **estructural** (qué *es* el código: graphify) y la **
 *decidimos*: engram)—. La tercera, **cómo trabajamos**, no la tenía nadie: vivía en prosa dentro
 de un `AGENTS.md` que el modelo puede leer y también ignorar.
 
-La tesis del plugin cabe en una línea:
+La tesis cabe en una línea:
 
 > Una regla que un documento solo puede *pedir*, un hook de `PreToolUse` puede **imponer**.
 
-Concretamente, batten convierte dos reglas de proceso en dos negaciones mecánicas:
+Hoy batten convierte **siete** reglas de proceso en negaciones mecánicas. Las dos originales:
 
 1. **El verdict gate** — un `git commit` sin evidencia citada se deniega.
 2. **El write-set guard** — un subagente que escribe el archivo de otro subagente se deniega.
 
-Todo lo demás del plugin (el grafo de la corrida, el libro mayor de tokens, la TUI, el canvas)
-existe para que esas dos negaciones sean **auditables** y no sospechosas.
+Y cinco que antes eran prosa y ahora no:
+
+3. **La fusión de un worktree** sin los dos veredictos se rechaza.
+4. **Borrar cualquier cosa** durante una corrida desatendida se deniega.
+5. **`batten override`** se rechaza mientras nadie mira.
+6. **Commitear** durante una corrida desatendida se deniega, *con* los veredictos puestos.
+7. **El techo de iteraciones** se cuenta y se impone.
+
+Todo lo demás del plugin (el grafo de la corrida, el libro mayor de tokens, la TUI, el canvas, el
+PR generado) existe para que esas negaciones sean **auditables** y no sospechosas.
 
 ### Qué NO es
 
 - **No re-orquesta al agente.** Los Dynamic Workflows de Claude Code ya corren el fan-out.
   batten *gobierna* el fan-out: los rieles, no el motor.
-- **No comprime contexto.** Si headroom ahorra tokens en tu fan-out, úsalo — y como batten ya
-  cuenta tokens por nodo, podés *verificar* si de verdad ahorra.
+- **No comprime contexto.** Si headroom ahorra tokens en tu fan-out, úsalo — y como batten cuenta
+  tokens por nodo, podés *verificar* si de verdad ahorra.
 - **No guarda memoria episódica.** Eso es engram. batten guarda proceso.
 - **No inventa tu workflow.** Las fases, los nombres y los dominios salen de tu `batten.yaml`.
+- **No manda nada por red.** `batten report --share` imprime markdown para pegar. Una herramienta
+  que audita y llama a casa perdió el argumento antes de empezar.
 
 ---
 
-## 2. Arquitectura en una pantalla
+## 2. Estado por bloques
 
-```
-                     ┌──────────────────────────────────────┐
-   batten.yaml ─────▶│  spec (internal/spec)                │
-   (tu proceso,      │  valida, resuelve fases y gates      │
-    declarado)       └────────────────┬─────────────────────┘
-                                      │
-   Claude Code ──hook JSON (stdin)──▶ │
-                                      ▼
-                     ┌──────────────────────────────────────┐
-                     │  hooks (internal/hooks)              │
-                     │  ► verdictGate    ► writeSetGuard    │──▶ deny / advise / silencio
-                     └────────────────┬─────────────────────┘
-                                      │
-                                      ▼
-                     ┌──────────────────────────────────────┐
-                     │  store (internal/store) — SQLite      │
-                     │  runs · nodes · edges · writesets     │
-                     │  verdicts · usage · quota · overrides │  ◀── CANÓNICO
-                     └────────────────┬─────────────────────┘
-                                      │
-        ┌──────────────┬──────────────┼──────────────┬────────────────┐
-        ▼              ▼              ▼              ▼                ▼
-     CLI/TUI        canvas         vault          MCP           statusline
-   (leer runs)   (.canvas JSON)  (Obsidian)   (el agente      (único sensor
-                                               consulta)       de cuota)
-```
+| bloque | qué cerró | estado |
+|---|---|---|
+| **1** | el tercer sitio del un-solo-veredicto · validación contra la réplica de `proyecto_ui` · fail-open ruidoso · `doctor` clínico · **el guard de "declarado ⇒ implementado"** · payload MCP + inyección por fase | ✅ |
+| **1b** | lo que trajo gentle-ai: identidad por dispositivo+inodo (híbrida) · huella del árbol (CAS-bound) · `batten recover` · contención de Windows como transitoria · el modo vigente grabado en cada decisión | ✅ |
+| **2** | `decision` en `events` · `batten report` · `batten demo` · los `.tape` · `batten pr` con DAG Mermaid · canvas HTML autocontenido · README reposicionado · **el sobre de fallo tipado** | ✅ (el GIF falta: vhs/ttyd/ffmpeg no instalados) |
+| **3** | `retry_of` + `depends_on` + `diff_from` + **el guard de valores de columna** · **worktrees** · **modo desatendido** · parseo de Bash advisory · **`scan-diff`** · la cadena graphify→engram | ✅ (el ítem 19 quedó absorbido por los worktrees) |
+| **4** | criterios como dato · honestidad de superficie · sacar del spec lo no implementado · ciclo de vida y presentación | pendiente |
 
-**SQLite es canónico.** El `.canvas`, la nota de Obsidian y cualquier export son proyecciones
-con pérdida de lo que vive ahí. Esa decisión es la que permite que dos sesiones y varios
-procesos de hook escriban el mismo archivo sin pisarse (WAL + `busy_timeout` + una sola
-conexión de escritura por proceso).
+**Suite verde en 14 paquetes**, `gofmt`/`go vet` limpios, CI en Linux/macOS/Windows.
 
 ---
 
-## 3. Instalación y componentes
+## 3. Arquitectura
+
+```mermaid
+graph TD
+    Y["batten.yaml<br/><i>tu proceso, declarado</i>"] --> SPEC["spec<br/>valida, resuelve fases y gates"]
+    CC["Claude Code<br/><i>hook JSON por stdin</i>"] --> HOOKS
+    SPEC --> HOOKS["hooks<br/>verdictGate · writeSetGuard<br/>destructionGuard · bashWriteGuard"]
+    HOOKS -->|"deny / advise / silencio"| CC
+    HOOKS --> STORE
+    CLI["CLI · 25 subcomandos"] --> STORE[("store — SQLite<br/><b>CANÓNICO</b><br/>runs · nodes · edges · writesets<br/>verdicts · usage · quota · overrides · events")]
+    GITX["gitx<br/>diff · worktrees · lock"] --- HOOKS
+    GITX --- CLI
+    STORE --> TUI["TUI"]
+    STORE --> CANVAS["canvas<br/>.canvas + HTML"]
+    STORE --> VAULT["vault<br/>Obsidian"]
+    STORE --> MCP["MCP<br/><i>el agente consulta</i>"]
+    STORE --> PR["batten pr<br/>DAG Mermaid"]
+    STORE --> REPORT["batten report"]
+    SL["statusline<br/><i>único sensor de cuota</i>"] --> STORE
+```
+
+**SQLite es canónico.** El `.canvas`, el HTML, la nota de Obsidian, el cuerpo del PR y cualquier
+export son **proyecciones con pérdida** de lo que vive ahí. Esa decisión es la que permite que dos
+sesiones y varios procesos de hook escriban el mismo archivo sin pisarse: WAL + `busy_timeout` +
+una sola conexión de escritura por proceso + una clasificación explícita de qué error de SQLite es
+transitorio.
+
+**`internal/gitx` es nuevo** y tiene **una** regla: un fallo devuelve error, nunca lista vacía.
+*"git no me pudo decir"* y *"no cambió nada"* son hechos opuestos, y cada consumidor de ese paquete
+convierte el segundo en una decisión.
+
+---
+
+## 4. Instalación y componentes
 
 | componente | ruta | qué hace |
 |---|---|---|
@@ -84,31 +109,39 @@ conexión de escritura por proceso).
 | MCP | `.mcp.json` | expone el grafo de la corrida al agente |
 
 **Los hooks son forma exec, no shell.** El binario lee el JSON del hook por stdin y escribe la
-decisión por stdout. Sin `jq`, sin `curl`, sin `bash` — que es exactamente lo que hace frágiles
-en Windows a los hooks que sí lo usan.
+decisión por stdout. Sin `jq`, sin `curl`, sin `bash` — que es exactamente lo que hace frágiles en
+Windows a los hooks que sí lo usan.
 
 `.gitattributes` no es estilo sino corrección: `bootstrap.sh` commiteado con CRLF da
-`#!/usr/bin/env bash\r` → *bad interpreter* en todo Linux/macOS, el binario nunca se descarga y
-los hooks no-opean **en silencio**.
+`#!/usr/bin/env bash\r` → *bad interpreter* en todo Linux/macOS, el binario nunca se descarga y los
+hooks no-opean **en silencio**. CI lo verifica, y `doctor` lo chequea también en la copia instalada
+—que es otra cosa que el repo—.
+
+### Variable de entorno crítica
+
+**`BATTEN_DB`** — ruta de la base. Si no está puesta, `dbPath()` **cae a la base real del usuario**
+(`~/.batten/batten.db`). Cualquier prueba en sandbox debe exportarla antes de *cada* comando.
+Nunca `${CLAUDE_PLUGIN_DATA}` (los hooks la tienen seteada y la terminal del usuario no, así que el
+estado se parte en dos bases) ni `${CLAUDE_PLUGIN_ROOT}` (se borra en cada update del plugin).
 
 ---
 
-## 4. Los siete hooks
+## 5. Los siete hooks
 
 | evento | matcher | qué hace batten |
 |---|---|---|
-| `SessionStart` | `startup\|resume\|clear\|compact` | bootstrap del binario + banner de estado: qué unit está abierto, si hay veredicto, si la sesión está atada a un unit, y **si el gate no está gobernando nada** |
-| `PreToolUse` | `Bash` | **verdict gate** sobre `git commit` + evaluación de presupuesto |
+| `SessionStart` | `startup\|resume\|clear\|compact` | bootstrap del binario + banner: qué unit está abierto, si hay veredicto, a qué unit está atada la sesión, **el briefing de la fase activa** (qué lee, si hace fan-out, qué exige su gate, y el **alcance del diff**), y **si el gate no está gobernando nada** |
+| `PreToolUse` | `Bash` | **rule 1 desatendida** → **bash write guard** (advisory) → **verdict gate** sobre `git commit` → presupuesto |
 | `PreToolUse` | `Write\|Edit\|NotebookEdit` | **write-set guard** |
 | `PostToolUse` | `Bash` | ata la sesión al unit tras `batten phase`; cierra el run tras un commit exitoso |
-| `SubagentStart` | (todos) | crea el nodo del subagente y la arista `spawn` desde la fase |
-| `SubagentStop` | (todos) | cierra el nodo con `ok`/`failed` según su mensaje final |
+| `SubagentStart` | (todos) | crea el nodo del subagente, la arista `spawn`, **y la arista `retry_of` si está retomando trabajo que otro dejó fallado** |
+| `SubagentStop` | (todos) | cierra el nodo con `ok`/`failed` según su mensaje final; valoriza el transcript |
 | `Stop` | (todos) | exporta la nota de vault y el canvas |
 
 ### El silencio de `batten hook` NO es prueba de ALLOW
 
-Esto es la trampa central para cualquiera que pruebe el plugin. `batten hook` no imprime nada y
-sale 0 por **al menos seis razones distintas**:
+Es la trampa central para cualquiera que pruebe el plugin. `batten hook` no imprime nada y sale 0
+por **al menos seis razones distintas**:
 
 1. allow genuino
 2. no encontró `batten.yaml`
@@ -119,49 +152,83 @@ sale 0 por **al menos seis razones distintas**:
 
 Toda afirmación de "esto pasó el gate" necesita un **control positivo**: el mismo payload con un
 campo cambiado para que la negación sea obligatoria. Si el control también sale en silencio, el
-hook nunca se enganchó y el PASS no prueba nada.
+hook nunca se enganchó y el PASS no prueba nada. La forma más fuerte del control es **diferencial**:
+cambiar una sola cosa y ver la decisión darse vuelta.
+
+Y el otro lado de la misma moneda: cuando batten **no puede** correr, lo dice. Un hook que degrada
+en silencio a confiar en el modelo es *peor* que no tener hook, porque se le cree:
+
+```
+batten (warning — not blocking): batten did NOT run for this tool call — neither the commit gate
+nor the write-set guard was applied, and nothing here was verified.
+cause: could not open the store at /path/batten.db (...)
+
+batten.code: degraded
+batten.retry: true
+batten.fix: batten doctor
+```
 
 ---
 
-## 5. El CLI completo
-
-`batten <subcomando>`. Las banderas están listadas como las acepta el parser real.
+## 6. El CLI completo — 26 subcomandos
 
 ### Arranque y salud
 
 | comando | banderas | qué hace |
 |---|---|---|
 | `batten init` | `--from <doc>`, `--scan-json` | escanea el repo y escribe `batten.yaml` en modo report |
-| `batten doctor` | — | valida el spec y reporta capacidades vivas. **Sale 1** si el spec es inválido |
-| `batten version` | `--version`, `-v` | imprime la versión |
+| `batten doctor` | — | valida el spec y reporta capacidades vivas, **todo en una sola pasada**. Sale 1 si el spec es inválido |
+| `batten demo` | `--keep` | el flujo entero sobre un repo desechable; no toca nada tuyo |
+| `batten version` | `--version`, `-v` | la versión |
 
 `init` deriva el unit **del backlog primero** y de los nombres de rama después: un repo planeado
 pero no trabajado no tiene ramas feature, y el backlog es donde los ids realmente viven. Necesita
 **≥3 encabezados** `### US-0NN` para llamarlo convención; con menos cae a `TASK-\d+` a propósito.
 
-`--from` **hoy solo imprime su propio argumento de vuelta** — no lee el documento ni lo registra
-como `unit.plan`, y acepta rutas inexistentes con exit 0. Está en el plan de mejora.
+`doctor` emite **todo lo que sabe de una vez**, con la corrección al lado de cada problema. Cortaba
+en el primer fatal — arreglás uno, volvés a correr, aparece el siguiente; un diagnóstico de a uno
+es lo que hace que la gente se rinda a la tercera iteración.
 
 ### Ciclo de vida de un unit
 
 | comando | banderas | qué hace |
 |---|---|---|
-| `batten phase <unit> <fase>` | — | abre o avanza el run; graba el **ancla** (SHA base) |
+| `batten phase <unit> <fase>` | — | abre o avanza el run; graba el **ancla**; encadena la fase a la anterior; imprime el **alcance del diff**; se niega a avanzar si el techo de iteraciones se alcanzó y nadie mira |
 | `batten claim <agent-id> <file>...` | — | declara el write-set de un subagente |
 | `batten verdict` | `--unit`, `--file v.json` | graba el veredicto del **revisor** |
-| `batten check <unit>` | `--gate <g>` | **CORRE** los checks del gate y graba lo que imprimieron. **Sale 1** si queda BLOCKED |
-| `batten close <unit>` | `--status ok\|failed` | cierra por el gate y libera los write-sets |
-| `batten override <unit>` | `--reason "..."` | escape auditado del gate |
+| `batten check <unit>` | `--gate <g>` | **CORRE** los checks del gate, graba lo que imprimieron **y la huella del árbol sobre el que pasaron**. Sale 1 si queda BLOCKED |
+| `batten close <unit>` | `--status ok\|failed\|rolled_back` | cierra por el gate, libera los write-sets, y avisa si el trabajo sigue en una rama de otro árbol |
+| `batten override <unit>` | `--reason "..."` | escape auditado. **Rechazado** si el run está desatendido |
+| `batten recover <unit>` | — | re-ancla un run cuya base se movió (rebase, amend, pull) y dice **qué** le pasó al ancla vieja |
+
+### Concurrencia real
+
+| comando | banderas | qué hace |
+|---|---|---|
+| `batten worktree <unit>` | `--path`, `--branch`, `--from` | crea el árbol, la rama, y ancla el unit donde su árbol divergió |
+| `batten worktree <unit> --merge` | — | integra el árbol — **rechazado sin los dos veredictos**, y sin nada sin commitear en ninguno de los dos árboles |
+| `batten worktree <unit> --remove` | — | baja el árbol. **No borra la rama** |
+| `batten worktree --list` | — | los árboles y qué unit vive en cada uno |
+
+### Corrida sin supervisión
+
+| comando | banderas | qué hace |
+|---|---|---|
+| `batten unattended <unit>` | `--off` | prende (o apaga) el modo: cuatro reglas pasan a ser denegaciones |
+| `batten iterate <unit>` | — | cuenta una vuelta de fix→re-verify. **Sale distinto de cero en el techo** |
 
 ### Lectura
 
 | comando | banderas | qué hace |
 |---|---|---|
 | `batten runs` | — | lista los runs |
-| `batten show <unit>` | — | detalle: fases, fan-out, **ambos veredictos** |
-| `batten canvas <unit>` | `--out <ruta>` | emite el DAG como JSON Canvas |
+| `batten show <unit>` | — | detalle: fases, fan-out con número de intento, **ambos veredictos** |
+| `batten scan-diff <unit>` | `--strict` | el diff real de git contra los write-sets declarados. `--strict` sale distinto de cero, para cablearlo en `gates.checks` |
+| `batten report` | `--since d`, `--week`, `--share` | qué vio batten y **qué frenó** |
+| `batten pr <unit>` | `--out <ruta>` | el cuerpo del PR desde el registro: DAG Mermaid, evidencia, costo |
+| `batten canvas <unit>` | `--out <ruta>`, `--html` | el DAG como JSON Canvas, o **un solo HTML autocontenido** |
 | `batten budget [<unit>]` | — | estado del gobernador: tokens / $ imputado / cuota |
-| `batten measure` | — | gasto por modelo y qué compraron las capacidades |
+| `batten measure` | — | gasto por modelo, y qué compraron las capacidades |
 | `batten tui` | — | revisar runs en una UI de terminal |
 
 ### Integración
@@ -171,18 +238,12 @@ como `unit.plan`, y acepta rutas inexistentes con exit 0. Está en el plan de me
 | `batten mcp` | — | servidor MCP (stdio) |
 | `batten statusline` | `--install` | línea de estado + **único sensor de cuota** local |
 | `batten ingest <unit>` | `--transcript <ruta>` | valoriza los tokens de un transcript |
-| `batten hook <evento>` | `--tap` | entrada de hooks (JSON por stdin → JSON por stdout) |
-| `batten hook-debug` | `--on`, `--off`, `--show`, `--chain` | inspección de payloads reales de hook |
-
-### Variable de entorno crítica
-
-**`BATTEN_DB`** — ruta de la base. Si no está puesta, `dbPath()` **cae a la base real del
-usuario** (`~/.batten/batten.db`). Cualquier prueba en sandbox debe exportarla antes de *cada*
-comando; olvidarla contamina el vault real.
+| `batten hook <evento>` | — | entrada de hooks (JSON por stdin → JSON por stdout) |
+| `batten hook-debug` | `--tap`, `--off`, `--show` | inspección de payloads reales de hook |
 
 ---
 
-## 6. El gate, exactamente como funciona
+## 7. El gate, exactamente como funciona
 
 Esta es la parte que hay que entender bien porque es el producto.
 
@@ -193,71 +254,338 @@ Cuando el gate declara `checks:`, un commit necesita **ambos**:
 | veredicto | quién lo escribe | qué prueba |
 |---|---|---|
 | `source: batten` | `batten check` | que los checks declarados **se corrieron** |
-| `source: agent` (o cualquier otro) | `batten verdict` | que alguien **juzgó** el trabajo contra sus criterios de aceptación |
+| `source: agent` (o cualquier otro) | `batten verdict` | que alguien **juzgó** el trabajo contra sus criterios |
 
 Ninguno sustituye al otro. `batten check` por sí solo **no cierra un unit** — probar que la suite
 pasa no dice nada sobre si el trabajo cumple lo que se pidió.
 
-### El orden de decisión en `verdictGate`
+### El orden de decisión
 
-```
-¿el comando es un git commit?          no → silencio
-¿el spec gatea el cierre?              no → silencio
-¿el mensaje del commit nombra un unit? sí → ese unit manda sobre la atadura de sesión
-¿se pudo atribuir el commit?           no → AVISO (no denegación): dice qué no está gateado
-¿hay run abierto para ese unit?        no → AVISO: "este commit NO está gateado"
-¿hay override registrado?              sí → pasa, y queda en el registro
-¿hay veredicto?                        no → DENY
-¿evidencia vacía con result=ok?        sí → DENY
-¿el result es el requerido?            no → DENY
-¿el gate declara checks?
-   sí → ¿falta el pase de batten o el del revisor? → DENY
-   no → guarda un AVISO y sigue (nunca retorna acá)
-¿el presupuesto está excedido y on_exceed=block? → DENY
-                                        → devuelve el aviso pendiente, si lo hay
+```mermaid
+graph TD
+    A["¿es un git commit?"] -->|no| S1[silencio]
+    A -->|sí| U["¿el run está DESATENDIDO?"]
+    U -->|sí| D0["DENY unattended_commit<br/><i>cierra una persona</i>"]
+    U -->|no| B["¿el spec gatea el cierre?"]
+    B -->|no| S2[silencio]
+    B -->|sí| C["¿el mensaje nombra un unit?"]
+    C -->|"sí, y es otro"| C2["ese unit manda sobre<br/>la atadura de sesión"]
+    C -->|no| E
+    C2 --> E["¿se pudo atribuir?"]
+    E -->|no| W1["AVISO<br/><i>dice qué no está gateado</i>"]
+    E -->|sí| F["¿hay override?"]
+    F -->|sí| P1["pasa, y queda registrado"]
+    F -->|no| G["¿hay veredicto?"]
+    G -->|no| D1["DENY no_verdict"]
+    G -->|sí| H["¿evidencia vacía con ok?"]
+    H -->|sí| D2["DENY no_evidence"]
+    H -->|no| I["¿el result es el requerido?"]
+    I -->|no| D3["DENY wrong_result"]
+    I -->|sí| J["¿el gate declara checks?"]
+    J -->|"sí, y falta una mitad"| D4["DENY checks_not_run<br/>o not_reviewed"]
+    J -->|"sí, y el árbol se movió"| D5["DENY stale_target<br/>o moved_base"]
+    J -->|no| W2["guarda un AVISO<br/><b>y sigue</b>"]
+    J -->|"sí, completo"| K
+    W2 --> K["¿presupuesto excedido<br/>y on_exceed=block?"]
+    K -->|sí| D6["DENY over_budget"]
+    K -->|no| P2["devuelve el aviso pendiente,<br/>si lo hay"]
 ```
 
-Dos cosas que ese orden codifica y que costaron bugs reales:
+Tres cosas que ese orden codifica y que costaron bugs reales:
 
 - **Un aviso nunca puede tapar una denegación.** La rama del gate sin checks *guarda* su aviso y
   sigue; si retornara ahí, el presupuesto dejaría de aplicarse.
 - **Fallar-abierto es válido; fallar-abierto en silencio no.** Cuando batten no puede atribuir un
   commit, no deniega —negar lo que no puede verificar haría que lo desinstalen el día uno— pero
   **lo dice**.
+- **La regla 4 va antes que todo**, y no depende de que el spec declare un gate: un repo sin gate
+  tampoco debe tener un commit aterrizando a las 3am sin que nadie haya leído nada.
 
 ### `enforcement: report` vs `enforce`
 
-`report` convierte cada denegación en un aviso visible. Es la rampa de adopción: un equipo a
-mitad de sprint no puede quedar bloqueado el día uno. `init` arranca siempre en `report`.
+`report` convierte cada denegación en un aviso visible. Es la rampa de adopción: un equipo a mitad
+de sprint no puede quedar bloqueado el día uno. `init` arranca siempre en `report`.
+
+Y **el modo vigente queda grabado en cada decisión**, que es la otra mitad de un kill switch que
+valga la pena: sin eso, *"estuvimos en modo report tres semanas"* no tiene registro de lo que costó.
+
+### La huella del árbol
+
+`batten check` prueba que los checks pasaron — los probó *sobre un árbol*, y no guardaba ningún
+rastro de cuál. Un formateador entre el check y el commit deja el veredicto diciendo
+`batten-verified` sobre un estado que ya no existe.
+
+La huella guarda **el commit y el árbol por separado**, porque *"te editaron un archivo"* y *"se
+movió la historia"* necesitan consejos **opuestos** y un hash opaco único solo sabe decir
+"distinto":
+
+```
+batten: TASK-1 has a MOVED BASE: the checks passed on commit 3597ab332766, and HEAD is now
+33c80ec6cd04. Your uncommitted work is untouched — the history moved under it (a rebase, an
+amend, a checkout, or a commit landing underneath).
+Re-anchor and re-verify: batten recover TASK-1 && batten check TASK-1
+
+batten.code: moved_base
+batten.retry: false
+```
+
+> **batten no puede invalidar un veredicto escribiendo en su propio libro mayor.** La huella excluye
+> la base de batten y sus sidecars de SQLite; la primera versión hasheaba todo lo que git reportaba,
+> y *grabar* el veredicto cambiaba el árbol del que el veredicto hablaba.
 
 ---
 
-## 7. El write-set guard
+## 8. El write-set guard
 
-Un fan-out corriendo: cuatro subagentes, write-sets disjuntos, cada uno declarado con
-`batten claim` al lanzarse. La tabla `writesets` tiene `PRIMARY KEY (run_id, path)` — **un dueño
-por archivo, impuesto por la base**, no por disciplina.
+Un fan-out corriendo: N subagentes, write-sets disjuntos, cada uno declarado con `batten claim` al
+lanzarse. La tabla `writesets` tiene `PRIMARY KEY (run_id, path)` — **un dueño por archivo,
+impuesto por la base**, no por disciplina.
 
-**La asimetría es deliberada:** con `agent_id` sabemos exactamente quién escribe, y una colisión
-es DENY duro. **Sin** `agent_id` no podemos distinguir al dueño legítimo del intruso, así que es
-un aviso. Los riesgos no son simétricos: un aviso ruidoso sobre una invasión real es recuperable;
+**La asimetría es deliberada:** con `agent_id` sabemos exactamente quién escribe, y una colisión es
+DENY duro. **Sin** `agent_id` no podemos distinguir al dueño legítimo del intruso, así que es un
+aviso. Los riesgos no son simétricos: un aviso ruidoso sobre una invasión real es recuperable;
 bloquear en silencio toda escritura legítima brickearía el fan-out entero.
 
-Huecos conocidos (§ plan de mejora): un `claim` de directorio se acepta y no cerca nada; una
-escritura por `Bash` (`>`, `sed -i`, heredoc) no pasa por el guard.
+La colisión de write-set es **la única denegación sin `fix`, a propósito**: no hay salida legítima —
+si dos agentes necesitan el archivo el PLAN está mal, y un `fix` ahí sería una instrucción para
+cruzar la cerca.
+
+### El bypass por Bash — cerrado, en modo aviso
+
+`Edit` sobre un archivo reclamado se denegaba y **la misma escritura por `sed -i` pasaba en
+silencio**. El guard sobre el que descansa todo el argumento de seguridad del fan-out estaba a un
+`sed` de ser opcional.
+
+Lo que lo hacía peor que un fail-open ordinario: batten **no estaba confundido**. Sabía quién era el
+dueño; lo había nombrado en una denegación una llamada antes. No era *"no puedo determinar culpa"*,
+era *"no miré"*.
+
+Lo que se detecta hoy: redirección (`>`, `>>`, `2>`, glued y con espacio), `sed -i` en todas sus
+formas, `tee`, `mv`, `cp`, `install`, `rsync`, `dd of=`, `patch`, `truncate`. Con las rutas
+relativas resueltas contra el `cwd` del payload, no contra la raíz del repo.
+
+**Es un AVISO, no una denegación, y eso es el punto del primer ciclo, no una tibieza.** Es una
+lectura heurística de shell alimentando un bloqueo duro en el camino crítico de cada llamada. Un
+falso positivo acá no incomoda a nadie: para a un agente legítimo y hace que desinstalen el plugin.
+Así que: un ciclo avisando, los avisos caen en el log de decisiones bajo su propia regla,
+`batten report` los cuenta, y cuando ese número sea aburrido pasa a ser denegación.
+
+**Lo que NO puede ver, dicho en voz alta:** un script de python, un target de Makefile, un `go run`,
+cualquier cosa que haga una herramienta de terceros. Ningún parser de shell llega ahí. No es la
+falla de este chequeo, es su frontera — y es exactamente lo que cubre el siguiente.
+
+### `batten scan-diff` — el chequeo que no lee shell
+
+No mira comandos en absoluto: le pregunta a git qué cambió y a la base quién reclamó qué, y
+contrasta. **Determinista, sin heurísticas, sin falsos positivos** — por eso §5.1 dice que debería
+haber ido primero aunque esté cuarto en la lista. Un generador de código, un target de Makefile o un
+script de python quedan igual de visibles que un `sed`.
+
+Y produce gratis el número que §3.3 quiere y nadie tiene: cuánto **sobre-declaran** los agentes.
+Salida real de un sandbox donde un script generó un archivo que nadie reclamó:
+
+```
+TASK-1  anchor d9ac18b  4 file(s) changed
+
+claimed and touched:
+  a1                   api/handler.go
+
+⚠ 3 file(s) changed that NO write-set claimed:
+    api/gen.go
+    gen.sh
+    p.json
+  This is what a shell command, a code generator or a third-party tool leaves
+  behind — the writes no parser of commands can see. batten cannot tell from a
+  diff whether these were the orchestrator integrating or an agent going around
+  the fence, and it will not guess: look at them.
+
+over-declaration: 1 of 2 claimed path(s) were never touched (50%)
+  a1                   api/never.go
+  (S-Bus measured 32–49% over-declaration in automatically reconstructed
+   read-sets. This is ONE run of hand-declared write-sets — a data point,
+   not a rate. Plan §3.3 wants the rate across many.)
+```
+
+Dos cosas que **se niega** a concluir, y las dice:
+
+- **De quién fue.** Un archivo cambiado sin reclamar puede ser el orquestador integrando o un agente
+  cruzando la cerca. Desde un diff no se puede distinguir, y batten no adivina.
+- **Que un run sin claims esté limpio.** Cero claims no es cero violaciones: es un hueco de
+  planeación, y llamarlo limpio sería el tilde verde más vacío posible. Igual que reportar un conteo
+  de tokens sin medir como 0.
+
+Y sin ancla se niega a reportar: *"nothing here is measurable — that is different from clean"*.
+
+### Hueco conocido que sigue
+
+- Un `claim` de directorio se acepta, se reporta como protector y **no cerca nada** (§5.2 del plan).
+  Para units concurrentes §5.4 lo resolvió estructuralmente; para un `dir/**` dentro de un mismo run
+  sigue abierto, y baja a bloque 4.
 
 ---
 
-## 8. El presupuesto — tres techos honestos
+## 9. Worktrees — cerrar el bucle que batten ya había abierto
 
-En una suscripción el costo marginal de un token es **cero**, así que "dólares gastados" es el
-techo equivocado. batten declara tres:
+**El argumento más fuerte no era la literatura: era que batten ya lo prescribía y no lo hacía.**
+Tres mensajes distintos del binario le decían al usuario que usara un worktree por unidad. Ninguno
+lo creaba. Diagnosticar el problema, nombrar la solución y no ejecutarla es la misma brecha entre
+declarado y hecho que el §8 trata en otro contexto.
+
+Y encima batten **castigaba** a quien seguía el consejo: toda ruta que batten conoce es relativa al
+repo, y `api/handler.go` es la misma cadena en todos los worktrees. Dos units en dos árboles se
+leían como dos sesiones peleando por un archivo, y el guard **las denegaba a las dos**.
+
+```mermaid
+graph LR
+    subgraph main["árbol principal · rama main"]
+        T1["TASK-1<br/>api/handler.go"]
+    end
+    subgraph wt["worktree · rama TASK-2"]
+        T2["TASK-2<br/>api/handler.go"]
+    end
+    T1 -.->|"misma ruta relativa,<br/>archivos distintos:<br/><b>NO es una carrera</b>"| T2
+    wt ==>|"batten worktree TASK-2 --merge"| GATE{{"¿los dos veredictos?"}}
+    GATE -->|no| NO["RECHAZADO<br/><i>el árbol queda intacto</i>"]
+    GATE -->|sí| YES["git merge --no-ff"]
+    YES --> main
+```
+
+**Dos correcciones de alcance, deliberadas:**
+
+- **POR UNIT, NO POR SUBAGENTE.** Aislar entre sí a los agentes de un mismo unit rompe el fan-out:
+  trabajan write-sets **disjuntos del mismo árbol** —esa es la premisa del diseño— y aislarlos
+  significa que ninguno ve el trabajo del otro, más N fusiones para un solo unit. Está escrito en
+  `/batten-build`, porque el orquestador **ya tiene** `isolation: "worktree"` y usarlo ahí sería el
+  error.
+- **batten no orquesta**, así que no "asigna" nada. Crea y **registra** el árbol, y gatea la vuelta.
+
+**El lock es de gentle-ai v2.1.9 y su lección entera es DÓNDE va.** El `.git` de un worktree
+enlazado es un **archivo**; un lock relativo a él es por-worktree: cada proceso toma el suyo, todos
+ganan, y la exclusión mutua es imaginaria. Va en el **git-common-dir**, que es el único compartido.
+Y **no roba nunca**: nombra al que lo tiene, dice cuánto lleva, y dice cómo sacarlo — una
+herramienta que rompe un lock por temporizador termina rompiendo uno que estaba haciendo algo.
+
+**El ancla cambia de significado, y para mejor.** Cada worktree tiene su propio `HEAD`, así que el
+ancla de un unit es **el punto donde su árbol divergió** — que es exactamente el diff que un
+revisor debería estar mirando.
+
+Salida real:
+
+```
+$ batten worktree TASK-2
+TASK-2 -> worktree /tmp/sb17/main-TASK-2 (branch TASK-2, from 33c80ec)
+anchor: TASK-2 base SHA = 33c80ec (where its tree diverged)
+
+work there:   cd /tmp/sb17/main-TASK-2
+bring it back: batten worktree TASK-2 --merge   (denied unless the gate is satisfied)
+
+$ batten worktree TASK-2 --merge          # sin veredictos
+batten: refusing to merge TASK-2: cannot close TASK-2 as ok: has no batten-verified pass.
+The gate's checks must be RUN, not asserted.
+Run: batten check TASK-2
+The worktree is untouched — nothing was integrated and nothing was lost
+
+$ batten worktree TASK-2 --merge          # con los dos
+merged TASK-2 into main
+the tree is still at /tmp/sb17/main-TASK-2 — take it down with: batten worktree TASK-2 --remove
+```
+
+---
+
+## 10. El modo desatendido — cuatro reglas que dejaron de pedir
+
+`/batten-night` ya era el bucle de autocorrección autónomo, y más maduro que cualquier cosa que
+batten pudiera agregar: build → verify → **fix** → re-verify, con los techos de presupuesto como
+disparador y un reporte de la mañana. Tenía cuatro reglas absolutas.
+
+**Las cuatro eran prosa.** 112 líneas de markdown pidiéndole al modelo que se comporte, en el
+comando **más peligroso** del plugin — el único lugar donde el error es irreversible y no hay nadie
+despierto para atraparlo. El README dice en su primera línea que una regla que un documento solo
+puede pedir, un hook puede imponer. Era el único lugar donde batten no se había tomado su propia
+medicina.
+
+Un flag en la corrida —`runs.mode = 'unattended'`— las vuelve cuatro denegaciones. **Cero
+orquestación nueva:** batten sigue sin correr el bucle; solo deja de ser el único participante de una
+corrida sin supervisión que no puede decir que no.
+
+| regla | mecanismo | código |
+|---|---|---|
+| 1. nunca borrar | matcher `PreToolUse`/`Bash`: `rm`, `rmdir`, `git reset --hard`, `git checkout --`, `git restore`, `git clean`, `git branch -D`, `git push --force`, `del`, `truncate`, y `> archivo` **cuando el archivo ya existe** | `unattended_delete` |
+| 2. honrar `max_iterations` | `batten iterate` **incrementa** el contador y sale distinto de cero en el techo; `batten phase` se niega a avanzar | `iteration_ceiling` |
+| 3. nunca hacer override | `batten override` rechaza | `unattended_override` |
+| 4. no commitear | el gate deniega **con** los dos veredictos puestos | `unattended_commit` |
+
+**NINGUNA lleva `fix`.** Es la misma omisión deliberada que la colisión de write-set: cada otra
+denegación entrega la salida, y estas no pueden, porque la salida es
+`batten unattended <unit> --off` e imprimírsela a un bucle que nadie mira es entregarle la llave de
+su propia cerca. La salida es una persona a la mañana.
+
+**El `>` truncante no se puede denegar en general**, y eso lo enseñó correrlo: un bucle que no puede
+hacer `go test > out.txt` no es un bucle desatendido, es un bucle que no corre. Se deniega solo
+sobre un archivo que **ya existe** dentro del repo. Crear uno nuevo no destruye nada; vaciar uno
+trackeado destruye exactamente lo que la regla 1 dice que nadie recupera.
+
+Y `budget.max_iterations` era **el peor caso de la tabla de campos muertos**: declarado en el spec,
+devuelto por MCP, **dibujado en la TUI** como `iters %d/%d`, y nunca incrementado por nada.
+`runs.iterations` estaba en 0 para siempre. El único freno que una corrida sin supervisión tenía
+contra gastarse la ventana era una frase en un archivo markdown.
+
+```
+$ batten unattended TASK-1
+TASK-1 is now UNATTENDED. Four rules are mechanisms from here:
+  1. nothing gets deleted — rm, git reset --hard, git restore, git clean, and
+     truncating an existing file are denied. Write them in the morning report.
+  2. the iteration ceiling is counted: batten iterate TASK-1
+  3. batten override is refused — a human reason needs a human.
+  4. a commit is denied, verdicts or no verdicts. A human closes.
+
+ceiling: 2 iteration(s), 0 used.
+turn it off when you have read the report: batten unattended TASK-1 --off
+
+$ batten iterate TASK-1
+TASK-1: iteration 1 of 2
+$ batten iterate TASK-1
+TASK-1: iteration 2 of 2
+this is the last one. The next `batten iterate` will refuse.
+$ batten iterate TASK-1
+batten: TASK-1 has used 2 of 2 iterations: the ceiling is reached.
+Stop. A loop that has failed the same check 2 times is not going to pass it on the next one;
+it is going to spend the window.
+Report what is still red and let a human decide.
+
+batten.code: iteration_ceiling
+batten.retry: false
+```
+
+Y una estadística que nadie más del ecosistema puede producir, porque hace falta una herramienta que
+**estuvo presente** a las 3am y dijo no:
+
+```
+  what batten stopped, last 24 hours
+    2 commit(s) denied   (no verdict, empty evidence, or checks not run)
+    0 write-set collision(s) stopped
+    0 run(s) stopped on budget
+    2 action(s) refused during an unattended run   (deletes, and commits before a human read the report)
+    0 warning(s) issued without blocking
+    counting since 2026-07-29 13:40 — anything before that was never recorded.
+```
+
+Esa última línea no es opcional: sin ella, "2 commits denegados" se lee como un total histórico
+cuando batten puede llevar contando desde el martes.
+
+---
+
+## 11. El presupuesto — tres techos honestos
+
+En una suscripción el costo marginal de un token es **cero**, así que "dólares gastados" es el techo
+equivocado. batten declara tres:
 
 | techo | qué es | se puede medir? |
 |---|---|---|
 | `tokens_per_run` | lo único que se puede contar exacto | sí, si se ingirió un transcript |
-| `imputed_usd_per_run` | lo que *habría* costado por API. No es una factura: es el valor que se está sacando del plan | sí, para modelos con precio publicado |
+| `imputed_usd_per_run` | lo que *habría* costado por API. **No es una factura**: es el valor que se está sacando del plan | sí, para modelos con precio publicado |
 | `quota_pct_per_run` | parte de la ventana rodante de 5h. Anthropic no publica números absolutos, así que **el porcentaje es la única métrica de cuota confiable** | solo con `batten statusline` instalado |
+| `max_iterations` | el techo de vueltas de un bucle sin supervisión | **sí, desde ahora** |
 
 `on_exceed`: `block` | `warn` | `downgrade_effort`.
 
@@ -265,44 +593,210 @@ techo equivocado. batten declara tres:
 
 > **Nunca reportar un número que no se tiene.**
 
-Un run del que nadie ingirió transcript **no gastó cero** — está *sin medir*, y esas dos
-situaciones piden respuestas opuestas. batten distingue:
+Un run del que nadie ingirió transcript **no gastó cero** — está *sin medir*, y esas dos situaciones
+piden respuestas opuestas:
 
 ```
-US-005  usage NOT MEASURED (not zero — nothing has been ingested for this run)
-  · tokens   NOT MEASURABLE — no usage has been measured for this run —
-             run `batten ingest <unit> --transcript <path>`
+| tokens | **NOT MEASURED** — no transcript was ingested for this run. Not zero: unknown |
+| imputed | **NOT MEASURED** |
 ```
 
-Y cuando la valla temporal descarta requests anteriores al run (correcto: un run no hereda 30
-horas de sesión), lo **dice en voz alta**, con tokens y dólares, en vez de tragárselo.
+Y cuando la valla temporal descarta requests anteriores al run (correcto: un run no hereda 30 horas
+de sesión), lo **dice en voz alta**, con tokens y dólares, en vez de tragárselo.
 
 ---
 
-## 9. El grafo de la corrida
+## 12. El grafo de la corrida
 
 | tabla | qué guarda |
 |---|---|
-| `runs` | un run por unit-intento: fase, estado, `base_sha`, tokens, USD imputado, cuota inicial |
-| `nodes` | fases y subagentes. `node_id = <run_id>:p-<fase>` o `<run_id>:n-<agent_id>` |
-| `edges` | **aristas tipadas**: `spawn` \| `depends_on` \| `retry_of` \| `supersedes` \| `rollback` |
-| `writesets` | dueño por archivo |
-| `verdicts` | append-only, con `source` |
+| `runs` | un run por unit-intento: fase, estado, `base_sha`, tokens, USD imputado, cuota inicial, iteraciones, **worktree**, **mode** |
+| `nodes` | fases y subagentes. `node_id = <run_id>:p-<fase>` o `<run_id>:n-<agent_id>`, más **`attempt`** |
+| `edges` | **aristas tipadas**: `spawn` · `depends_on` · `retry_of` · `supersedes` · `rollback` |
+| `writesets` | dueño por archivo, `PRIMARY KEY (run_id, path)` |
+| `verdicts` | append-only, con `source` y **`target_digest`** |
 | `usage` | una fila por (request, run), idempotente por `request_id` |
 | `quota_snapshots` | muestreo de la ventana de 5h |
 | `overrides` | escapes auditados |
-| `events` | log de reproducción, append-only |
+| `events` | log de reproducción, append-only, con **`decision`, `reason`, `rule`, `enforcement`** |
 
-**Las aristas tipadas son la razón de que SQLite sea canónico y no un caché.** Una traza OTel
-plana no puede expresar más que una arista de padre y links sin tipo; `retry_of` y `supersedes`
-son exactamente lo que hace legible un fan-out con reintentos.
+**10 migraciones aditivas.** Una base creada por un batten viejo se actualiza en su lugar.
 
-Los ids de nodo **llevan su run**. Un `p-build` global era literalmente una fila para toda la
-base: el segundo unit que entrara a `build` se llevaba la fila del primero.
+Los ids de nodo **llevan su run**. Un `p-build` global era literalmente una fila para toda la base:
+el segundo unit que entrara a `build` se llevaba la fila del primero, y el canvas del primero
+colapsaba a un encabezado pelado.
+
+### Las aristas tipadas, y el reintento que nadie escribía
+
+**Las aristas tipadas son la razón de que SQLite sea canónico y no un caché.** Una traza OTel plana
+no puede expresar más que una arista de padre y links sin tipo.
+
+Pero `retry_of` tenía **cinco lectores y cero productores**: `batten pr` contaba los reintentos para
+su badge y dibujaba la arista punteada, el canvas la pintaba de naranja, la nota de vault la listaba
+bajo *Relations*, MCP contestaba `retries: N`, y la TUI la colgaba del nodo. El titular de
+`batten pr` —*"el DAG muestra lo que un diagrama de plan no puede"*— descansaba enteramente sobre
+esa arista, y **lo único que un plan no puede mostrar ES el reintento**. Se veía funcionar solo
+porque la fila se había insertado a mano en SQLite.
+
+El productor vive en `SubagentStart`. **Un reintento es un subagente TERMINADO en `failed`, del
+mismo dominio, que nada retomó todavía.** Las cuatro cláusulas son load-bearing:
+
+- **terminado y fallado**: es la cláusula que impide que un fan-out normal se lea como una pila de
+  reintentos. Dos agentes del mismo dominio en paralelo siguen `running` con `ended_at` NULL.
+- **la identidad es el DOMINIO** cuando el agente tiene uno, porque el dominio es la unidad de
+  trabajo que el fan-out divide.
+- **nada lo retomó todavía**: si no, un dominio que falló una vez y se arregló en el segundo intento
+  marcaría a todo agente posterior como un tercer intento de trabajo terminado hace rato.
+- **scopeado al run, nunca a la fase**: el bucle build → verify → **fix** → re-verify reintenta un
+  dominio en una fase *distinta* de la que falló, y ese es el reintento que más vale dibujar.
+
+`depends_on` también tenía color en el canvas y ningún productor: el grafo se llamaba DAG y **no
+tenía una sola arista entre fases**. Ahora cada fase se encadena a la anterior.
+
+Un DAG real, capturado de una corrida de sandbox (`api` verde, `ui` falla, `ui #2` lo arregla):
+
+```mermaid
+graph LR
+  N1["build ✓"]:::ok
+  N2("api ✓<br/>write-set not recorded"):::ok
+  N3("ui ✗<br/>write-set not recorded"):::fail
+  N4("ui #2 ✓<br/>write-set not recorded"):::ok
+  N5["verify"]:::running
+  N1 --> N2
+  N1 --> N3
+  N1 --> N4
+  N4 -.retry_of.-> N3
+  N5 -- depends_on --> N1
+  G{{"gate: no verdict"}}:::fail
+  N5 --> G
+  classDef ok fill:#1a7f37,color:#fff,stroke:#1a7f37
+  classDef fail fill:#cf222e,color:#fff,stroke:#cf222e
+  classDef warn fill:#9a6700,color:#fff,stroke:#9a6700
+  classDef running fill:#0969da,color:#fff,stroke:#0969da
+```
+
+`attempt` deja de ser una columna muerta: dos tarjetas `ui` —una roja, una verde— eran
+indistinguibles salvo por el color, que es exactamente la queja que registró el field test. Ahora
+dicen `ui #2`, en el PR, en el canvas y en `batten show`:
+
+```
+$ batten show TASK-1
+TASK-1  run=TASK-1-...-b679641b  status=running  phase=verify  base=1fa6b3c
+  [subagent] api                      ok
+  [subagent] ui                       failed
+  [subagent] ui #2                    ok
+  [phase] build                    ok
+  [phase] verify                   running
+```
+
+### `diff_from: anchor` deja de ser un adjetivo
+
+Estaba parseado, documentado en el schema como *"opera solo sobre el diff del unit"*, y **leído por
+nadie**: una fase que lo declaraba se comportaba exactamente igual que una que no. Entrar a una fase
+que lo declara **sin ancla** era completamente silencioso.
+
+```
+$ batten phase TASK-1 verify
+TASK-1 -> phase verify
+scope: `1fa6b3c..` — this phase operates ONLY on the unit's diff: 3 file(s). api/a.go, ui/new.go, ...
+this phase must emit a verdict for gate "qa" (evidence required)
+
+# y sin ancla:
+scope: this phase declares `diff_from: anchor` and there is no anchor — the anchor is recorded
+by `build`, which this run has not entered. Everything you diff from here is a guess.
+```
+
+El mismo texto se inyecta en el briefing de `SessionStart`, que es el que llega al agente sin que
+tenga que preguntar.
 
 ---
 
-## 10. Las capacidades opcionales
+## 13. El sobre de fallo tipado — 17 códigos
+
+batten denegaba en prosa. Buena prosa, pero prosa: un bucle de agente tiene que **parsear inglés**
+para saber qué hacer, y interpretarlo es exactamente el paso que sale mal a las 3am.
+
+Cada denegación y cada aviso llevan ahora tres campos junto a la prosa:
+
+```
+batten.code:  un identificador estable de QUÉ está mal      (stale_target, no_verdict, ...)
+batten.fix:   el comando exacto que lo resuelve             ("batten check US-034")
+batten.retry: si re-correr la MISMA llamada podría funcionar
+```
+
+**`retry` es el campo caro de errar.** Un veredicto que falta **no** es reintentable —correr
+`git commit` otra vez no cambia nada, y un bucle que lo reintenta se gasta la ventana en una
+denegación idéntica—. La contención de SQLite **sí** lo es, y es justo la que peor se infiere de la
+prosa.
+
+Los 17 códigos: `no_verdict` · `no_evidence` · `wrong_result` · `checks_not_run` · `not_reviewed` ·
+`stale_target` · `moved_base` · `over_budget` · `write_set` · `unattributed` · `wrong_unit` ·
+`degraded` · `gate_has_no_checks` · `unattended_delete` · `iteration_ceiling` ·
+`unattended_override` · `unattended_commit`.
+
+Son **strings estables, no números**: viajan por JSON a un modelo, y `stale_target` le dice algo que
+`E7` no. **La prosa sigue primero**, porque una persona también lee esto, y un mensaje que solo es
+legible por máquina falla a quien tiene que entender con qué se chocó su agente.
+
+Las refusals del CLI (`batten override`, `batten iterate`, `batten phase`) llevan el mismo sobre: un
+bucle que lee stderr merece lo mismo que uno que lee un payload de hook.
+
+---
+
+## 14. Las superficies visuales
+
+| superficie | qué necesita | qué da |
+|---|---|---|
+| `batten pr <unit>` | nada | el cuerpo del PR: DAG Mermaid (GitHub lo renderiza nativo desde feb-2022), tabla de verificación con evidencia citada, y el costo |
+| `batten canvas --html` | **nada, ni red** | **un solo archivo** de ~9 KB, CSS/JS/datos inline. Verificado en un navegador real |
+| `batten canvas` | Obsidian (opcional) | JSON Canvas |
+| `batten report` | nada | qué pasó y qué se frenó, con `--share` para pegar en Slack |
+| `batten demo` | nada | el flujo entero sobre un repo desechable, en ~30 s |
+| `batten tui` | terminal | revisar runs |
+| nota de vault | `capabilities.obsidian.vault` | la nota del run + dashboards + canvas |
+
+### El canvas HTML, en un navegador de verdad
+
+Captura real de `batten canvas TASK-1 --html` sobre la corrida de sandbox descrita arriba, abierta en
+Chromium. **Un archivo de 9,8 KB, sin una sola petición de red** — la única del log de consola es el
+`favicon.ico` que pide el propio navegador:
+
+![El canvas HTML de batten: el grupo de fase `build` con api ✓, ui ✗ y ui #2 ✓ unidos por una arista naranja punteada retry_of; el grupo `verify` encadenado con depends_on; y los dos veredictos con su evidencia citada](../img/canvas-html.png)
+
+Lo que hay que leer ahí, porque es lo que ninguna otra superficie del ecosistema puede mostrar:
+
+- el header dice **`1 retry/retries`** y **`usage NOT MEASURED (not zero — unknown)`** en la misma
+  línea que `batten-verified`. Los tres son hechos distintos y ninguno se disfraza de otro.
+- `ui ✗` en rojo y `ui #2 ✓` en verde, unidos por la arista **naranja punteada `retry_of`**. Sin el
+  `#2` esas dos tarjetas eran indistinguibles salvo por el color.
+- `verify` colgado de `build` por **`depends_on`**: hasta este bloque el grafo no tenía una sola
+  arista entre fases.
+- los **dos veredictos**, cada uno con su evidencia citada y su productor.
+
+`batten pr` es la única superficie que **se distribuye sola**: un PR lo leen los revisores, y todos
+ven el footer.
+
+**El no-negociable de `pr`:** si el uso no se midió, la tabla dice `NOT MEASURED`, nunca `$0.00`. Si
+falta el veredicto del revisor, la tabla lo dice. Un PR generado que adula la corrida es **peor** que
+ningún PR generado, porque es el único artefacto que otras personas van a leer sin saber de qué
+desconfiar.
+
+Header real de una corrida sin veredictos:
+
+```markdown
+## TASK-1
+
+**⚠ NOT batten-verified** — no verdict at all · 3 subagent(s) · 1 retry/retries
+```
+
+`batten demo` existe porque el recorrido de adopción era el problema: **~8 pasos hasta un commit
+denegado**, contra 1 comando de caveman o 3 de graphify. El demo levanta un repo git de verdad,
+muestra el fan-out, la colisión, el gate, la denegación tipada y el reporte — y lo borra.
+16 comportamientos verificados.
+
+---
+
+## 15. Las capacidades opcionales
 
 ```yaml
 capabilities:
@@ -312,42 +806,63 @@ capabilities:
   compression:{ provider: headroom, measure: true }
 ```
 
-Todas **degradan con gracia**: sin proveedor de grafo, la fase de plan hace grep; sin vault, no
-se escribe canvas; sin statusline, el techo de cuota se reporta como no medible y los otros dos
-siguen mordiendo.
-
-### Estado real de cada integración
+Todas **degradan con gracia**: sin proveedor de grafo la fase de plan hace grep; sin vault no se
+escribe canvas; sin statusline el techo de cuota se reporta como no medible y los otros dos siguen
+mordiendo.
 
 | capacidad | qué hace HOY | dónde |
 |---|---|---|
-| **graphify** | `doctor` lo detecta en PATH, avisa si falta `graph.json`, y detecta el **merge driver** de `graph.json` (crítico: pesa ~1MB y está commiteado, dos ramas dan conflicto garantizado). `batten phase` marca el run con si el grafo estaba fresco, para que `measure` compare después | binario |
-| | `god-nodes --json` y `affected "X"` los usa la **fase de plan**, en prosa, dentro de `/batten-plan` | comando |
-| **engram** | `doctor` lo detecta. `/batten-plan` indica `mem_search` antes de planear; `/batten-verify` antes de juzgar; `/batten-close` escribe la decisión | comandos, **no el binario** |
+| **graphify** | `doctor` lo detecta en PATH, avisa si falta `graph.json`, y detecta el **merge driver** — que con worktrees deja de ser una cortesía y pasa a ser un requisito de instalación: `graph.json` pesa ~1 MB y está commiteado, y "dos ramas tocando código" pasa del caso raro al caso normal. `batten phase` marca el run con si el grafo estaba fresco, para que `measure` compare | binario |
+| | `god-nodes --json` y `affected "X"` los usa la fase de plan, en prosa, dentro de `/batten-plan` | comando |
+| **engram** | `doctor` lo detecta. `/batten-plan` indica `mem_search` antes de planear; `/batten-verify` antes de juzgar; `/batten-close` escribe la decisión. **Y ahora el fan-out también**: la instrucción de orientación la inyecta el binario en el briefing de la fase | comandos + binario |
 | **obsidian** | `export.Run` escribe la nota del run + el canvas + los dashboards cuando `vault` está seteado. Dispara desde el hook `Stop`, el comando `canvas` y tras un veredicto | binario |
 | **headroom** | solo se **mide**: `measure` compara runs con y sin la bandera. Admitido, no tomado en fe | binario |
 
-> **La cadena graphify → engram para el subagente NO existe.** Ver §12 y el plan de mejora.
+### La cadena de las tres memorias, para el que escribe código
+
+`/batten-plan` consultaba las dos memorias, `/batten-verify` una, `/batten-close` escribía — y
+`/batten-build`, **el único que escribe código**, no consultaba nada. Arrancaba directo a leer
+archivos, el paso más caro de los tres. Y los dos campos que pedirían esa cadena
+(`query_before_read`, `graph_query`) tenían cero consumidores.
+
+Ahora la instrucción la **inyecta el binario**, en el briefing de la fase, así que llega al agente sin
+que pregunte. Texto real capturado del hook `SessionStart`:
+
+```
+### phase `build`
+- orient BEFORE you read, in this order: **graphify** (what the code IS — ask it before opening
+  files), then **engram** (what we DECIDED — search it for this area), and grep only as the
+  fallback — it is the most expensive of the three.
+  If neither answered, **say so explicitly in your return**. Do not imply a consultation that did
+  not happen: a wrong claim here is worse than an honest grep.
+- fans out over 1 domain(s): api. Each agent gets a DISJOINT write-set; claim yours with
+  `batten claim <agent-id> <files...>`.
+```
+
+**La cláusula de honestidad es lo que la hace más que una sugerencia.** Un agente al que se le pide
+consultar dos herramientas va a reportar haberlas consultado contesten o no — es la forma más
+probable de que una instrucción de esta forma falle. Así que exige lo contrario: si ninguna memoria
+respondió, **decirlo** en el retorno. Es el principio #3 (fallar abierto, nunca en silencio) aplicado
+a la orientación en vez de a un gate.
+
+Y `doctor` cruza el otro lado: `query_before_read: true` sin el proveedor en PATH es un aviso, porque
+una instrucción para consultar algo que no está instalado es peor que ninguna instrucción.
 
 ---
 
-## 11. Los comandos y skills del plugin
+## 16. Los comandos y skills del plugin
 
 | slash-command | qué hace |
 |---|---|
-| `/batten-init` | entrevista el repo (o un doc en prosa) y escribe `batten.yaml`; usa `init --scan-json` |
+| `/batten-init` | entrevista el repo (o un doc en prosa) y escribe `batten.yaml` |
 | `/batten-plan` | decide dominios, sub-tareas paralelas y sus **write-sets disjuntos** |
-| `/batten-build` | el fan-out: un subagente por dominio y por sub-tarea, cercado a su write-set |
+| `/batten-build` | el fan-out: un subagente por dominio y por sub-tarea, cercado a su write-set. **Un worktree por unit, nunca por subagente** |
 | `/batten-verify` | el gate: contrasta el diff con los criterios y emite veredicto con evidencia |
 | `/batten-close` | provenance, artefacto de resolución, y el commit que el gate debe permitir |
 | `/batten-night` | desatendido: build → verify → fix → re-verify, **parando antes del cierre** |
 
-Los *nombres* de las fases salen de tu `batten.yaml`. Los comandos leen el spec y corren la fase
-que coincida — no hardcodean un workflow.
-
-`/batten-night` es el que hay que leer antes de confiar: nunca borra nada (si *quisiera*, lo dice
-en el reporte de la mañana), nunca hace override del gate, y para antes del cierre. Los techos de
-presupuesto son el disparador que a una corrida desatendida le falta — no hay humano despierto
-para notar que lleva tres horas contra el mismo test rojo.
+Los *nombres* de las fases salen de tu `batten.yaml`. Los comandos leen el spec y corren la fase que
+coincida — no hardcodean un workflow.
 
 | skill | cuándo |
 |---|---|
@@ -356,52 +871,120 @@ para notar que lleva tres horas contra el mismo test rojo.
 
 ---
 
-## 12. Declarado pero no leído — inventario honesto
+## 17. Los cuatro guards meta — batten aplicándose su propia medicina
 
-Un spec que declara algo que nadie consume es peor que no declararlo: el usuario lo escribe,
-asume que gobierna, y no gobierna nada. Estado real:
+Un tercio del plan de mejora resultó ser **un solo modo de falla repetido nueve veces**: batten
+declaraba una capacidad de gobierno y no la imponía. Es *exactamente* el modo de falla que batten
+existe para eliminar en el flujo de otra gente. Y explica cómo un field test encontró 52 defectos con
+la suite verde: los tests verificaban que el código hiciera lo que hace; **nadie verificaba que el
+spec prometiera solo lo que el código hace**.
 
-### Impuesto por el binario (mecanismo real)
+El arreglo sistémico va antes que las nueve instancias, porque si no la décima entra mientras se
+arreglan las nueve. Son cuatro tests, y son el único lugar del código que le hace a batten lo que
+batten le hace a sus usuarios:
 
-`gate` · `requires_verdict` · `anchor: git_sha` · `budget.*` · `enforcement` · `unit.pattern`
-(para resolver el unit) · `domains.*.check` (vía `gates.checks`) · `capabilities.obsidian.vault`
-
-### Pasado al agente por MCP `batten_spec` (una *declaración* que el modelo puede honrar)
-
-`phases[].optional` · `phases[].interactive` · `phases[].fanout` · `phases[].reads` ·
-`phases[].when` · `domains[].invariants` · `domains[].skills` · `resources`
-
-### Declarado y leído por **nadie**
-
-| campo | qué promete | consumidores |
+| guard | dónde | qué impone |
 |---|---|---|
-| `phases[].diff_from: anchor` | operar solo sobre el diff del unit | **0** |
-| `phases[].graph_query` | consultar el grafo en vez de grepear | **0** |
-| `capabilities.graph.query_before_read` | preguntar al grafo antes de leer | **0** |
-| `models.tiers` / `models.phases` | rutear subagentes por modelo, y **verificarlo** desde el ledger | **0** |
-| `provenance.format` | qué ancla un unit cerrado a evidencia reproducible | **0** |
-| `edges.rel = retry_of` | reintentos visibles en el grafo | 4 consumidores, **0 productores** |
+| `TestEveryDeclaredFieldHasAConsumerOrIsDeclaredFuture` | `internal/spec` | cada campo del schema tiene un consumidor en producción, o está en una lista explícita con su razón |
+| `TestDeclaredAsFutureHasNoStaleEntries` | `internal/spec` | la lista no documenta promesas que ya no existen |
+| `TestEveryUnattendedRuleIsMechanicalOrRegisteredAsProse` | `internal/spec` | cada regla absoluta de `/batten-night` tiene un mecanismo cuyo identificador está **usado** en producción, no solo declarado |
+| `TestEveryEdgeRelationReadHasAProducer` | `internal/store` | cada relación de `edges.rel` que una superficie lee tiene un productor |
 
-Los tres primeros son exactamente lo que haría falta para la cadena graphify→engram que el
-subagente debería seguir.
+**El guard de campos encontró su propia décima instancia en la primera corrida que hizo:**
+`capabilities.obsidian.export` no estaba en ninguna de las rondas manuales.
+
+**El guard de aristas encontró dos en la primera suya**, y también se equivocó una vez: se inventó
+una relación llamada `.` a partir de `filepath.Rel(...) == "."`, cuando su propio comentario afirmaba
+que no podía inventar ninguna. La heurística se angostó y la afirmación también. Esa clase de
+corrección es el punto de tenerlos.
+
+Lo que ya **no** se puede hacer: agregar un campo y olvidarse.
 
 ---
 
-## 13. Estado de calidad
+## 18. Declarado y no leído — inventario
 
-- **Suite verde** en 13 paquetes, CI en Linux/macOS/Windows.
+**12 campos** siguen en `declaredAsFuture`. La lista es **deuda, no un estacionamiento**, y bajó de
+16 en este bloque: salieron `Phase.DiffFrom` (ítem 20), `Budget.MaxIterations` (ítem 16),
+`GraphCap.QueryBeforeRead` y `Phase.GraphQuery` (ítem 15). No entró ninguno.
+
+| campo | qué promete | por qué sigue |
+|---|---|---|
+| `models.tiers` / `models.phases` | *"rutea subagentes y lo verifica desde el ledger"* | **decisión: sacarlo del spec.** batten no orquesta a propósito |
+| `provenance.format` | metadatos de procedencia | **decisión: sacarlo del spec** |
+| `phases[].when` | condición libre, advisory | advisory es todo su contrato, así que es honesto — pero nadie lo lee |
+| `resources.*` (kind, probe, unit, priority) | contención de recursos | declarada, nunca arbitrada |
+| `domains[].coverage` / `domains[].resources` | piso de cobertura, recursos por dominio | ningún check los impone |
+| `unit.locator` | cómo encontrar el bloque de un unit en el plan | `init` lo escribe y nadie lo lee de vuelta |
+| `capabilities.obsidian.export` | **cuáles** exports escribir | `export.Run` escribe los tres incondicionalmente |
+
+`edges.rel = rollback` está en la lista equivalente del guard de aristas: el canvas le da color y
+batten **no tiene operación de rollback**. Registrado, no borrado, porque el renderer es correcto
+para el día que exista — y la descripción MCP que prometía rollbacks se **sacó**, porque esa la lee
+el modelo como un hecho sobre los datos.
+
+> **La advertencia que vale más que el resto:** cada superficie nueva que lee un campo muerto lo hace
+> **más** muerto, y lo hace pareciendo progreso. `batten pr` y el canvas HTML shipearon en el bloque
+> 2 y los dos leían `retry_of`. Antes de agregar un lector, mirá si hay escritor.
+
+---
+
+## 19. Estado de calidad
+
+- **Suite verde en 14 paquetes**, CI en Linux/macOS/Windows, `gofmt`/`go vet` limpios.
 - **Field test hecho**: 90 comportamientos confirmados funcionando, 80 hallazgos, los 63 sin
-  verificar pasados por un verificador adversarial. 52 confirmados, 11 refutados.
+  verificar pasados por un verificador adversarial → 52 confirmados, 11 refutados.
   Ver [`../FIELD-TEST.md`](../FIELD-TEST.md).
-- **8 defectos corregidos**, cada uno con un test que falla contra el commit anterior.
+- **Dos matrices de aceptación** que se re-corren al final de cada bloque:
+  la réplica de `proyecto_ui` (12/12) y `batten demo` (16/16). Ver
+  [`../field-test/REPLICA-UI.md`](../field-test/REPLICA-UI.md).
+- **Cada fix lleva un test que FALLA contra el commit anterior**, verificado revirtiendo el
+  *comportamiento* y dejando los símbolos — si se revierte el archivo entero falla por error de
+  compilación, y eso no prueba nada.
 - **Sin release taggeado.** Nunca adoptado por un proyecto ajeno, con gente que no lo escribió.
 
-El recorrido de adopción completo, con salida capturada de una corrida real incluido el control
-negativo, está en [`../QUICKSTART.md`](../QUICKSTART.md).
+### La lección técnica que se repitió en cada bloque
+
+**Casi todo lo que estuvo mal lo encontró CORRERLO, no leerlo.** Los dos falsos verdes del probe de
+lock. Los dos del digest (batten invalidaba sus propios veredictos escribiendo su WAL). Las tres
+roturas del demo. El canvas HTML que se veía bien en el HTML y titulaba mal en el navegador. La
+exclusión de la base de batten que miraba nombres convencionales cuando `BATTEN_DB` apunta a donde el
+usuario diga. El `MOVED BASE` sobre una corrida impecable, porque el gate preguntaba desde el árbol
+equivocado. `batten report` archivando la denegación de la regla 4 bajo la causa incorrecta.
+
+Ninguna de esas se ve leyendo el código.
 
 ---
 
-## 14. Las decisiones que hay que conocer antes de tocar el código
+## 20. Lo que falta
+
+**El bloque 3 está completo.** Lo que sigue es el bloque 4:
+
+| ítem | qué | § |
+|---|---|---|
+| 21 | criterios como dato + vista de cumplimiento. La fase B (tabla `criteria`) es la que desbloquea que el PR diga *"AC-1 cubierto por X"* | 7 |
+| 22 | honestidad de superficie: `measure` omite buckets de caché y **subestima hasta 21,9×** · imprime `$0.00` para un modelo sin precio · `budget`/`runs` presentan el imputado parcial como completo · **un override es invisible en todo el CLI** | 9 |
+| 23 | sacar del spec lo que no se va a implementar: `models.tiers`, `models.phases`, `provenance.format` | 8 |
+| 24 | ciclo de vida y presentación (12 hallazgos chicos) | 9 |
+| 19' | el claim de `dir/**` dentro de un mismo run | 5.2 |
+
+**Fuera de ciclo, de gentle-ai:** la **verificación de firma con minisign** del release.
+`bootstrap.sh` descarga el binario **sin verificar nada**. Es una brecha real de cadena de
+suministro y la mejor razón para hacer el release taggeado.
+
+**Lo que ningún trabajo interno cierra:**
+
+- No hay **release taggeado**. El camino de release está verificado leyéndolo, no ejecutándolo.
+- batten **nunca fue adoptado por un proyecto ajeno**, con gente que no lo escribió.
+- El formato de transcript que batten parsea **no es una API pública**. Cuando se rompe, batten
+  reporta el conteo como no disponible en vez de adivinar — correcto, pero el ledger puede quedarse
+  ciego sin aviso.
+- Falta el **GIF del README**: los `.tape` están escritos y verificados en contenido, falta instalar
+  vhs + ttyd + ffmpeg.
+
+---
+
+## 21. Las decisiones que hay que conocer antes de tocar el código
 
 1. **SQLite es canónico.** Todo lo demás es proyección con pérdida.
 2. **Nunca reportar un número que no se tiene.** No medible se reporta no medible, jamás como 0.
@@ -411,3 +994,12 @@ negativo, está en [`../QUICKSTART.md`](../QUICKSTART.md).
 5. **Dos veredictos de dos productores.** La máquina dice que corrió; el revisor dice que está bien.
 6. **El binario hace el trabajo del hook.** Sin bash, sin jq — o Windows se rompe.
 7. **Un id de nodo que no lleva su run no es un identificador.**
+8. **"Verificado" significa verificado sobre ESTO.** La huella del árbol, y la pregunta hecha sobre
+   el árbol donde se dio la respuesta.
+9. **Una denegación sin salida legítima no lleva `fix`.** La colisión de write-set y las cuatro
+   reglas desatendidas. Un `fix` ahí sería una instrucción para cruzar la cerca.
+10. **Un desconocido no es un permiso.** Un worktree sin registrar podría ser el mismo árbol; una
+    huella vacía significa *no medible acá*, no *no cambió nada*.
+11. **Advisory antes de denegar, cuando el chequeo es heurístico.** Un ciclo midiendo falsos
+    positivos, con el número a la vista, antes de darle dientes.
+12. **No declarar lo que no se implementa** — y no confiar en que eso se recuerde: son cuatro tests.

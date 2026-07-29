@@ -1046,17 +1046,54 @@ worktrees, §5.4, bloque 3) y la verificación de firma del release (toca el cam
 | 12 | ✅ canvas HTML autocontenido (`2c7eaf9`) | 6.3 | 2 días |
 | 13 | ✅ README reposicionado (`7d5d52b`) | 6.6 | 1 día |
 
-### Bloque 3 — cerrar las brechas de confianza
+### Bloque 3 — ✅ COMPLETO (2026-07-29)
 
-| | qué | § | costo |
+**El orden fue 20 → 17 → 16 → 18 → 14 → 15, no el de la tabla**, y la razón está anotada en cada
+fila. El 19 quedó absorbido por el 17, como el propio §5.4 anticipaba.
+
+| | qué | § | commit |
 |---|---|---|---|
-| 14 | `scan-diff` post-fan-out | 5.1 pto. 4 | 1 día |
-| 15 | cadena graphify→engram en `/batten-build` | 5.3 | 2 h |
-| 16 | **modo desatendido mecánico** — las 4 reglas de `/batten-night` dejan de ser prosa | 5.6 | 2½ días |
-| 17 | **worktrees: `batten worktree` + guard consciente del árbol + fusión gateada** | 5.4 | 3 días |
-| 18 | parseo de Bash, advisory primero | 5.1 pto. 1–3 | 1½ días |
-| 19 | claim de directorio y colisión entre runs *(§5.4 lo resuelve estructuralmente; hacerlo solo si no se hacen worktrees)* | 5.2 | 1 día |
-| 20 | `retry_of` y `diff_from` (los necesita §6.1, y §5.4 le da sentido al segundo) | 8 | 1 día |
+| 20 | ✅ `retry_of` + `depends_on` + `diff_from` + **el guard de valores de columna** | 8 | `160ee86` |
+| 17 | ✅ **worktrees**: `batten worktree` · guard consciente del árbol · fusión gateada · lock scopeado a git-common-dir | 5.4 | `ea0c218` |
+| 16 | ✅ **modo desatendido mecánico** — las 4 reglas dejan de ser prosa | 5.6 | `edf668b` |
+| 18 | ✅ parseo de Bash, advisory primero | 5.1 pto. 1–3 | `06f9e82` |
+| 14 | ✅ `scan-diff` post-fan-out | 5.1 pto. 4 | `06f9e82` |
+| 15 | ✅ cadena graphify→engram en `/batten-build` | 5.3 | `06f9e82` |
+| 19 | ⊘ **innecesario** — §5.4 lo resolvió estructuralmente para units concurrentes. El claim de directorio (#7) sigue abierto y baja a bloque 4 | 5.2 | — |
+
+**Por qué el 20 fue primero, contra lo que decía la tabla.** El bloque 2 le agregó a `retry_of` dos
+lectores más (`batten pr` en dos sitios y el canvas HTML), llevándolo de 4 lectores/0 escritores a
+**5/0** — y el titular del ítem 11 es *"el DAG muestra lo que un diagrama de plan no puede"*, donde
+lo único que un plan no puede mostrar ES el reintento. Dejó de ser barato y postergable para ser
+**prerrequisito de una función ya publicada**.
+
+**Tres cosas que el bloque encontró y que no estaban planeadas:**
+
+- **El guard de §2.1 no cubre valores de columna**, solo campos del schema. Ese hueco era conocido y
+  es por donde `retry_of` sobrevivió toda la vida del proyecto. Ahora hay un segundo guard, en
+  `internal/store`, que exige productor para toda relación de `edges.rel` que una superficie lea. En
+  su primera corrida encontró dos más: `depends_on` (arreglado en el momento — el grafo se llamaba
+  DAG y no tenía una arista entre fases) y `rollback` (registrado: batten no tiene operación de
+  rollback, y la descripción MCP que la prometía se sacó).
+- **El guard de aristas se equivocó una vez**, y vale anotarlo: se inventó una relación llamada `.`
+  a partir de `filepath.Rel(...) == "."`, cuando su propio comentario afirmaba que no podía inventar
+  ninguna. La heurística se angostó y la afirmación también.
+- **`Budget.MaxIterations` estaba en `declaredAsFuture` con DOS lectores.** MCP lo devolvía y la TUI
+  lo dibujaba; ninguno lo honraba. Un guard que confundiera "tiene lector" con "cumple la promesa"
+  habría exigido sacar de la lista al peor elemento de la lista. Esa es la razón por la que el
+  chequeo inverso (*"sacá la entrada cuando el campo se cablee"*) se escribió y se borró.
+
+**Y lo que confirmó, otra vez, la lección de todos los bloques:** de los cinco defectos reales que
+salieron en este, **cinco los encontró correrlo**. El `MOVED BASE` sobre una corrida impecable
+(el gate preguntaba desde el árbol equivocado). La exclusión de la base de batten mirando nombres
+convencionales cuando `BATTEN_DB` apunta a donde el usuario diga. El `\b` que denegaba
+`git restore-me`. `batten report` archivando la regla 4 bajo la causa incorrecta. Y un test que
+escribía en el árbol de fuentes porque le faltaba `cmd.Dir`.
+
+**12 campos siguen en `declaredAsFuture`**, contra 16 al empezar: salieron `Phase.DiffFrom`,
+`Budget.MaxIterations`, `GraphCap.QueryBeforeRead` y `Phase.GraphQuery`, y no entró ninguno. De los
+12, **tres tienen decisión tomada de sacarlos del spec** (`models.tiers`, `models.phases`,
+`provenance.format`, ítem 23).
 
 ### Bloque 4 — profundidad
 

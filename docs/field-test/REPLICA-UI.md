@@ -21,12 +21,102 @@ regresión de `on_exceed: block` (`53227e8`). Esa rama nunca se había ejercitad
 
 ---
 
-## Re-corrida final — 2026-07-29, sobre `04b2065`
+## Re-corrida del bloque 3 — 2026-07-29
 
-> **Las dos matrices pasan enteras: 11/11 en la réplica de proyecto_ui, 15/15 en `batten demo`.**
+> **Las dos matrices pasan enteras: 35/35 en la réplica de proyecto_ui, 26/26 en `batten demo`.**
+> La réplica se regeneró desde cero antes de medir, y el binario se compiló del árbol del momento.
+
+**Y ahora las dos matrices SON SCRIPTS**, no una lista en un documento:
+
+```bash
+scripts/matrix-replica.sh   # regenera la réplica, compila, y corre las 35
+scripts/matrix-demo.sh      # compila y corre las 26 sobre `batten demo`
+```
+
+Esto se hizo porque la matriz tenía el problema que el resto del proyecto existe para eliminar. El
+documento enumeraba **ocho** pruebas; los conteos que se reportaban al cerrar cada bloque eran
+11/11 y después 12/12, y las pruebas que faltaban **no estaban escritas en ninguna parte** — vivían
+en la memoria de quien las había corrido. Una matriz de aceptación que nadie más puede re-correr
+exactamente no es una matriz, es un recuerdo.
+
+Los conteos suben de 12 y 16 a 35 y 26 porque ahora cada aserción cuenta por separado (antes se
+agrupaban por escenario) y porque el bloque 3 agregó escenarios nuevos. No es que hayan aparecido
+23 pruebas de la nada: es que ahora están todas escritas.
+
+### Lo que la re-corrida encontró
+
+**Un defecto real, y es exactamente para esto que existe la matriz.** `batten init` escribía un
+bloque `budget:` **sin `max_iterations`**. Mientras el techo de iteraciones era prosa eso no costaba
+nada; ahora que es el mecanismo que la regla 2 impone, un spec generado sin él es un spec generado
+que **desactiva un guard por omisión**: un repo que acaba de adoptar batten corría `/batten-night`
+sin techo, y `batten iterate` contestaba —correcta e inútilmente— *"no budget.max_iterations
+declared, so nothing stops this"*.
+
+Arreglado en `internal/scan/scan.go`, con un test que falla contra el commit anterior.
+
+**Y dos aserciones mías que estaban mal, anotadas porque el error es instructivo:**
+
+- Una comprobaba que la base real del usuario no se hubiera tocado **por mtime**. Falló, y no por
+  contaminación: el plugin instalado corre sobre el repo del usuario en cada llamada de herramienta,
+  así que ese mtime cambia todo el tiempo por operación legítima. La comprobación correcta es que
+  **ningún proyecto de sandbox aparezca en esa base** — verificado, y no aparece ninguno.
+- Otra buscaba la cadena `domain(s)` en la salida del demo, que dice `2 domains detected`. Una
+  matriz cuyas aserciones no coinciden con la salida real reporta rojos que no existen, y eso
+  entrena a la gente a ignorarla.
+
+### Las 35 de la réplica
+
+| # | escenario | qué prueba (aserciones) |
+|---|---|---|
+| 1 | `init` sobre 4 dominios sin código y 43 items | el unit sale del **backlog**, no de las ramas · reconoce el proceso que el repo ya tiene (3) |
+| 2 | `doctor` en UNA pasada | avisa que el gate no verifica nada · el ancla que el repo no puede producir · dice que los gates sólo avisan · **cruza `query_before_read` con la realidad** · 14 líneas en una corrida (5) |
+| 3 | gate **sin checks** + presupuesto excedido → DENY | denegado · con código tipado · **control positivo**: un no-commit sale en silencio Y el log registra allow *y* deny, así que el hook corrió (5) |
+| 4 | dos units en la misma fase | ninguno se roba las filas del otro (2) |
+| 5 | commit cuyo mensaje nombra otro unit | nombra el unit del mensaje · no pasa en silencio (2) |
+| 6 | `diff_from: anchor` **sin ancla** | lo dice · nombra la fase que debía grabarla (2) |
+| 7 | `scan-diff` sin ancla | sale ≠0 · distingue **no-medible** de limpio (2) |
+| 8 | `worktree` sobre un repo que no es git | se niega · dice exactamente qué falta (2) |
+| 9 | **las cuatro reglas desatendidas** | rm denegado · override rechazado · techo impuesto · commit denegado · **control**: con el modo apagado el rm pasa (5) |
+| 10 | `sed -i` sobre el archivo de otro agente | nombra el archivo · nombra cómo se iba a escribir · es **aviso**, no denegación (3) |
+| 11 | la cadena de memorias en `SessionStart` | la instrucción se inyecta · exige declarar si ninguna respondió (2) |
+| 12 | degradación total sin git, sin checks, sin build files | la base quedó dentro del sandbox · la base real no tiene ningún proyecto de sandbox (2) |
+
+### Las 26 del demo
+
+| # | escenario | aserciones |
+|---|---|---|
+| 0 | el demo corre entero | sale 0 · borra su sandbox · dice que no tocó nada del usuario (3) |
+| 1 | `init` lee el repo | el paso existe · detecta los dominios de sus `AGENTS.md` · deriva el unit del backlog · los checks salen de los build files (4) |
+| 2 | commit antes de abrir un run | avisa que **no está gobernando** (1) |
+| 3 | `phase` abre el run y ancla | (1) |
+| 4 | commit sin veredicto | DENY (1) |
+| 5 | el revisor aprueba y **sigue** denegado | un veredicto de agente no alcanza (1) |
+| 6 | colisión de write-set entre dos agentes | se deniega · y **no ofrece salida**: el plan está mal (2) |
+| 7 | `check` corre de verdad y uno falla | el paso existe · el fallo se reporta como fallo (2) |
+| 8 | arreglado el bug, los checks pasan | (1) |
+| 9 | ahora el commit se permite | (1) |
+| 10 | algo edita el árbol después del check | `stale_target` detectado · dice cómo re-verificar (2) |
+| 11 | `report` | el bloque de impacto · cuenta los denegados · **dice desde cuándo cuenta** · el uso sin medir no es 0 (4) |
+| 12 | el sobre tipado | `batten.code` · `batten.retry` · `batten.fix` (3) |
+
+---
+
+## Historial de re-corridas
+
+| fecha | commit | réplica | demo | qué encontró |
+|---|---|---|---|---|
+| 2026-07-28 | `e52d931` | 6/8 | — | el silencio del primer commit, el ancla muda, el verde falso de graphify |
+| 2026-07-28 | `04b2065` | 11/11 | 15/15 | nada nuevo (los tres arreglados) |
+| 2026-07-29 | bloque 2 | 12/12 | 16/16 | nada nuevo — **pero la lista de pruebas no estaba escrita** |
+| 2026-07-29 | bloque 3 | **35/35** | **26/26** | `init` no escribía `max_iterations`, y dos aserciones propias mal escritas |
+
+---
+
+## Re-corrida anterior — 2026-07-29, sobre `04b2065`
+
+> Las dos matrices pasaban enteras: 11/11 en la réplica, 15/15 en `batten demo`.
 > Los dos hallazgos de abajo están arreglados (el silencio del primer commit en `5b02b0c`, el
-> ancla muda y el verde falso de graphify en `d850c23`), y la réplica se regeneró desde cero con
-> [`scripts/replica-ui.sh`](../../scripts/replica-ui.sh) antes de medir.
+> ancla muda y el verde falso de graphify en `d850c23`).
 
 Y ahora hay una **segunda** matriz. `batten demo` construye su propio repo, corre el flujo entero
 y lo borra — así que es a la vez el recorrido de adopción y el test de integración end-to-end que

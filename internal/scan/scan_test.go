@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // write creates a file and every directory above it.
@@ -239,6 +241,42 @@ func TestASingleMentionIsNotAConvention(t *testing.T) {
 //
 // A skills list is not a harmless hint — it rides into that domain's agent prompt, so a wrong
 // entry spends context arguing for the wrong tool. Suggesting nothing beats suggesting noise.
+// TestGeneratedSpecDeclaresTheIterationCeiling.
+//
+// Found by re-running the proyecto_ui acceptance matrix after /batten-night's four rules became
+// mechanisms. `init` wrote a `budget:` block with no `max_iterations`, so a freshly adopted repo
+// got the most dangerous command in the plugin with NO ceiling — and `batten iterate` answered,
+// correctly and uselessly, "no budget.max_iterations declared, so nothing stops this".
+//
+// While the ceiling was prose, leaving it out of the generated spec cost nothing. Now that it is
+// the mechanism rule 2 enforces, a generated spec without it is a generated spec that disables a
+// guard by omission.
+func TestGeneratedSpecDeclaresTheIterationCeiling(t *testing.T) {
+	f := &Facts{
+		Project: "acme", UnitName: "US", UnitPattern: `US-\d{3}`,
+		Domains: []DomainFact{{Name: "api", Path: "api/"}},
+	}
+	y := f.ToYAML()
+
+	if !strings.Contains(y, "max_iterations:") {
+		t.Fatalf("the generated spec has no iteration ceiling, so `/batten-night` runs unbounded "+
+			"on a repo that just adopted batten:\n%s", y)
+	}
+	// It must be INSIDE budget:, or spec.Load puts it nowhere useful.
+	var parsed struct {
+		Budget struct {
+			MaxIterations int `yaml:"max_iterations"`
+		} `yaml:"budget"`
+	}
+	if err := yaml.Unmarshal([]byte(y), &parsed); err != nil {
+		t.Fatalf("the generated spec does not parse: %v", err)
+	}
+	if parsed.Budget.MaxIterations <= 0 {
+		t.Errorf("budget.max_iterations parsed as %d — a ceiling of zero is no ceiling",
+			parsed.Budget.MaxIterations)
+	}
+}
+
 func TestSkillSuggestionsMatchNamesNotProse(t *testing.T) {
 	root := t.TempDir()
 	for _, d := range []string{"backend", "frontend", "db", "ml"} {

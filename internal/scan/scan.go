@@ -633,6 +633,18 @@ func (f *Facts) ToYAML() string {
 	w("budget:")
 	w("  tokens_per_run: 3000000")
 	w("  on_exceed: warn   # report-mode default; tighten later")
+	// max_iterations is written because it is now a MECHANISM, not a note. `batten iterate`
+	// increments it and refuses past it, and the /batten-night loop branches on that exit code —
+	// so a generated spec without it means the most dangerous command in the plugin runs with no
+	// ceiling at all, and rule 2 has nothing to enforce.
+	//
+	// Found by re-running the proyecto_ui matrix after the rules became mechanical: `init` wrote a
+	// budget block, the ceiling was absent, and `batten iterate` correctly answered "nothing stops
+	// this" — correct, and not what anyone adopting batten should get by default.
+	//
+	// 3 rather than a larger number: the argument for the ceiling is that a loop which failed the
+	// same check three times will not pass it on the fourth.
+	w("  max_iterations: 3   # the ceiling on an UNSUPERVISED fix loop (/batten-night)")
 	w("")
 	w("capabilities:")
 	if f.Graphify {
