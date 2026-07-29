@@ -1027,9 +1027,12 @@ mitad útil, 3 nuevas encontradas leyendo las notas de release.
 | D | ✅ contención transitoria + auditoría del modo report | `f788221` |
 | E | ❌ kill switch como comando — `enforcement: report` ya lo es, y un `disable` mudo sería peor |
 
-**Pendiente y mejor candidato siguiente:** el sobre de fallo **tipado** (código de razón +
-`required_input` en cada denegación, expuesto por MCP). El bloque 1 ya empujó ahí sin nombrarlo —
-la columna `rule`, y `MOVED BASE`/`STALE TARGET` como estados con nombre que traen su comando.
+| F | ✅ **el sobre de fallo tipado** — `batten.code` / `batten.retry` / `batten.fix` en cada denegación | `bdc36c5` |
+
+**Bloque 2 completo, y 1b también.** Lo que queda de gentle-ai son las dos cosas que
+deliberadamente no entran en este ciclo: el lock scopeado a `git-common-dir` (espera a los
+worktrees, §5.4, bloque 3) y la verificación de firma del release (toca el camino de release, que
+§12 admite que está verificado leyéndolo y no ejecutándolo).
 
 ### Bloque 2 — adopción (paralelizable, no toca el motor)
 
@@ -1040,8 +1043,8 @@ la columna `rule`, y `MOVED BASE`/`STALE TARGET` como estados con nombre que tra
 | 9 | ✅ `batten demo` (`0831dfa`) | 6.4 | 1 día |
 | 10 | ⚠️ los `.tape` sí (`3261ad8`); **el GIF no** — vhs/ttyd/ffmpeg no instalados | 6.5 | ½ día |
 | 11 | ✅ `batten pr` con DAG Mermaid (`4c7ae0d`) | 6.1 | 2 días |
-| 12 | canvas HTML autocontenido *(fuera del camino corto)* | 6.3 | 2 días |
-| 13 | README reposicionado | 6.6 | 1 día |
+| 12 | ✅ canvas HTML autocontenido (`2c7eaf9`) | 6.3 | 2 días |
+| 13 | ✅ README reposicionado (`7d5d52b`) | 6.6 | 1 día |
 
 ### Bloque 3 — cerrar las brechas de confianza
 
