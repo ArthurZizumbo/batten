@@ -1,12 +1,11 @@
 # batten — el plugin al momento
 
-> Estado real del plugin a **2026-07-29**, rama `refinamiento-plugin`, versión `0.1.0`,
-> **sin release taggeado**. Todo lo que sigue está verificado contra el código o contra salida
-> capturada de una corrida real. Donde algo se declara y nadie lo lee, lo digo y lo cuento.
+> Estado real del plugin a **2026-07-29** (cierre del bloque 4), rama `refinamiento-plugin`,
+> versión `0.1.0`, **sin release taggeado**. Todo lo que sigue está verificado contra el código
+> o contra salida capturada de una corrida real. Donde algo se declara y nadie lo lee, lo digo
+> y lo cuento.
 >
 > Este documento se reescribe al cerrar cada bloque de [`plan_mejora.md`](plan_mejora.md).
-> La versión anterior describía el commit `24d7cd2` y quedó atrás de los bloques 1, 1b, 2 y de
-> media parte del 3.
 
 ---
 
@@ -58,9 +57,10 @@ PR generado) existe para que esas negaciones sean **auditables** y no sospechosa
 | **1b** | lo que trajo gentle-ai: identidad por dispositivo+inodo (híbrida) · huella del árbol (CAS-bound) · `batten recover` · contención de Windows como transitoria · el modo vigente grabado en cada decisión | ✅ |
 | **2** | `decision` en `events` · `batten report` · `batten demo` · los `.tape` · `batten pr` con DAG Mermaid · canvas HTML autocontenido · README reposicionado · **el sobre de fallo tipado** | ✅ (el GIF falta: vhs/ttyd/ffmpeg no instalados) |
 | **3** | `retry_of` + `depends_on` + `diff_from` + **el guard de valores de columna** · **worktrees** · **modo desatendido** · parseo de Bash advisory · **`scan-diff`** · la cadena graphify→engram | ✅ (el ítem 19 quedó absorbido por los worktrees) |
-| **4** | criterios como dato · honestidad de superficie · sacar del spec lo no implementado · ciclo de vida y presentación | pendiente |
+| **4** | **honestidad de superficie** (measure con los 5 buckets · UNPRICED/≥$ · el imputado parcial como piso EN el Run · el override visible en todo el CLI) · **fuera del spec** models.tiers/models.phases/provenance.format + obsidian.export cableado · **ciclo de vida** (check/verdict no bifurcan, ids validados ^$, show --run real) · **presentación** (render.Tokens único, narrowExit, canvas sin solape, tui con isatty, init --help/--from) · **criterios como dato** (internal/plan · tabla criteria · AC-n citado en evidencia · `batten status` · el PR cuenta cobertura) · el claim de directorio se rechaza | ✅ |
 
-**Suite verde en 14 paquetes**, `gofmt`/`go vet` limpios, CI en Linux/macOS/Windows.
+**Suite verde en 16 paquetes** (`internal/render` e `internal/plan` son nuevos), `gofmt`/`go vet`
+limpios, CI en Linux/macOS/Windows.
 
 ---
 
@@ -170,7 +170,7 @@ batten.fix: batten doctor
 
 ---
 
-## 6. El CLI completo — 26 subcomandos
+## 6. El CLI completo — 27 subcomandos
 
 ### Arranque y salud
 
@@ -221,8 +221,9 @@ es lo que hace que la gente se rinda a la tercera iteración.
 
 | comando | banderas | qué hace |
 |---|---|---|
-| `batten runs` | — | lista los runs |
-| `batten show <unit>` | — | detalle: fases, fan-out con número de intento, **ambos veredictos** |
+| `batten runs` | — | lista los runs. Un imputado parcial se marca `≥$` con nota al pie; un override aparece en la columna VERDICT |
+| `batten status` | — | **el backlog contra el registro**: cada unit de `unit.plan` con su estado de run y su cobertura de criterios (`AC 1/2 covered`), incluidos los que nadie arrancó — la mitad que `runs` no puede mostrar. El trabajo ad-hoc se nombra aparte |
+| `batten show <unit>` | `--run <id>` | detalle: fases, fan-out con número de intento, **ambos veredictos**, y el override si el gate está abierto por uno. `--run` resuelve un run exacto; un id inexistente es error |
 | `batten scan-diff <unit>` | `--strict` | el diff real de git contra los write-sets declarados. `--strict` sale distinto de cero, para cablearlo en `gates.checks` |
 | `batten report` | `--since d`, `--week`, `--share` | qué vio batten y **qué frenó** |
 | `batten pr <unit>` | `--out <ruta>` | el cuerpo del PR desde el registro: DAG Mermaid, evidencia, costo |
@@ -333,6 +334,27 @@ batten.retry: false
 > la base de batten y sus sidecars de SQLite; la primera versión hasheaba todo lo que git reportaba,
 > y *grabar* el veredicto cambiaba el árbol del que el veredicto hablaba.
 
+### Los criterios de aceptación, como dato
+
+"Criterios" aparecía diez veces en la prosa del código y cero como dato. Desde el bloque 4:
+
+- **`internal/plan`** resuelve `unit.plan` + `unit.locator` (que `init` escribía desde el primer
+  día y nadie leía) a bloques de unit; `doctor` cruza la declaración con el documento y avisa si
+  el locator no encuentra **ningún** unit.
+- **`batten phase` siembra** la tabla `criteria(run_id, unit_id, idx, text, status)` desde el
+  bloque del unit — una vez por run, así los estados sobreviven los cambios de fase.
+- **Un veredicto aprobatorio cubre lo que su evidencia cita** con el prefijo `AC-<n>:`. String
+  sobre el formato existente, a propósito: el hallazgo #27 mostró lo que pasa al meter objetos
+  donde se esperan strings. Un veredicto `blocked` que nombra `AC-2` describe lo que falló y no
+  cubre nada.
+- **El briefing de la fase de gate lista los criterios numerados** con la convención de cita, así
+  el revisor puede usarla sin preguntar.
+- **`batten pr` gana la tabla de cobertura** — *"AC-1 covered by X"*, con el no-cubierto dicho en
+  voz alta — y **`batten status`** muestra el backlog entero contra el registro.
+
+Cero criterios sembrados se reporta *"no criteria seeded"*, nunca como un tablero vacío
+satisfecho: una lista vacía no es una lista aprobada.
+
 ---
 
 ## 8. El write-set guard
@@ -416,11 +438,14 @@ Dos cosas que **se niega** a concluir, y las dice:
 
 Y sin ancla se niega a reportar: *"nothing here is measurable — that is different from clean"*.
 
-### Hueco conocido que sigue
+### El claim de directorio — cerrado por rechazo
 
-- Un `claim` de directorio se acepta, se reporta como protector y **no cerca nada** (§5.2 del plan).
-  Para units concurrentes §5.4 lo resolvió estructuralmente; para un `dir/**` dentro de un mismo run
-  sigue abierto, y baja a bloque 4.
+Un `claim` de `src/**` o de un directorio se aceptaba, se contestaba *"owns 1 file(s); any other
+agent writing them is now denied"* y **no cercaba nada**: el guard compara rutas exactas. De las
+dos salidas que §5.2 dejó escritas, ganó el rechazo con la forma de lista — soportar prefijos
+metería una heurística en el camino crítico del guard, que es exactamente donde el bypass por
+Bash enseñó a no ponerlas sin un ciclo de medición. Un archivo que todavía no existe sigue siendo
+reclamable: los agentes reclaman lo que están por crear.
 
 ---
 
@@ -618,9 +643,10 @@ de sesión), lo **dice en voz alta**, con tokens y dólares, en vez de tragárse
 | `usage` | una fila por (request, run), idempotente por `request_id` |
 | `quota_snapshots` | muestreo de la ventana de 5h |
 | `overrides` | escapes auditados |
+| `criteria` | los criterios de aceptación del run, sembrados desde `unit.plan`; `AC-<n>:` en la evidencia los cubre |
 | `events` | log de reproducción, append-only, con **`decision`, `reason`, `rule`, `enforcement`** |
 
-**10 migraciones aditivas.** Una base creada por un batten viejo se actualiza en su lugar.
+**11 migraciones aditivas.** Una base creada por un batten viejo se actualiza en su lugar.
 
 Los ids de nodo **llevan su run**. Un `p-build` global era literalmente una fila para toda la base:
 el segundo unit que entrara a `build` se llevaba la fila del primero, y el canvas del primero
@@ -904,19 +930,18 @@ Lo que ya **no** se puede hacer: agregar un campo y olvidarse.
 
 ## 18. Declarado y no leído — inventario
 
-**12 campos** siguen en `declaredAsFuture`. La lista es **deuda, no un estacionamiento**, y bajó de
-16 en este bloque: salieron `Phase.DiffFrom` (ítem 20), `Budget.MaxIterations` (ítem 16),
-`GraphCap.QueryBeforeRead` y `Phase.GraphQuery` (ítem 15). No entró ninguno.
+**7 campos** siguen en `declaredAsFuture`. La lista es **deuda, no un estacionamiento**, y bajó de
+12 en este bloque por las tres salidas posibles: **cablear** (`unit.locator` — `internal/plan` lo
+lee y `doctor` lo cruza con la realidad; `capabilities.obsidian.export` — `export.Run` honra la
+lista), y **dejar de prometer** (`models.tiers`, `models.phases`, `provenance.format` salieron del
+spec entero: la primera promesa batten no puede cumplirla a propósito —no orquesta—, la segunda no
+tenía ni escritor ni lector). No entró ninguno.
 
 | campo | qué promete | por qué sigue |
 |---|---|---|
-| `models.tiers` / `models.phases` | *"rutea subagentes y lo verifica desde el ledger"* | **decisión: sacarlo del spec.** batten no orquesta a propósito |
-| `provenance.format` | metadatos de procedencia | **decisión: sacarlo del spec** |
 | `phases[].when` | condición libre, advisory | advisory es todo su contrato, así que es honesto — pero nadie lo lee |
 | `resources.*` (kind, probe, unit, priority) | contención de recursos | declarada, nunca arbitrada |
 | `domains[].coverage` / `domains[].resources` | piso de cobertura, recursos por dominio | ningún check los impone |
-| `unit.locator` | cómo encontrar el bloque de un unit en el plan | `init` lo escribe y nadie lo lee de vuelta |
-| `capabilities.obsidian.export` | **cuáles** exports escribir | `export.Run` escribe los tres incondicionalmente |
 
 `edges.rel = rollback` está en la lista equivalente del guard de aristas: el canvas le da color y
 batten **no tiene operación de rollback**. Registrado, no borrado, porque el renderer es correcto
@@ -931,13 +956,15 @@ el modelo como un hecho sobre los datos.
 
 ## 19. Estado de calidad
 
-- **Suite verde en 14 paquetes**, CI en Linux/macOS/Windows, `gofmt`/`go vet` limpios.
+- **Suite verde en 16 paquetes**, CI en Linux/macOS/Windows, `gofmt`/`go vet` limpios.
 - **Field test hecho**: 90 comportamientos confirmados funcionando, 80 hallazgos, los 63 sin
   verificar pasados por un verificador adversarial → 52 confirmados, 11 refutados.
-  Ver [`../FIELD-TEST.md`](../FIELD-TEST.md).
-- **Dos matrices de aceptación** que se re-corren al final de cada bloque:
-  la réplica de `proyecto_ui` (12/12) y `batten demo` (16/16). Ver
-  [`../field-test/REPLICA-UI.md`](../field-test/REPLICA-UI.md).
+  Ver [`../FIELD-TEST.md`](../FIELD-TEST.md). **Al cierre del bloque 4, los hallazgos
+  confirmados de los ítems 21–24 están cerrados** (los de honestidad, ciclo de vida y
+  presentación), más el #7 del write-set.
+- **Dos matrices de aceptación** que se re-corren al final de cada bloque, **como scripts**:
+  `scripts/matrix-replica.sh` (41 pruebas) y `scripts/matrix-demo.sh` (26). El escenario 11b
+  (criterios de punta a punta) entró al script en este bloque, no a un recuerdo.
 - **Cada fix lleva un test que FALLA contra el commit anterior**, verificado revirtiendo el
   *comportamiento* y dejando los símbolos — si se revierte el archivo entero falla por error de
   compilación, y eso no prueba nada.
@@ -958,15 +985,7 @@ Ninguna de esas se ve leyendo el código.
 
 ## 20. Lo que falta
 
-**El bloque 3 está completo.** Lo que sigue es el bloque 4:
-
-| ítem | qué | § |
-|---|---|---|
-| 21 | criterios como dato + vista de cumplimiento. La fase B (tabla `criteria`) es la que desbloquea que el PR diga *"AC-1 cubierto por X"* | 7 |
-| 22 | honestidad de superficie: `measure` omite los buckets de caché y **subestima por un factor que depende de la proporción de caché del tráfico — 21,9× medido en el field test, 107,7× en la re-verificación** · imprime `$0.00` para un modelo sin precio · `budget`/`runs` presentan el imputado parcial como completo · **un override es invisible en todo el CLI** | 9 |
-| 23 | sacar del spec lo que no se va a implementar: `models.tiers`, `models.phases`, `provenance.format` | 8 |
-| 24 | ciclo de vida y presentación (12 hallazgos chicos) | 9 |
-| 19' | el claim de `dir/**` dentro de un mismo run | 5.2 |
+**Los cuatro bloques del plan están completos.** Lo que queda es lo de fuera de ciclo:
 
 **Fuera de ciclo, de gentle-ai:** la **verificación de firma con minisign** del release.
 `bootstrap.sh` descarga el binario **sin verificar nada**. Es una brecha real de cadena de

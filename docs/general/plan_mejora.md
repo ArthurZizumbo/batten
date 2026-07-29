@@ -1095,14 +1095,26 @@ escribía en el árbol de fuentes porque le faltaba `cmd.Dir`.
 12, **tres tienen decisión tomada de sacarlos del spec** (`models.tiers`, `models.phases`,
 `provenance.format`, ítem 23).
 
-### Bloque 4 — profundidad
+### Bloque 4 — ✅ COMPLETO (2026-07-29)
 
-| | qué | § |
-|---|---|---|
-| 21 | criterios como dato + vista de cumplimiento | 7 |
-| 22 | la familia de honestidad de superficie | 9 |
-| 23 | sacar del spec lo que no se va a implementar | 8 |
-| 24 | ciclo de vida y presentación | 9 |
+**El orden fue 22 → 23 → 24 → 21, no el de la tabla, y a propósito:** el 21 es el único ítem que
+agrega superficie nueva, y construirla encima de superficies que mentían habría sido el orden
+equivocado. La honestidad primero; los ~4 días caros al final.
+
+| | qué | § | commit |
+|---|---|---|---|
+| 22 | ✅ honestidad de superficie: `measure` suma los 5 buckets (invariante bajo test contra `runs.tokens_spent`) · UNPRICED/`≥$` para lo sin precio · el imputado parcial viaja como piso EN el Run (`UnpricedTokens`) y TODAS las superficies lo dicen · `OverrideFor` y el override visible en show/runs/briefing/canvas | 9 | `951a9ef` |
+| 23 | ✅ `models.tiers`/`models.phases`/`provenance.format` FUERA del spec (struct+schema+docs+entradas del guard, juntas) · `obsidian.export` cableado en `export.Run` · declaredAsFuture 12→8 | 8 | `04305e7` |
+| 24a | ✅ ciclo de vida: check/verdict usan `ActiveRun` (abrir un run es trabajo de phase) · `ValidUnitID` anclado `^$` en los verbos que crean estado · los tests que le faltaban a #19 (el predicado vivo desde 09cffe3) · `show --run` real | 9 | `47f2c20` |
+| 24b | ✅ presentación: `render.Tokens` único (había CINCO copias más un `%.1fM` a mano — #36) · `narrowExit` int32 (#13) · `childTop` en el canvas (#45) · `tui` rechaza stdout no-terminal (#46) · `plural` (#48) · `init --help` no escribe (#54) · `init --from` → `unit.plan` (#0) | 9 | `ee316df` |
+| 21 | ✅ criterios como dato: `internal/plan` (fase A, y `unit.locator` gana su consumidor) · tabla `criteria` + `AC-<n>:` en evidencia (fase B) · `batten status` + TUI + la tabla de cobertura del PR (fase C) · declaredAsFuture 8→7 | 7 | `a5648a4` |
+| 19' | ✅ el claim de `dir/**` se **rechaza** con la forma de lista — la salida de §5.2 que no mete heurísticas en el camino crítico del guard | 5.2 | `bb12c28` |
+
+**Lo que el bloque confirmó, otra vez:** la advertencia que valía más que el resto era real. El
+fallo típico de estos ítems no era el cálculo sino la presentación — un `$0.39` corregido que
+siguiera pareciendo un total habría dejado el hallazgo abierto. Por eso `UnpricedTokens` viaja en
+el `Run` y no en cada superficie: cuatro superficies renderizando por su cuenta es exactamente
+cómo divergieron. Y la matriz de la réplica ganó el escenario 11b (35→41 pruebas), en el script.
 
 **Camino más corto a "funcional y compartible":** bloque 1 completo, luego 7 → 8 → 9 → 10 → 11 → 13.
 Eso son ~9 días y produce: un plugin que no miente cuando falla, un `doctor` que diagnostica todo
