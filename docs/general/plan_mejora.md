@@ -1014,16 +1014,33 @@ Y el guard del ítem 5 encontró **su propia décima instancia** en la primera c
 **Siguiente:** bloque 2, empezando por la columna `decision` en `events` (ítem 7), que es
 prerrequisito de los contadores.
 
+### Bloque 1b — lo que trajo gentle-ai ✅ (2026-07-28)
+
+Evaluación completa en [`gentle_ai.md`](gentle_ai.md). 4 aceptadas, 1 rechazada quedándome con su
+mitad útil, 3 nuevas encontradas leyendo las notas de release.
+
+| | qué | commit |
+|---|---|---|
+| A | ✅ el write-set cerca **archivos**, no nombres (híbrido ruta+`os.SameFile`) | `a2ae987` |
+| B | ✅ **target estancado** — "verificado" tiene que seguir siendo sobre esto | `e73a6fe` |
+| C | ✅ `batten recover` — distinguir base movida de archivo editado | `7f255d8` |
+| D | ✅ contención transitoria + auditoría del modo report | `f788221` |
+| E | ❌ kill switch como comando — `enforcement: report` ya lo es, y un `disable` mudo sería peor |
+
+**Pendiente y mejor candidato siguiente:** el sobre de fallo **tipado** (código de razón +
+`required_input` en cada denegación, expuesto por MCP). El bloque 1 ya empujó ahí sin nombrarlo —
+la columna `rule`, y `MOVED BASE`/`STALE TARGET` como estados con nombre que traen su comando.
+
 ### Bloque 2 — adopción (paralelizable, no toca el motor)
 
 | | qué | § | costo |
 |---|---|---|---|
-| 7 | **`decision` en `events`** — prerrequisito de los contadores, hoy el dato no existe | 6.7a | ½ día |
-| 8 | `batten report`, con los contadores de impacto | 6.2 · 6.7a | 1½ días |
-| 9 | `batten demo` | 6.4 | 1 día |
-| 10 | GIF con VHS | 6.5 | ½ día |
-| 11 | `batten pr` con DAG Mermaid | 6.1 | 2 días |
-| 12 | canvas HTML autocontenido | 6.3 | 2 días |
+| 7 | ✅ **`decision` en `events`** (`09cffe3`) | 6.7a | ½ día |
+| 8 | ✅ `batten report` + contadores (`eed9c80`) | 6.2 · 6.7a | 1½ días |
+| 9 | ✅ `batten demo` (`0831dfa`) | 6.4 | 1 día |
+| 10 | ⚠️ los `.tape` sí (`3261ad8`); **el GIF no** — vhs/ttyd/ffmpeg no instalados | 6.5 | ½ día |
+| 11 | ✅ `batten pr` con DAG Mermaid (`4c7ae0d`) | 6.1 | 2 días |
+| 12 | canvas HTML autocontenido *(fuera del camino corto)* | 6.3 | 2 días |
 | 13 | README reposicionado | 6.6 | 1 día |
 
 ### Bloque 3 — cerrar las brechas de confianza
