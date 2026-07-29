@@ -95,27 +95,35 @@ so that guard cannot see it.
 //
 // PRODUCERS are exact: the fourth argument of an AddEdge call, when it is a literal.
 //
-// READERS are heuristic, and the heuristic is stated rather than hidden. A relation is "read"
-// when a string literal is compared against — or switched on through — either a selector named
-// `Rel` (`e.Rel == "spawn"`) or a plain identifier named `rel` (canvas.go's
-// `relColor(rel string)` switches on its parameter). That covers all six readers in the tree
-// today. It can MISS a reader written some other way, which keeps the guard from inventing work;
-// it cannot invent one, because a bare literal in a struct tag or a doc comment matches neither
-// form — and both of those are exactly where a dead relation likes to hide (mcp.go's jsonschema
-// tag lists all five relations and consumes none of them).
+// READERS are heuristic, and the heuristic is stated rather than hidden, INCLUDING where it was
+// wrong. A relation is "read" when a string literal is:
+//
+//   - compared against a selector named `Rel` (`e.Rel == "spawn"`), or
+//   - a case of a switch whose tag is a selector named `Rel` or a bare identifier named `rel`
+//     (canvas.go's `relColor(rel string)` switches on its parameter).
+//
+// The bare identifier is deliberately confined to switch TAGS. The first version accepted it in
+// comparisons too, and the guard promptly invented a relation called `.` out of
+// `filepath.Rel(...)`'s result being compared to "." in a path helper. That was a claim in this
+// very comment — "it cannot invent one" — falsified by the guard on the day it was written, so
+// the rule is narrower now and the claim is smaller: a bare literal in a struct tag or a doc
+// comment matches nothing here, which is where a dead relation actually likes to hide (mcp.go's
+// jsonschema tag lists every relation and consumes none of them).
 func edgeRelations(t *testing.T, root string) (read, written map[string]bool) {
 	t.Helper()
 	read, written = map[string]bool{}, map[string]bool{}
 	fset := token.NewFileSet()
 
-	isRelExpr := func(e ast.Expr) bool {
-		switch v := e.(type) {
-		case *ast.SelectorExpr:
-			return v.Sel.Name == "Rel"
-		case *ast.Ident:
-			return v.Name == "rel"
+	isRelField := func(e ast.Expr) bool {
+		v, ok := e.(*ast.SelectorExpr)
+		return ok && v.Sel.Name == "Rel"
+	}
+	isRelSwitchTag := func(e ast.Expr) bool {
+		if isRelField(e) {
+			return true
 		}
-		return false
+		v, ok := e.(*ast.Ident)
+		return ok && v.Name == "rel"
 	}
 	lit := func(e ast.Expr) (string, bool) {
 		b, ok := e.(*ast.BasicLit)
@@ -157,18 +165,18 @@ func edgeRelations(t *testing.T, root string) (read, written map[string]bool) {
 				if v.Op != token.EQL && v.Op != token.NEQ {
 					return true
 				}
-				if isRelExpr(v.X) {
+				if isRelField(v.X) {
 					if s, ok := lit(v.Y); ok {
 						read[s] = true
 					}
 				}
-				if isRelExpr(v.Y) {
+				if isRelField(v.Y) {
 					if s, ok := lit(v.X); ok {
 						read[s] = true
 					}
 				}
 			case *ast.SwitchStmt:
-				if v.Tag == nil || !isRelExpr(v.Tag) {
+				if v.Tag == nil || !isRelSwitchTag(v.Tag) {
 					return true
 				}
 				for _, stmt := range v.Body.List {

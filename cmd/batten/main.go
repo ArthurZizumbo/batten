@@ -28,6 +28,7 @@ import (
 	"github.com/ArthurZizumbo/batten/internal/canvas"
 	"github.com/ArthurZizumbo/batten/internal/discovery"
 	"github.com/ArthurZizumbo/batten/internal/export"
+	"github.com/ArthurZizumbo/batten/internal/gitx"
 	"github.com/ArthurZizumbo/batten/internal/hooks"
 	"github.com/ArthurZizumbo/batten/internal/mcp"
 	"github.com/ArthurZizumbo/batten/internal/scan"
@@ -69,6 +70,8 @@ func main() {
 		err = cmdOverride(os.Args[2:])
 	case "phase":
 		err = cmdPhase(os.Args[2:])
+	case "worktree":
+		err = cmdWorktree(os.Args[2:])
 	case "mcp":
 		err = cmdMCP()
 	case "tui":
@@ -119,6 +122,7 @@ func printUsage() {
   batten verdict [--file v.json]     record a verdict envelope (the reviewer's judgment)
   batten check <unit> [--gate g]     RUN the gate's checks and record what they printed
   batten close <unit> [--status s]   close a unit through the gate, releasing its write-sets
+  batten worktree <unit> [--merge]   one tree per unit; the merge back is gated like a commit
   batten demo [--keep]               the whole flow on a throwaway repo; touches nothing of yours
   batten pr <unit> [--out p]         a PR body from the run record: Mermaid DAG, evidence, cost
   batten recover <unit>              re-anchor a run whose base moved (rebase, amend, pull)
@@ -431,6 +435,14 @@ func cmdPhase(args []string) error {
 	}
 	if err := st.SetPhase(run.RunID, phaseID); err != nil {
 		return err
+	}
+	// Which tree this run is standing in. Recorded here, from the spec's own directory, because
+	// that is the identity the write-set guard compares against on the hook path and it must come
+	// from the same place on both sides — a guard that computed it differently would deny across
+	// worktrees exactly when it was supposed to stop.
+	if run.Worktree == "" {
+		_ = st.SetWorktree(run.RunID, sp.Root)
+		run.Worktree = sp.Root
 	}
 	// Tag the run with whether compression is live, so `batten measure` can compare later.
 	if sp.Capabilities.CompressionEnabled() && sp.Capabilities.Compression.Measure {
@@ -878,10 +890,39 @@ func cmdClose(args []string) error {
 		return err
 	}
 	fmt.Printf("%s closed (%s). Write-set claims released — files it held are free again.\n", unit, status)
+	// A unit whose work lives on a branch in another tree is not integrated just because its run
+	// is closed. Saying nothing here is how a verified unit ends up sitting on a branch nobody
+	// merges — the run record says done and the main branch has none of it.
+	if wt := worktreeOfRun(sp, run); wt != nil {
+		fmt.Printf("its work is still on branch %s in %s.\n"+
+			"  integrate it: batten worktree %s --merge   (from the tree you are merging into)\n",
+			wt.Branch, wt.Path, unit)
+	}
 	if sp.Capabilities.Obsidian.Vault != "" {
 		_, _ = export.Run(sp, st, unit) // note now reflects the final state
 	}
 	return nil
+}
+
+// verdictTreeOf is the working tree a run's verdict is ABOUT.
+//
+// This is not always the tree you are standing in, and getting it wrong was caught by running
+// the merge rather than by reading it. `batten check` fingerprints the tree it ran in; with a
+// worktree per unit that is the UNIT's tree. Asking the gate from the main tree then compared the
+// verdict's digest against a completely different checkout and reported a MOVED BASE — the run
+// was in perfect shape and the gate said the history had moved under it.
+//
+// The rule the whole target digest rests on is that "verified" means verified about THIS. So the
+// question has to be asked about the tree the verdict was made in, and a tree that no longer
+// exists on disk falls back to here rather than answering out of a stale path.
+func verdictTreeOf(sp *spec.Spec, run *store.Run) string {
+	if run.Worktree == "" {
+		return sp.Root
+	}
+	if fi, err := os.Stat(run.Worktree); err != nil || !fi.IsDir() {
+		return sp.Root
+	}
+	return run.Worktree
 }
 
 // gateReadyToClose enforces the close precondition (mirrors the commit gate) so `batten close`
@@ -898,7 +939,7 @@ func gateReadyToClose(sp *spec.Spec, st *store.Store, run *store.Run) error {
 	// They diverged, and `batten close --status ok` accepted an agent-asserted verdict that the
 	// commit hook had denied moments earlier — a gate you can walk around is not a gate.
 	if g, ok := sp.Gates[closing.Gate]; ok && len(g.Checks) > 0 {
-		if reason := hooks.GateShortfallAt(st, sp.Root, run.RunID, closing.Gate, closing.RequiresVerdict); reason != "" {
+		if reason := hooks.GateShortfallAt(st, verdictTreeOf(sp, run), run.RunID, closing.Gate, closing.RequiresVerdict); reason != "" {
 			return fmt.Errorf("cannot close %s as ok: %s\n"+
 				"Use --status failed to close a run that went wrong", run.UnitID, reason)
 		}
@@ -1926,6 +1967,14 @@ func graphHooks(sp *spec.Spec) {
 	if missingDriver && trackedInGit(sp.Root, filepath.Join("graphify-out", "graph.json")) {
 		fmt.Println("  ⚠ graph.json is committed but graphify's merge driver is NOT registered —")
 		fmt.Println("    two branches touching code will conflict on it. Fix once: graphify hook install")
+		// With worktrees in play this stops being a courtesy. §5.4 says to write this down before
+		// starting rather than after somebody hits it: "two branches touching code" is the RARE
+		// case in a single tree and the NORMAL case once every unit has its own, so the merge
+		// driver goes from nice-to-have to a requirement of the installation.
+		if trees, err := gitx.Worktrees(sp.Root); err == nil && len(trees) > 1 {
+			fmt.Printf("    %d working trees are already open here, so that conflict is not a "+
+				"maybe — it is the next merge.\n", len(trees))
+		}
 	} else if missingHooks {
 		fmt.Println("  → auto-rebuild the graph on commit: graphify hook install")
 	}

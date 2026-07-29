@@ -188,6 +188,75 @@ func TestGuardStopsASecondSessionFromRacingTheSameFile(t *testing.T) {
 	}
 }
 
+// TestTwoWorktreesAreNotTwoSessionsRacingOneFile.
+//
+// batten told users to use a worktree per unit in three separate denials and then punished them
+// for it: every path batten knows is repo-relative, and `api/handler.go` is the same STRING in
+// every worktree cut from a repository. So two units on two branches, each in its own tree, each
+// editing its own checkout of that path, looked exactly like two sessions fighting over one file
+// — and the cross-run guard denied them both.
+//
+// The differential is the assertion. Same claim, same path, same everything: only the tree the
+// writer is standing in changes, and that alone flips deny to allow. A silent allow proves
+// nothing on its own — the deny below is its control.
+func TestTwoWorktreesAreNotTwoSessionsRacingOneFile(t *testing.T) {
+	h, root := guardFixture(t)
+
+	// TASK-1 lives in a DIFFERENT tree, and one of its agents owns the file.
+	other := t.TempDir()
+	a, _ := h.Store.EnsureRun("p", "TASK-1", "sess-a")
+	if err := h.Store.SetWorktree(a.RunID, other); err != nil {
+		t.Fatal(err)
+	}
+	_ = h.Store.AddNode(store.Node{NodeID: "n-a", RunID: a.RunID, Kind: "subagent", AgentID: "agent-a"})
+	_ = h.Store.ClaimWriteSet(a.RunID, "n-a", []string{"api/handler.go"})
+
+	// TASK-2 is this handler's tree (h.Spec.Root == root), writing its own copy of that path.
+	_, _ = h.Store.EnsureRun("p", "TASK-2", "sess-b")
+	in := writeInputFor(root, "api/handler.go")
+	in.SessionID = "sess-b"
+
+	out, err := h.writeSetGuard(in, filepath.Join(root, "api/handler.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got != "silent-allow" {
+		t.Fatalf("two worktrees each editing their own checkout of api/handler.go is the "+
+			"arrangement batten itself recommends, and it was %q:\n%s", got, reasonOf(out))
+	}
+
+	// THE CONTROL. Move the owner into this same tree and nothing else changes — if that still
+	// allows, the test above proves nothing at all, because the guard has simply stopped working.
+	if err := h.Store.SetWorktree(a.RunID, root); err != nil {
+		t.Fatal(err)
+	}
+	out, err = h.writeSetGuard(in, filepath.Join(root, "api/handler.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got != "deny" {
+		t.Fatalf("control failed: two runs in the SAME tree racing one file must still be "+
+			"denied, got %q", got)
+	}
+
+	// And an UNRECORDED tree is an unknown, never a licence. Runs written before the column
+	// existed must keep the old behaviour, or an upgrade quietly disables the cross-run guard.
+	if err := h.Store.SetWorktree(a.RunID, ""); err != nil {
+		t.Fatal(err)
+	}
+	out, _ = h.writeSetGuard(in, filepath.Join(root, "api/handler.go"))
+	if got := decision(out); got != "deny" {
+		t.Errorf("a run with no recorded worktree was treated as being somewhere else; got %q", got)
+	}
+}
+
+func reasonOf(o *Output) string {
+	if o == nil || o.HookSpecific == nil {
+		return "(no output)"
+	}
+	return o.HookSpecific.PermissionDecisionReason + o.HookSpecific.AdditionalContext
+}
+
 // TestReportModeWarnsWhereEnforceDenies: the adoption ramp. Same collision, same evidence, one
 // line of spec between a warning and a block.
 func TestReportModeWarnsWhereEnforceDenies(t *testing.T) {

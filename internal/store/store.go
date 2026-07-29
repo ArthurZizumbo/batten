@@ -261,7 +261,7 @@ CREATE TABLE IF NOT EXISTS overrides (
 // schemaVersion is bumped whenever an additive migration is added below. The base schema
 // (CREATE TABLE IF NOT EXISTS ...) always runs; versioned steps run once, in order, so a
 // database created by an older batten upgrades in place instead of needing a rebuild.
-const schemaVersion = 8
+const schemaVersion = 9
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
@@ -312,6 +312,19 @@ func (s *Store) migrate() error {
 		// the events all look alike, and "we ran in report mode for three weeks" has no record
 		// of what that cost.
 		`ALTER TABLE events ADD COLUMN enforcement TEXT`,
+		// v9: which WORKING TREE this run lives in.
+		//
+		// Everything batten knew about a file was its repo-relative path, which is the same
+		// string in every worktree cut from the same repository. So two units on two branches,
+		// each in its own tree, each legitimately editing `api/handler.go`, looked to the
+		// cross-run guard exactly like two sessions fighting over one file — and it denied both.
+		// batten told users to use a worktree per unit in three separate messages and then
+		// punished them for it.
+		//
+		// Empty means "not recorded" and is treated as "might be the same tree", which keeps the
+		// old behaviour for every run written before this column existed. Never as "a different
+		// tree": that would turn an unknown into a licence.
+		`ALTER TABLE runs ADD COLUMN worktree TEXT`,
 	}
 	for i := have; i < schemaVersion; i++ {
 		if _, err := s.db.Exec(migrations[i]); err != nil {
@@ -343,11 +356,14 @@ type Run struct {
 	Iterations   int
 	StartedAt    int64
 	EndedAt      *int64
+	// Worktree is the root of the working tree this run is bound to. Empty means unrecorded,
+	// which is deliberately NOT the same as "the main tree" — see the v9 migration.
+	Worktree string
 }
 
 const runCols = `run_id, project, unit_id, COALESCE(session_id,''), COALESCE(phase,''),
 	status, COALESCE(base_sha,''), tokens_spent, imputed_usd_spent, quota_start_5h,
-	iterations, started_at, ended_at`
+	iterations, started_at, ended_at, COALESCE(worktree,'')`
 
 // EnsureRun returns the open run for a unit, creating it if absent. Idempotent:
 // hooks fire in any order and may race, so this must never duplicate a run.
@@ -422,7 +438,7 @@ func scanRun(scan func(...any) error) (*Run, error) {
 	var r Run
 	err := scan(&r.RunID, &r.Project, &r.UnitID, &r.SessionID, &r.Phase, &r.Status,
 		&r.BaseSHA, &r.TokensSpent, &r.ImputedUSD, &r.QuotaStart5h,
-		&r.Iterations, &r.StartedAt, &r.EndedAt)
+		&r.Iterations, &r.StartedAt, &r.EndedAt, &r.Worktree)
 	if err != nil {
 		return nil, err
 	}
@@ -449,6 +465,13 @@ func (s *Store) ListRuns(project string, limit int) ([]Run, error) {
 
 func (s *Store) SetPhase(runID, phase string) error {
 	_, err := s.db.Exec(`UPDATE runs SET phase=? WHERE run_id=?`, phase, runID)
+	return err
+}
+
+// SetWorktree records which working tree a run lives in. Idempotent and cheap: it is called from
+// `batten phase` and `batten worktree`, both of which already know where they are standing.
+func (s *Store) SetWorktree(runID, root string) error {
+	_, err := s.db.Exec(`UPDATE runs SET worktree=? WHERE run_id=?`, root, runID)
 	return err
 }
 
@@ -1500,22 +1523,28 @@ func (s *Store) OpenRuns(project string) ([]Run, error) {
 
 // CrossOwner is a file's owner found in some OTHER open run of the project.
 type CrossOwner struct {
-	RunID  string
-	UnitID string
-	NodeID string
+	RunID    string
+	UnitID   string
+	NodeID   string
+	Worktree string
 }
 
 // WriteSetOwnerAcrossOpenRuns finds who owns a path in any open run other than excludeRun.
 // This is what defends the fan-out ACROSS sessions: session B editing a file that session A's
 // agent claimed gets stopped, with A's unit named. The per-run writesets PK only defends within
 // one run; this widens the check to the whole project's live work.
+//
+// Callers get the owner's WORKING TREE too, because a path is only a shared resource if the two
+// runs are standing in the same one. See sameTreeAsCaller at the call site: batten spent three
+// separate messages telling people to use a worktree per unit and then denied both of them for
+// touching `api/handler.go`, which in two worktrees is two different files.
 func (s *Store) WriteSetOwnerAcrossOpenRuns(project, path, excludeRun string) (*CrossOwner, error) {
-	row := s.db.QueryRow(`SELECT w.run_id, r.unit_id, w.node_id
+	row := s.db.QueryRow(`SELECT w.run_id, r.unit_id, w.node_id, COALESCE(r.worktree,'')
 	   FROM writesets w JOIN runs r ON r.run_id = w.run_id
 	   WHERE r.project=? AND r.status='running' AND w.path=? AND w.run_id != ?
 	   LIMIT 1`, project, normPath(path), excludeRun)
 	var c CrossOwner
-	err := row.Scan(&c.RunID, &c.UnitID, &c.NodeID)
+	err := row.Scan(&c.RunID, &c.UnitID, &c.NodeID, &c.Worktree)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

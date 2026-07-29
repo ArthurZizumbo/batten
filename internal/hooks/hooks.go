@@ -844,6 +844,13 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 
 	// Cross-run collision (another session is working this file right now).
 	if cross, err := h.Store.WriteSetOwnerAcrossOpenRuns(h.Spec.Project, rel, myRun); err == nil && cross != nil {
+		if h.inADifferentTreeFrom(cross.Worktree) {
+			// Two worktrees, two branches, two checkouts of the same repo-relative path. There is
+			// no race here — this is precisely the arrangement batten's own messages recommend,
+			// and denying it punished the fix for the problem. The merge is where these two meet,
+			// and the merge has its own gate (`batten worktree <unit> --merge`).
+			return nil, nil
+		}
 		return h.gateWith("PreToolUse", envelope{
 			Code: CodeWriteSet,
 			// Retryable, unlike the within-run collision: the other session finishing is a
@@ -851,11 +858,30 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 			Retry: true,
 			Message: fmt.Sprintf(
 				"batten: %s is being worked by %s in another open session (run %s).\n"+
-					"Editing it now races that work. Coordinate, or use a worktree per unit so each has its own branch.",
-				rel, cross.UnitID, cross.RunID),
+					"Editing it now races that work. Coordinate, or give each unit its own worktree: "+
+					"`batten worktree %s`.",
+				rel, cross.UnitID, cross.RunID, cross.UnitID),
 		}), nil
 	}
 	return nil, nil
+}
+
+// inADifferentTreeFrom reports whether THIS session is standing in a different working tree from
+// the run that owns the file.
+//
+// Both sides must be known. An unrecorded worktree is an unknown, and an unknown must never be
+// read as "somewhere else" — that would turn every run written before the column existed into a
+// licence to write over another unit's claim. Same asymmetry as everywhere else in batten: not
+// measurable is not the same as measured and fine.
+func (h *Handler) inADifferentTreeFrom(theirs string) bool {
+	if theirs == "" {
+		return false
+	}
+	mine := h.Spec.Root // where THIS session's batten.yaml is, i.e. the tree it is standing in
+	if mine == "" {
+		return false
+	}
+	return !gitx.SameTree(mine, theirs)
 }
 
 // ---------- graph ingestion ----------

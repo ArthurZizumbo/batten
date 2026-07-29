@@ -22,6 +22,28 @@ later phase diffs from that anchor rather than from `HEAD~N`. That is what keeps
 correct when the work interleaves with someone else's commits, or gets rebased. Do this first, or
 the verify phase reviews the wrong set of files and nobody notices.
 
+### If another unit is already open, give this one its own tree
+
+```bash
+batten worktree <unit>      # creates the tree, the branch, and anchors the unit where it diverged
+```
+
+One tree **per unit**, and the anchor becomes the point that tree branched — which is exactly the
+diff the verify phase should be reading. From then on the write-set guard knows the two units are
+in different checkouts and stops treating `api/handler.go` in each of them as one contested file.
+
+**Do NOT give each fanned-out subagent its own worktree.** Your Agent tool has
+`isolation: "worktree"` and using it here breaks the fan-out: the agents of one unit work on
+**disjoint write-sets of the same tree** — that is the premise the whole design rests on — and
+isolating them from each other means none of them sees the others' work, plus N merges for one work
+item. The isolation that matters is between concurrent *units*.
+
+The way back in is gated exactly like a commit:
+
+```bash
+batten worktree <unit> --merge     # refused unless the unit has BOTH verdicts
+```
+
 ## 2. Read the plan
 
 Load the plan artifact (`artifacts[...]` with `{id}` substituted, per the phase's `reads:`). It
