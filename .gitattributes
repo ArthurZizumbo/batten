@@ -13,6 +13,13 @@
 # Must be LF in the repo AND in the working tree: these are executed, not just read.
 *.sh        text eol=lf
 *.bash      text eol=lf
+# VHS tapes are executed too — by vhs, on whichever machine regenerates the README's GIFs, which
+# is not necessarily this one. Same class of failure as bootstrap.sh, same fix.
+*.tape      text eol=lf
+
+# .cmd and .bat are the mirror case, like .ps1: run by Windows, native CRLF.
+*.cmd       text eol=crlf
+*.bat       text eol=crlf
 
 # Go tooling and CI expect LF; gofmt output is LF and the `gofmt -l` gate would fight CRLF.
 *.go        text eol=lf
