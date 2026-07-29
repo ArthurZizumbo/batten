@@ -1,6 +1,7 @@
 package store
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -83,11 +84,11 @@ func TestWriteSetRefusesASecondOwner(t *testing.T) {
 		t.Errorf("the collision must name the owner; got %v", err)
 	}
 
-	owner, err := s.WriteSetOwner(r.RunID, "internal/api/handler.go")
+	owner, err := s.WriteSetOwner(r.RunID, "", "internal/api/handler.go")
 	if err != nil || owner != "n-a" {
 		t.Errorf("WriteSetOwner = %q (%v), want n-a", owner, err)
 	}
-	if owner, _ := s.WriteSetOwner(r.RunID, "nobody/owns/this.go"); owner != "" {
+	if owner, _ := s.WriteSetOwner(r.RunID, "", "nobody/owns/this.go"); owner != "" {
 		t.Errorf("an unclaimed path has no owner, got %q", owner)
 	}
 
@@ -96,7 +97,7 @@ func TestWriteSetRefusesASecondOwner(t *testing.T) {
 	if err := s.ClaimWriteSet(r.RunID, "n-c", []string{"fresh/one.go", "internal/api/handler.go"}); err == nil {
 		t.Fatal("a claim containing a collision must fail as a whole")
 	}
-	if owner, _ := s.WriteSetOwner(r.RunID, "fresh/one.go"); owner != "" {
+	if owner, _ := s.WriteSetOwner(r.RunID, "", "fresh/one.go"); owner != "" {
 		t.Errorf("the failed claim leaked a partial write-set: fresh/one.go is owned by %q", owner)
 	}
 }
@@ -293,5 +294,108 @@ func TestListRunsAndEventLog(t *testing.T) {
 	}
 	if err := s.LogEvent(a.RunID, "", "PreToolUse", nil); err != nil {
 		t.Errorf("LogEvent with no payload: %v", err)
+	}
+}
+
+// TestTwoNamesForOneFileAreOneOwner.
+//
+// The write-set guard is about a FILE; a path is only a name for one. Measured on the machine
+// this was written on: a hard link produced two paths that normPath called different and
+// os.SameFile called identical. So agent A claims `api/rate.go`, agent B writes
+// `api/rate-link.go`, and a path-only guard waves it through while they are one file on disk.
+// Directory symlinks do the same thing for free on macOS and Linux (/var vs /private/var).
+func TestTwoNamesForOneFileAreOneOwner(t *testing.T) {
+	root := t.TempDir()
+	s, err := Open(filepath.Join(t.TempDir(), "batten.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	real := filepath.Join(root, "rate.go")
+	if err := os.WriteFile(real, []byte("package api\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(root, "rate-alias.go")
+	if err := os.Link(real, alias); err != nil {
+		t.Skipf("this filesystem does not support hard links: %v", err)
+	}
+
+	r, err := s.EnsureRun("p", "TASK-1", "s1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ClaimWriteSet(r.RunID, "agent-a", []string{"rate.go"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Control: the claimed name resolves to its owner. If this fails the assertion below
+	// proves nothing.
+	if owner, _ := s.WriteSetOwner(r.RunID, root, "rate.go"); owner != "agent-a" {
+		t.Fatalf("control failed: the claimed path resolves to %q, want agent-a", owner)
+	}
+
+	owner, err := s.WriteSetOwner(r.RunID, root, "rate-alias.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner != "agent-a" {
+		t.Errorf("a second name for the SAME file on disk resolved to owner %q. Agent B can "+
+			"write agent A's file by spelling it differently, and the disjointness the fan-out "+
+			"rests on is gone", owner)
+	}
+}
+
+// The other half, and the reason the path stays the primary key: the write-set fences files an
+// agent is ABOUT to write, and most of them do not exist yet. A file that does not exist has no
+// inode to key on, so an identity-only scheme cannot fence the case the guard exists for.
+func TestAClaimOnAFileThatDoesNotExistYetStillFences(t *testing.T) {
+	root := t.TempDir()
+	s, err := Open(filepath.Join(t.TempDir(), "batten.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	r, _ := s.EnsureRun("p", "TASK-1", "s1")
+	if err := s.ClaimWriteSet(r.RunID, "agent-a", []string{"not/written/yet.go"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "not", "written", "yet.go")); err == nil {
+		t.Fatal("this test is meaningless if the file exists")
+	}
+
+	owner, err := s.WriteSetOwner(r.RunID, root, "not/written/yet.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owner != "agent-a" {
+		t.Errorf("owner = %q: a claim on a file that does not exist yet must still fence it — "+
+			"that is the whole point of declaring a write-set before the fan-out writes", owner)
+	}
+}
+
+// And an unrelated file that merely exists must not be captured by the identity sweep.
+func TestAnUnrelatedFileIsNotCapturedByTheIdentitySweep(t *testing.T) {
+	root := t.TempDir()
+	s, err := Open(filepath.Join(t.TempDir(), "batten.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	for _, n := range []string{"owned.go", "free.go"} {
+		if err := os.WriteFile(filepath.Join(root, n), []byte(n), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r, _ := s.EnsureRun("p", "TASK-1", "s1")
+	if err := s.ClaimWriteSet(r.RunID, "agent-a", []string{"owned.go"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if owner, _ := s.WriteSetOwner(r.RunID, root, "free.go"); owner != "" {
+		t.Errorf("an unclaimed file was reported as owned by %q; the guard would deny a "+
+			"legitimate write and the fan-out would stall", owner)
 	}
 }

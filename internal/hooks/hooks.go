@@ -647,7 +647,7 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 
 	// Within-run collision (agent vs agent).
 	if myRun != "" {
-		if owner, err := h.Store.WriteSetOwner(myRun, rel); err == nil && owner != "" && owner != myNode {
+		if owner, err := h.Store.WriteSetOwner(myRun, h.Spec.Root, rel); err == nil && owner != "" && owner != myNode {
 			// An UNATTRIBUTED write (no agent_id in the payload) cannot be hard-denied: we
 			// cannot tell the owning agent apart from a trespasser, and if Claude Code ever
 			// stops carrying agent_id in subagent hooks, denying here would deny the owner

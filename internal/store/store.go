@@ -595,14 +595,71 @@ func (s *Store) ClaimWriteSet(runID, nodeID string, paths []string) error {
 }
 
 // WriteSetOwner returns the node owning a path in a run, or "" if unclaimed.
-func (s *Store) WriteSetOwner(runID, path string) (string, error) {
+//
+// root is the directory the run's relative paths hang off. Pass "" to skip the identity check
+// below and compare paths only.
+//
+// TWO LOOKUPS, because a path is a NAME and the guard is about a FILE.
+//
+// The first is the exact normalised path, which is what the PRIMARY KEY enforces. The second
+// exists because two different names can be the same file, and measuring beat guessing here:
+// on this Windows machine, a hard link produced two paths that normPath called different and
+// os.SameFile called identical. Agent A claims `api/rate.go`, agent B writes `api/rate-link.go`,
+// and the guard waves it through while they are one file on disk. Directory symlinks do the
+// same thing for free on macOS and Linux — /var against /private/var is the canonical case.
+//
+// AND WHY THE PATH STAYS PRIMARY, which is the part a device+inode design has to answer: the
+// write-set fences files an agent is ABOUT to write, and most of them do not exist yet. A file
+// that does not exist has no inode to key on. Measured, not assumed: os.Stat on an unwritten
+// path fails, so an identity-only scheme cannot fence the very case the guard exists for.
+//
+// So identity is a SECOND chance to catch a collision, never the first — and it costs one stat
+// per existing claim, only when the path lookup missed and the target actually exists.
+func (s *Store) WriteSetOwner(runID, root, path string) (string, error) {
 	var owner string
 	err := s.db.QueryRow(`SELECT node_id FROM writesets WHERE run_id=? AND path=?`,
 		runID, normPath(path)).Scan(&owner)
-	if errors.Is(err, sql.ErrNoRows) {
+	if err == nil {
+		return owner, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	if root == "" {
 		return "", nil
 	}
-	return owner, err
+	return s.ownerBySameFile(runID, root, path)
+}
+
+// ownerBySameFile asks the operating system whether the target is any of the run's claimed
+// files under a different name.
+func (s *Store) ownerBySameFile(runID, root, path string) (string, error) {
+	target, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
+	if err != nil {
+		// It does not exist, so it cannot be an alias of something that does. This is the
+		// common case — the guard runs before the write — and it exits here for free.
+		return "", nil
+	}
+
+	rows, err := s.db.Query(`SELECT node_id, path FROM writesets WHERE run_id=?`, runID)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var node, claimed string
+		if err := rows.Scan(&node, &claimed); err != nil {
+			return "", err
+		}
+		fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(claimed)))
+		if err != nil {
+			continue // claimed but not yet written: nothing to compare
+		}
+		if os.SameFile(target, fi) {
+			return node, nil
+		}
+	}
+	return "", rows.Err()
 }
 
 func (s *Store) WriteSet(runID, nodeID string) ([]string, error) {

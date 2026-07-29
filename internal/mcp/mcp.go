@@ -144,6 +144,15 @@ func (q *queries) project() string {
 	return q.sp.Project
 }
 
+// root is the repo the run's relative paths hang off. The write-set lookup needs it to ask the
+// operating system whether two names are the same file.
+func (q *queries) root() string {
+	if q.sp == nil {
+		return ""
+	}
+	return q.sp.Root
+}
+
 // ---------- shared shapes ----------
 
 type verdictBrief struct {
@@ -669,7 +678,7 @@ func (q *queries) writeSetOwner(_ context.Context, _ *sdk.CallToolRequest, in wr
 		}
 	}
 
-	owner, err := q.st.WriteSetOwner(r.RunID, rel)
+	owner, err := q.st.WriteSetOwner(r.RunID, q.root(), rel)
 	if err != nil {
 		return nil, out, fmt.Errorf("reading write-set: %w", err)
 	}
