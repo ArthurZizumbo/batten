@@ -40,17 +40,29 @@ func TestDemoIsTheEndToEndTestThisProjectDidNotHave(t *testing.T) {
 		{"and passes once the bug is fixed", "PASS: a missing task maps to 404"},
 		{"the report says what was stopped", "what batten stopped"},
 	}
+	// Only where git exists: the sandbox is a real repo, and the stale-target check has no tree
+	// to fingerprint without one. Skipping the assertion is right; asserting it unconditionally
+	// would make the suite fail on a machine batten degrades on correctly.
+	if strings.Contains(out, "Something edits the tree") {
+		steps = append(steps,
+			struct{ what, want string }{"a tree edited after the checks passed is caught",
+				"STALE TARGET"})
+	}
 	for _, s := range steps {
 		if !strings.Contains(out, s.want) {
 			t.Errorf("%s — expected %q in:\n%s", s.what, s.want, out)
 		}
 	}
 
-	// The demo must reach a CLEAN gate. If the last commit is still denied, the walkthrough
-	// ends on a failure and the reader learns the wrong lesson.
-	tail := out[strings.LastIndex(out, "Now the commit is allowed"):]
-	if strings.Contains(tail[:min(len(tail), 400)], "DENIED") {
-		t.Errorf("the demo ends with the commit still denied:\n%s", tail)
+	// The demo must reach a CLEAN gate at the step that promises one. Bounded to that step
+	// rather than to "the rest of the output": the step AFTER it deliberately earns a denial
+	// (a formatter edits the tree), and an unbounded window read that as this step failing.
+	step9 := out[strings.LastIndex(out, "Now the commit is allowed"):]
+	if end := strings.Index(step9, "\n\n"); end > 0 {
+		step9 = step9[:end]
+	}
+	if strings.Contains(step9, "DENIED") {
+		t.Errorf("the step that promises a clean gate did not get one:\n%s", step9)
 	}
 }
 

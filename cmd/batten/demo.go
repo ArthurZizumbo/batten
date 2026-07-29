@@ -115,6 +115,7 @@ func demoDir(at string) (string, error) {
 }
 
 type demo struct {
+	git  bool
 	dir  string
 	out  *os.File
 	sp   *spec.Spec
@@ -144,6 +145,7 @@ func (d *demo) run() error {
 		d.stepCheckFails,
 		d.stepFixAndPass,
 		d.stepCommitLands,
+		d.stepStaleTarget,
 		d.stepReport,
 	} {
 		if err := f(); err != nil {
@@ -216,9 +218,36 @@ func (d *demo) buildRepo() error {
 	// which the scanner lifting `make test` verbatim actually runs. Claiming the check came
 	// from a build file that cannot execute would be the demo lying about its own subject.
 	if d.useMake() {
-		return write("Makefile", "test:\n\t"+d.checkCommand()+"\n")
+		if err := write("Makefile", "test:\n\t"+d.checkCommand()+"\n"); err != nil {
+			return err
+		}
 	}
+
+	// A real git repo, so the demo exercises the parts that only exist inside one: the anchor,
+	// and the check that the tree a verdict was made about is still the tree being committed.
+	// Best-effort — a machine without git still gets the other steps, and batten degrades there
+	// exactly as it does in a repo that was never `git init`ed, which is a shape it has been
+	// field-tested against.
+	d.git = d.initRepo()
 	return nil
+}
+
+// initRepo makes the sandbox a real repository with one commit. Reports whether it worked.
+func (d *demo) initRepo() bool {
+	for _, args := range [][]string{
+		{"init", "-q", "."},
+		{"config", "user.email", "demo@batten.local"},
+		{"config", "user.name", "batten demo"},
+		{"add", "-A"},
+		{"commit", "-q", "-m", "initial"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = d.dir
+		if err := cmd.Run(); err != nil {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *demo) useMake() bool {
@@ -421,8 +450,31 @@ func (d *demo) stepCommitLands() error {
 	return nil
 }
 
+// stepStaleTarget shows the newest wedge, and the one that keeps "verified" meaning anything:
+// the checks passed ABOUT a tree, and something changed it afterwards.
+func (d *demo) stepStaleTarget() error {
+	if !d.git {
+		return nil // no repo, no tree to fingerprint — and batten says so rather than guessing
+	}
+	d.step(10, "Something edits the tree AFTER the checks passed")
+
+	p := filepath.Join(d.dir, "api", "handler.go")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(p, append(b, []byte("\n// reformatted by something else\n")...), 0o644); err != nil {
+		return err
+	}
+	d.say("   a formatter rewrites api/handler.go — nobody re-ran anything")
+	d.showDecision(d.commit(`git commit -m "US-003: map a missing task to 404"`))
+	d.say("   The pass batten recorded was about a tree that no longer exists. `batten-verified`")
+	d.say("   has to keep meaning verified-about-THIS, or it means nothing.")
+	return nil
+}
+
 func (d *demo) stepReport() error {
-	d.step(10, "batten report — what happened, and what batten stopped")
+	d.step(11, "batten report — what happened, and what batten stopped")
 	var b strings.Builder
 	reportRun(&b, d.sp, d.st, *mustRun(d.st, d.run_.RunID))
 	reportImpact(&b, d.st, d.sp.Project, 0, time.Hour)
@@ -520,9 +572,15 @@ func (d *demo) runChecks() checkResult {
 	if allPass {
 		result = "ok"
 	}
+	// The SAME fields cmdCheck records, including the fingerprint of the tree these checks just
+	// passed against. Leaving it out was caught by running the demo: step 10 edits a file after
+	// the checks pass and the gate waved it through, because this verdict carried no target to
+	// compare against. A demo that re-implements a production path instead of calling it will
+	// drift from it silently — which is the failure this whole project is about.
 	_ = d.st.SaveVerdict(store.Verdict{
 		RunID: d.run_.RunID, Gate: gate, CheckID: "checks", Result: result, Source: "batten",
 		Evidence: evidence, Why: "batten ran the gate's declared checks",
+		TargetDigest: store.TargetDigest(d.dir),
 	}, true)
 	return res
 }
