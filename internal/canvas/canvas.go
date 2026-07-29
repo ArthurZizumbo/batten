@@ -175,9 +175,19 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, ba
 			if p.NodeID == "" {
 				y = j * gapY
 			}
-			body := fmt.Sprintf("**%s**\n`%s`", k.Label, k.Status)
-			if k.Domain != "" {
-				body = fmt.Sprintf("**%s**\ndomain: `%s`\n`%s`", k.Label, k.Domain, k.Status)
+			// Domain first, then the agent id, and the agent TYPE last. Four subagents all
+			// titled "general-purpose" tell the reader nothing about which box is which —
+			// caught by rendering a real run to HTML and reading the headings.
+			name := k.Domain
+			if name == "" {
+				name = k.AgentID
+			}
+			if name == "" {
+				name = k.Label
+			}
+			body := fmt.Sprintf("**%s**\n`%s`", name, k.Status)
+			if k.Domain != "" && k.Label != "" && k.Label != k.Domain {
+				body = fmt.Sprintf("**%s**\n%s\n`%s`", name, k.Label, k.Status)
 			}
 			if k.CostUSD > 0 {
 				body += fmt.Sprintf("\n$%.3f", k.CostUSD)

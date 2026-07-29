@@ -30,3 +30,7 @@ graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 # *.pdf is deliberate: a third-party article was committed here once.
 *.local.md
 *.pdf
+
+# Artefactos de inspeccion en navegador (playwright MCP): son de la sesion, no del repo.
+.playwright-mcp/
+*.playwright-mcp/

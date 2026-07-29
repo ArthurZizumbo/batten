@@ -125,7 +125,7 @@ func printUsage() {
   batten report [--since d|--week]   what batten saw, and what it stopped (--share for markdown)
   batten runs                        list runs
   batten show <unit>                 run detail
-  batten canvas <unit> [--out p]     emit the run DAG as JSON Canvas
+  batten canvas <unit> [--out p]     emit the run DAG as JSON Canvas (--html for a standalone page)
   batten budget [<unit>]             governor status (tokens / imputed $ / quota)
   batten override <unit> --reason    audited escape from the gate
   batten tui                         review runs in a terminal UI
@@ -596,6 +596,59 @@ func cmdShow(args []string) error {
 	return nil
 }
 
+// canvasHTML writes the run as a single self-contained page.
+//
+// It works on the LATEST run rather than only a closed one, on purpose: an artifact that exists
+// only once the work is over does not get shared at the moment somebody is excited about it, and
+// mid-run is exactly when a fan-out is worth looking at.
+func canvasHTML(sp *spec.Spec, st *store.Store, unit, out string) error {
+	run, err := st.LatestRun(sp.Project, unit)
+	if err != nil {
+		return fmt.Errorf("no run recorded for %s", unit)
+	}
+	nodes, err := st.Nodes(run.RunID)
+	if err != nil {
+		return err
+	}
+	edges, _ := st.Edges(run.RunID)
+	ws, _ := st.WriteSetsByRun(run.RunID)
+	usg, _ := st.UsageByNode(run.RunID)
+	rv, _ := st.LatestVerdictNotBySource(run.RunID, "", "batten")
+	bv, _ := st.LatestVerdictBySource(run.RunID, "", "batten")
+
+	details := map[string]canvas.Detail{}
+	for _, n := range nodes {
+		d := canvas.Detail{
+			Kind: n.Kind, Domain: n.Domain, AgentID: n.AgentID,
+			AgentType: n.AgentType, Status: n.Status, WriteSet: ws[n.NodeID],
+		}
+		if u, ok := usg[n.NodeID]; ok {
+			d.Tokens = totalTokens(u)
+			d.ImputedUSD, d.Priced = u.ImputedUSD, u.ImputedUSD > 0
+		}
+		details[n.NodeID] = d
+	}
+	retries := 0
+	for _, e := range edges {
+		if e.Rel == "retry_of" {
+			retries++
+		}
+	}
+
+	c := canvas.Render(run, nodes, edges, rv, bv)
+	if out == "" {
+		out = filepath.Join(sp.Root, ".batten", unit+".html")
+	}
+	if err := c.WriteHTML(out, canvas.HTMLInput{
+		Run: run, Details: details, Reviewer: rv, Batten: bv, Retries: retries,
+	}); err != nil {
+		return err
+	}
+	fmt.Printf("wrote %s (%d nodes, %d edges)\n", out, len(c.Nodes), len(c.Edges))
+	fmt.Println("one file, no network — open it in any browser, or attach it anywhere.")
+	return nil
+}
+
 // modelMatches reports whether the declared model (an alias like "haiku") appears in what
 // actually ran (full ids like "claude-haiku-4-5-20251001"). Substring match, since the spec
 // uses short aliases and the ledger stores the concrete id.
@@ -617,7 +670,7 @@ func firstLineOf(s string) string {
 
 func cmdCanvas(args []string) error {
 	if len(args) < 1 {
-		return errors.New("canvas: batten canvas <unit> [--out <path>]")
+		return errors.New("canvas: batten canvas <unit> [--out <path>] [--html]")
 	}
 	sp, st, err := load()
 	if err != nil {
@@ -626,11 +679,21 @@ func cmdCanvas(args []string) error {
 	defer st.Close()
 
 	unit := args[0]
-	out := ""
+	out, asHTML := "", false
 	for i := 1; i < len(args); i++ {
-		if args[i] == "--out" && i+1 < len(args) {
-			out = args[i+1]
+		switch args[i] {
+		case "--out":
+			if i+1 < len(args) {
+				out, i = args[i+1], i+1
+			}
+		case "--html":
+			// One file, openable in any browser, no Obsidian. The JSON Canvas needs a reader;
+			// this needs nothing.
+			asHTML = true
 		}
+	}
+	if asHTML {
+		return canvasHTML(sp, st, unit, out)
 	}
 
 	// --out is the escape hatch for "just give me the canvas here"; without it, export.Run
