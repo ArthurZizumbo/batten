@@ -963,7 +963,7 @@ Ninguna de esas se ve leyendo el código.
 | ítem | qué | § |
 |---|---|---|
 | 21 | criterios como dato + vista de cumplimiento. La fase B (tabla `criteria`) es la que desbloquea que el PR diga *"AC-1 cubierto por X"* | 7 |
-| 22 | honestidad de superficie: `measure` omite buckets de caché y **subestima hasta 21,9×** · imprime `$0.00` para un modelo sin precio · `budget`/`runs` presentan el imputado parcial como completo · **un override es invisible en todo el CLI** | 9 |
+| 22 | honestidad de superficie: `measure` omite los buckets de caché y **subestima por un factor que depende de la proporción de caché del tráfico — 21,9× medido en el field test, 107,7× en la re-verificación** · imprime `$0.00` para un modelo sin precio · `budget`/`runs` presentan el imputado parcial como completo · **un override es invisible en todo el CLI** | 9 |
 | 23 | sacar del spec lo que no se va a implementar: `models.tiers`, `models.phases`, `provenance.format` | 8 |
 | 24 | ciclo de vida y presentación (12 hallazgos chicos) | 9 |
 | 19' | el claim de `dir/**` dentro de un mismo run | 5.2 |
