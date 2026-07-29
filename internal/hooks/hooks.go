@@ -25,6 +25,7 @@ import (
 
 	"github.com/ArthurZizumbo/batten/internal/export"
 	"github.com/ArthurZizumbo/batten/internal/gitx"
+	"github.com/ArthurZizumbo/batten/internal/render"
 	"github.com/ArthurZizumbo/batten/internal/spec"
 	"github.com/ArthurZizumbo/batten/internal/store"
 	"github.com/ArthurZizumbo/batten/internal/usage"
@@ -1238,8 +1239,16 @@ func (h *Handler) sessionStart(in Input) (*Output, error) {
 		}
 		fmt.Fprintf(&b, "- **%s** — phase `%s`, status `%s`", r.UnitID, r.Phase, r.Status)
 		if r.TokensSpent > 0 {
-			fmt.Fprintf(&b, ", %.1fM tokens / $%.2f imputed",
-				float64(r.TokensSpent)/1e6, r.ImputedUSD)
+			// The shared renderer, not a hand-rolled %.1fM: this brief showed a measured
+			// 42,600 tokens as "0.0M" — an apparent zero, in the one line the agent reads
+			// before deciding whether there is budget to work with (#36). The declared
+			// ceiling rides along so the number has something to be compared against.
+			tok := render.Tokens(r.TokensSpent)
+			if cap := h.Spec.Budget.TokensPerRun; cap > 0 {
+				tok += " / " + render.Tokens(cap)
+			}
+			fmt.Fprintf(&b, ", %s tokens, imputed %s", tok,
+				render.ImputedShort(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent))
 		}
 		// An override opens the gate regardless of the verdict state, so this line must not
 		// promise a denial the hook will not deliver (#10): the agent plans around this text.

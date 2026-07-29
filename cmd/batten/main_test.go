@@ -48,24 +48,6 @@ func TestDBPathIsAlwaysUnderHome(t *testing.T) {
 	}
 }
 
-func TestHumanTokens(t *testing.T) {
-	cases := []struct {
-		in   int64
-		want string
-	}{
-		{0, "0"},
-		{999, "999"},
-		{1_000, "1.0k"},
-		{1_500, "1.5k"},
-		{1_400_000, "1.4M"},
-	}
-	for _, c := range cases {
-		if got := humanTokens(c.in); got != c.want {
-			t.Errorf("humanTokens(%d) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
 // TestMeasureNeverPricesTheUnpriceableAsFree is finding #32's render half. A model with no
 // published rate showed as `$0.00` under "spend by model" — byte-identical to a measured row
 // that genuinely rounds to zero. The two facts are opposites and must not share a rendering.
@@ -92,6 +74,107 @@ func TestMeasureNeverPricesTheUnpriceableAsFree(t *testing.T) {
 const partialPricingSpec = "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
 	"phases:\n  - id: build\n    anchor: git_sha\n" +
 	"budget:\n  tokens_per_run: 3000000\n  imputed_usd_per_run: 2.0\n  on_exceed: warn\n"
+
+// TestNarrowExitFoldsWindowsWraparound is finding #13. A Windows process that dies abnormally
+// reports a negative NTSTATUS, and the raw ExitCode() renders as its unsigned 32-bit
+// wraparound: `npm test` in a repo with no package.json printed `exit 4294963238` instead of
+// -4058 — and the garbage was persisted into the verdict evidence, which `batten show`
+// replays forever.
+func TestNarrowExitFoldsWindowsWraparound(t *testing.T) {
+	if got := narrowExit(4294963238); got != -4058 {
+		t.Errorf("narrowExit(4294963238) = %d, want -4058", got)
+	}
+	// Ordinary codes pass through untouched.
+	for _, c := range []int{0, 1, 124, 255} {
+		if got := narrowExit(c); got != c {
+			t.Errorf("narrowExit(%d) = %d, want it unchanged", c, got)
+		}
+	}
+}
+
+// TestTUIRefusesANonTerminalStdout is finding #46: `batten tui` with stdout on a pipe emitted
+// 96 bytes of terminal setup, rendered nothing, and never exited. Under `go test` stdout is
+// exactly that pipe, so the honest behaviour is an immediate, explanatory refusal — and the
+// timeout below is what catches the regression, because the regression is a hang.
+func TestTUIRefusesANonTerminalStdout(t *testing.T) {
+	dir := gitRepoWithSpec(t, diffFromSpec)
+	t.Setenv("BATTEN_DB", filepath.Join(dir, "state.db"))
+
+	inDir(t, dir, func() {
+		done := make(chan error, 1)
+		go func() { done <- cmdTUI() }()
+		select {
+		case err := <-done:
+			if err == nil || !strings.Contains(err.Error(), "terminal") {
+				t.Errorf("cmdTUI on a piped stdout must refuse and say why; got %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("cmdTUI hung on a non-terminal stdout — the exact behaviour of finding #46")
+		}
+	})
+}
+
+// TestInitHelpPrintsUsageInsteadOfWritingTheFile is finding #54: `batten init --help` printed
+// no usage, WROTE batten.yaml and exited 0 — the only command that both writes a file and had
+// no default arm in its flag switch.
+func TestInitHelpPrintsUsageInsteadOfWritingTheFile(t *testing.T) {
+	dir := t.TempDir()
+	inDir(t, dir, func() {
+		out := captureStdout(t, func() {
+			if err := cmdInit([]string{"--help"}); err != nil {
+				t.Errorf("--help is not an error: %v", err)
+			}
+		})
+		if !strings.Contains(out, "batten init") {
+			t.Errorf("--help must print usage:\n%s", out)
+		}
+		if _, err := os.Stat(filepath.Join(dir, "batten.yaml")); err == nil {
+			t.Error("--help WROTE batten.yaml")
+		}
+
+		var bogusErr error
+		_ = captureStdout(t, func() { bogusErr = cmdInit([]string{"--totally-bogus"}) })
+		if bogusErr == nil {
+			t.Error("an unknown flag must be an error, not a silent write")
+		}
+		if _, err := os.Stat(filepath.Join(dir, "batten.yaml")); err == nil {
+			t.Error("an unknown flag WROTE batten.yaml")
+		}
+	})
+}
+
+// TestInitFromRecordsThePlanDocument is finding #0: `batten init --from <doc>` produced a
+// batten.yaml byte-identical to plain init, never emitted unit.plan, and accepted a
+// nonexistent path with exit 0 — a pure stdout echo pretending to be a feature.
+func TestInitFromRecordsThePlanDocument(t *testing.T) {
+	dir := t.TempDir()
+	inDir(t, dir, func() {
+		var missingErr error
+		_ = captureStdout(t, func() { missingErr = cmdInit([]string{"--from", "no-such-doc.md"}) })
+		if missingErr == nil {
+			t.Error("a --from path that does not exist must be an error, not a shrug")
+		}
+		if _, err := os.Stat(filepath.Join(dir, "batten.yaml")); err == nil {
+			t.Fatal("the failed --from still wrote batten.yaml")
+		}
+
+		if err := os.WriteFile(filepath.Join(dir, "workflow.md"), []byte("# our process\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_ = captureStdout(t, func() {
+			if err := cmdInit([]string{"--from", "workflow.md"}); err != nil {
+				t.Fatalf("init --from with a real doc: %v", err)
+			}
+		})
+		y, err := os.ReadFile(filepath.Join(dir, "batten.yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(y), "plan: workflow.md") {
+			t.Errorf("--from must be RECORDED as unit.plan, not echoed to stdout:\n%s", y)
+		}
+	})
+}
 
 const lifecycleSpec = "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
 	"phases:\n  - id: build\n    anchor: git_sha\n  - id: close\n    gate: qa\n    requires_verdict: ok\n" +

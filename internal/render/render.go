@@ -10,6 +10,20 @@ import (
 	"math"
 )
 
+// Tokens renders a token count for humans: 999, 1.0k, 1.4M. Five packages carried their own
+// private copy of this and a sixth surface hand-rolled `%.1fM` — which showed a measured
+// 42,600 tokens as "0.0M", an apparent zero, in the one brief the agent reads at session
+// start (#36). One renderer, or the copies drift again.
+func Tokens(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1e6)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1e3)
+	}
+	return fmt.Sprintf("%d", n)
+}
+
 // UnpricedShare is the percentage (0–100) of a run's tokens that carry no published rate,
 // rounded to the nearest whole point.
 func UnpricedShare(unpriced, total int64) int {

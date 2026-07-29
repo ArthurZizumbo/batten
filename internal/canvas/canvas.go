@@ -94,6 +94,10 @@ const (
 	gapX   = 420
 	gapY   = 170
 	padTop = 60
+	// childTop is where a phase's first subagent starts: fully BELOW the phase card, which
+	// spans y 0..nodeH. The first child used to start at padTop=60 and overlapped the phase
+	// card by exactly half a card (#45).
+	childTop = nodeH + 40
 )
 
 // Render lays the run out as columns: each phase is a group, its subagents stack below it.
@@ -157,10 +161,16 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, ba
 		x := i * gapX
 		kids := byPhase[p.NodeID]
 
-		groupH := padTop + nodeH + 40
+		// The group must cover from its top margin to the bottom of its last card.
+		bottom := nodeH // the phase card alone
 		if len(kids) > 0 {
-			groupH = padTop + len(kids)*gapY + 40
+			first := childTop
+			if p.NodeID == "" {
+				first = 0 // the unattributed column has no phase card to clear
+			}
+			bottom = first + (len(kids)-1)*gapY + nodeH
 		}
+		groupH := padTop + bottom + 40
 		c.Nodes = append(c.Nodes, Node{
 			ID: "g-" + p.NodeID, Type: "group",
 			X: x - 30, Y: -padTop, Width: nodeW + 60, Height: groupH,
@@ -178,7 +188,7 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, ba
 		}
 
 		for j, k := range kids {
-			y := padTop + j*gapY
+			y := childTop + j*gapY
 			if p.NodeID == "" {
 				y = j * gapY
 			}
@@ -295,7 +305,7 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, ba
 	if run.TokensSpent > 0 {
 		// Imputed, not billed: on a subscription this is the value pulled out of the plan.
 		head += fmt.Sprintf("\ntokens **%s**\nimputed **%s**",
-			humanTokens(run.TokensSpent), render.ImputedShort(run.ImputedUSD, run.UnpricedTokens, run.TokensSpent))
+			render.Tokens(run.TokensSpent), render.ImputedShort(run.ImputedUSD, run.UnpricedTokens, run.TokensSpent))
 	}
 	if run.BaseSHA != "" {
 		head += fmt.Sprintf("\nbase `%s`", run.BaseSHA)
@@ -305,16 +315,6 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, ba
 	})
 
 	return c
-}
-
-func humanTokens(n int64) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1e3)
-	}
-	return fmt.Sprintf("%d", n)
 }
 
 func (c *Canvas) WriteFile(path string) error {

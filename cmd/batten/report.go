@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ArthurZizumbo/batten/internal/render"
 	"github.com/ArthurZizumbo/batten/internal/spec"
 	"github.com/ArthurZizumbo/batten/internal/store"
 )
@@ -141,7 +142,7 @@ func reportRun(b *strings.Builder, sp *spec.Spec, st *store.Store, r store.Run) 
 		}
 		fmt.Fprintf(b, "          %-16s %-22s", label, filesPhrase(ws[n.NodeID]))
 		if u, ok := usg[n.NodeID]; ok && totalTokens(u) > 0 {
-			fmt.Fprintf(b, "  %s tokens", humanTokens(totalTokens(u)))
+			fmt.Fprintf(b, "  %s tokens", render.Tokens(totalTokens(u)))
 		} else {
 			// The unmeasured case, said plainly. A blank column here would read as "free".
 			b.WriteString("  usage not measured")
@@ -176,9 +177,9 @@ func reportRun(b *strings.Builder, sp *spec.Spec, st *store.Store, r store.Run) 
 	switch {
 	case r.TokensSpent > 0 && r.ImputedUSD > 0:
 		fmt.Fprintf(b, "          %s tokens · $%.2f imputed (never billed)\n",
-			humanTokens(r.TokensSpent), r.ImputedUSD)
+			render.Tokens(r.TokensSpent), r.ImputedUSD)
 	case r.TokensSpent > 0:
-		fmt.Fprintf(b, "          %s tokens · imputed cost not priced\n", humanTokens(r.TokensSpent))
+		fmt.Fprintf(b, "          %s tokens · imputed cost not priced\n", render.Tokens(r.TokensSpent))
 	default:
 		b.WriteString("          usage NOT MEASURED for this run — not zero, unknown\n")
 	}

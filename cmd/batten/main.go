@@ -26,6 +26,8 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/mattn/go-isatty"
+
 	"github.com/ArthurZizumbo/batten/internal/canvas"
 	"github.com/ArthurZizumbo/batten/internal/discovery"
 	"github.com/ArthurZizumbo/batten/internal/export"
@@ -565,7 +567,7 @@ func cmdRuns() error {
 		}
 		tok, usd := "—", "—"
 		if r.TokensSpent > 0 {
-			tok = humanTokens(r.TokensSpent)
+			tok = render.Tokens(r.TokensSpent)
 			usd = render.ImputedShort(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent)
 			if r.UnpricedTokens > 0 {
 				floor = true
@@ -586,16 +588,6 @@ func cmdRuns() error {
 		fmt.Println("≥ / not priced: part of those tokens are on models with no published rate — the dollar figure is a floor, never a total")
 	}
 	return nil
-}
-
-func humanTokens(n int64) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1e3)
-	}
-	return fmt.Sprintf("%d", n)
 }
 
 func cmdShow(args []string) error {
@@ -642,7 +634,7 @@ func cmdShow(args []string) error {
 		run.UnitID, run.RunID, run.Status, run.Phase, run.BaseSHA)
 	if run.TokensSpent > 0 {
 		fmt.Printf("usage: %s tokens, %s\n",
-			humanTokens(run.TokensSpent), render.ImputedLong(run.ImputedUSD, run.UnpricedTokens, run.TokensSpent))
+			render.Tokens(run.TokensSpent), render.ImputedLong(run.ImputedUSD, run.UnpricedTokens, run.TokensSpent))
 	}
 	nodes, _ := st.Nodes(run.RunID)
 	models, _ := st.ModelsByNode(run.RunID) // what each node actually ran on, from the ledger
@@ -876,7 +868,7 @@ func cmdMeasure() error {
 			if name == "" {
 				name = "(unknown)"
 			}
-			fmt.Printf("  %-28s %d req, %s tokens, %s\n", name, m.Requests, humanTokens(m.Tokens), measurePrice(m))
+			fmt.Printf("  %-28s %d req, %s tokens, %s\n", name, m.Requests, render.Tokens(m.Tokens), measurePrice(m))
 		}
 		fmt.Println()
 	}
@@ -920,7 +912,7 @@ func printFlagComparison(groups []store.MeasureGroup, name string) {
 			note = "  (insufficient — need ≥3 runs to compare meaningfully)"
 		}
 		fmt.Printf("  %-20s %d run(s): %s tokens, $%.2f imputed (mean)%s\n",
-			g.Label, g.Runs, humanTokens(int64(g.MeanTokens)), g.MeanUSD, note)
+			g.Label, g.Runs, render.Tokens(int64(g.MeanTokens)), g.MeanUSD, note)
 		if g.Label == "with "+name {
 			with = &groups[i]
 		}
@@ -1192,11 +1184,20 @@ func runCheck(dir, command string, timeout time.Duration) (out string, code int,
 	}
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
-			return string(b), ee.ExitCode(), took
+			return string(b), narrowExit(ee.ExitCode()), took
 		}
 		return err.Error(), 1, took
 	}
 	return string(b), 0, took
+}
+
+// narrowExit folds a Windows exit code back into its signed 32-bit meaning. A process that
+// dies abnormally there reports a negative NTSTATUS, and the raw value renders as its
+// unsigned wraparound: `npm test` with no package.json printed `exit 4294963238` instead of
+// -4058 — and that garbage was PERSISTED into the verdict evidence, which `batten show`
+// replays forever (#13).
+func narrowExit(code int) int {
+	return int(int32(code))
 }
 
 func lastLines(s string, n int) string {
@@ -1305,6 +1306,12 @@ func cmdMCP() error {
 }
 
 func cmdTUI() error {
+	// Bubble Tea with stdout on a pipe renders nothing and never exits: it emits 96 bytes of
+	// terminal setup, then waits forever for key events that cannot arrive (#46). Refusing up
+	// front turns a hang into a sentence.
+	if !isatty.IsTerminal(os.Stdout.Fd()) && !isatty.IsCygwinTerminal(os.Stdout.Fd()) {
+		return errors.New("batten tui needs an interactive terminal — try `batten runs` or `batten show <unit>`")
+	}
 	sp, st, err := load()
 	if err != nil {
 		return err
@@ -1426,7 +1433,7 @@ func cmdIngest(args []string) error {
 		fmt.Printf("%s: +0 requests — usage remains NOT MEASURED for this run\n", unit)
 	} else {
 		fmt.Printf("%s: +%d requests, %s tokens total, $%.2f imputed\n",
-			unit, added, humanTokens(r.TokensSpent), r.ImputedUSD)
+			unit, added, render.Tokens(r.TokensSpent), r.ImputedUSD)
 	}
 
 	// The fence is right — a run must not inherit the whole session's history — but it used
@@ -1435,7 +1442,7 @@ func cmdIngest(args []string) error {
 	// actually happened is that every row was parsed, priced, and then discarded.
 	if fenced.Requests > 0 {
 		fmt.Printf("  %d request(s) in this transcript predate the run and were NOT counted "+
-			"(%s tokens, $%.2f).\n", fenced.Requests, humanTokens(fenced.Tokens), fenced.ImputedUSD)
+			"(%s tokens, $%.2f).\n", fenced.Requests, render.Tokens(fenced.Tokens), fenced.ImputedUSD)
 		fmt.Printf("  They belong to the session, not to %s, which opened at %s.\n",
 			unit, time.Unix(r.StartedAt, 0).Format("15:04:05"))
 		if added == 0 {
@@ -1485,7 +1492,7 @@ func cmdBudget(args []string) error {
 				r.UnitID)
 		} else {
 			fmt.Printf("%s  %s tokens, %s\n",
-				r.UnitID, humanTokens(r.TokensSpent), render.ImputedLong(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent))
+				r.UnitID, render.Tokens(r.TokensSpent), render.ImputedLong(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent))
 		}
 
 		if !b.Set() {
@@ -1509,7 +1516,7 @@ func cmdBudget(args []string) error {
 				fmt.Printf("  %s %-12s NOT MEASURABLE — %s\n", mark, c.Kind, c.Reason)
 			case c.Kind == "tokens":
 				fmt.Printf("  %s %-12s %s / %s  %s\n", mark, c.Kind,
-					humanTokens(int64(c.Spent)), humanTokens(int64(c.Cap)), bar(c.Spent/c.Cap))
+					render.Tokens(int64(c.Spent)), render.Tokens(int64(c.Cap)), bar(c.Spent/c.Cap))
 			case c.Kind == "imputed_usd":
 				fmt.Printf("  %s %-12s %s / $%.2f  %s\n", mark, c.Kind,
 					render.ImputedShort(c.Spent, c.UnpricedTokens, c.TotalTokens), c.Cap, bar(c.Spent/c.Cap))
@@ -2151,9 +2158,20 @@ func cmdInit(args []string) error {
 		case "--scan-json":
 			scanJSON = true
 		case "--from":
-			if i+1 < len(args) {
-				from = args[i+1]
+			if i+1 >= len(args) {
+				return errors.New("init: --from needs a path")
 			}
+			from, i = args[i+1], i+1
+		case "--help", "-h":
+			// This is the only command that both writes a file and had no default arm:
+			// `batten init --help` printed no usage, WROTE batten.yaml and exited 0 (#54).
+			fmt.Println("init: batten init [--from <doc>] [--scan-json]")
+			fmt.Println("  scans the repo and writes batten.yaml in report mode; refuses if one exists")
+			fmt.Println("  --from <doc>   record the prose workflow document as unit.plan")
+			fmt.Println("  --scan-json    print the scanned facts as JSON (what /batten-init consumes)")
+			return nil
+		default:
+			return fmt.Errorf("init: unknown flag %q", args[i])
 		}
 	}
 	cwd, _ := os.Getwd()
@@ -2161,6 +2179,16 @@ func cmdInit(args []string) error {
 	facts, err := scan.Scan(cwd)
 	if err != nil {
 		return err
+	}
+	// --from names the prose workflow document, so it must exist and it must be RECORDED.
+	// It used to be a pure stdout echo: the generated yaml was byte-identical with or
+	// without it, and a nonexistent path was accepted with exit 0 (#0). Setting UnitPlan
+	// both emits `unit.plan` in the yaml and rides along in --scan-json to /batten-init.
+	if from != "" {
+		if _, err := os.Stat(from); err != nil {
+			return fmt.Errorf("init: --from %s: %w", from, err)
+		}
+		facts.UnitPlan = filepath.ToSlash(from)
 	}
 
 	// --scan-json feeds the facts to /batten-init, which adds the judgment a heuristic can't:
@@ -2190,7 +2218,7 @@ func cmdInit(args []string) error {
 	fmt.Println("Next:")
 	fmt.Println("  1. fill the invariants (the TODOs) — the highest-value part of the file")
 	if from != "" {
-		fmt.Printf("  2. reconcile against your prose workflow: %s\n", from)
+		fmt.Printf("     (%s is recorded as unit.plan; the binary does not mine prose — /batten-init does)\n", from)
 	}
 	fmt.Println("  2. run: batten doctor")
 	fmt.Println("  3. flip enforcement: enforce when you trust the gates")

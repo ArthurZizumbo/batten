@@ -297,10 +297,15 @@ func (m *Model) render() string {
 		Render(m.renderDetail(contentW(rightW), contentH(bodyH)))
 	body := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	head := stTitle.Render("batten") +
-		stDim.Render(fmt.Sprintf("  %s · %d runs", m.spec.Project, len(m.runs)))
+	head := stTitle.Render("batten") + stDim.Render(headerLine(m.spec.Project, len(m.runs)))
 	help := stHelp.Render("j/k move · r refresh · q quit")
 	return lipgloss.JoinVertical(lipgloss.Left, head, body, help)
+}
+
+// headerLine is the title bar's right half. plural(), because the same package already owned
+// the helper while this line printed '1 runs' (#48).
+func headerLine(project string, runs int) string {
+	return fmt.Sprintf("  %s · %s", project, plural(runs, "run"))
 }
 
 // ---------- left pane: the run list ----------
@@ -359,9 +364,9 @@ func (m *Model) bindingLine(r store.Run) string {
 func totals(r store.Run) string {
 	usd := render.ImputedShort(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent)
 	if usd == "not priced" {
-		return fmt.Sprintf("%s · imputed not priced (no published rate)", humanTokens(r.TokensSpent))
+		return fmt.Sprintf("%s · imputed not priced (no published rate)", render.Tokens(r.TokensSpent))
 	}
-	return fmt.Sprintf("%s · %s imputed", humanTokens(r.TokensSpent), usd)
+	return fmt.Sprintf("%s · %s imputed", render.Tokens(r.TokensSpent), usd)
 }
 
 // ---------- right pane: the selected run ----------
@@ -486,7 +491,7 @@ func (m *Model) detailTree(d *detail) []string {
 			// Per-node spend comes from the usage ledger, not from a guess. A node with no
 			// usage row gets no number at all — an un-ingested agent is not a free agent.
 			if u, ok := d.usage[k.NodeID]; ok {
-				line += stDim.Render(fmt.Sprintf("  %s · $%.2f", humanTokens(u.Tokens()), u.ImputedUSD))
+				line += stDim.Render(fmt.Sprintf("  %s · $%.2f", render.Tokens(u.Tokens()), u.ImputedUSD))
 			}
 			out = append(out, line)
 			for _, x := range extra[k.NodeID] {
@@ -620,7 +625,7 @@ func ceilingLine(c store.Ceiling) string {
 func amounts(c store.Ceiling) string {
 	switch c.Kind {
 	case "tokens":
-		return humanTokens(int64(c.Spent)) + " / " + humanTokens(int64(c.Cap))
+		return render.Tokens(int64(c.Spent)) + " / " + render.Tokens(int64(c.Cap))
 	case "imputed_usd":
 		return fmt.Sprintf("%s / $%.2f imputed", render.ImputedShort(c.Spent, c.UnpricedTokens, c.TotalTokens), c.Cap)
 	case "quota_pct":
@@ -688,19 +693,6 @@ func bar(frac float64, w int) string {
 }
 
 // ---------- small helpers ----------
-
-// humanTokens keeps the list readable without lying about scale: 1.2M, 812k, 47.
-func humanTokens(n int64) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 10_000:
-		return fmt.Sprintf("%.0fk", float64(n)/1e3)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1e3)
-	}
-	return strconv.FormatInt(n, 10)
-}
 
 // wrapIndent wraps on visible cell width (lipgloss.Wrap, not len()) and indents the
 // continuation lines so a long piece of evidence still reads as one list item.

@@ -107,11 +107,48 @@ func TestStatusColoursDistinguishOutcomes(t *testing.T) {
 	}
 }
 
-func TestHumanTokensStaysReadable(t *testing.T) {
-	cases := []struct{ in int64 }{{0}, {999}, {1000}, {1_500_000}, {2_000_000_000}}
-	for _, c := range cases {
-		if got := humanTokens(c.in); got == "" {
-			t.Errorf("humanTokens(%d) returned empty", c.in)
+// TestCardsInAColumnNeverOverlap is finding #45: the phase card spans y 0..120 and its first
+// subagent started at y=60 — an intersection of exactly half a card, on the surface that
+// exists to be looked at. The doc comment says subagents "stack below" the phase; hold it to
+// that for every pair of cards sharing a column.
+func TestCardsInAColumnNeverOverlap(t *testing.T) {
+	c := Render(fixture())
+	texts := []Node{}
+	for _, n := range c.Nodes {
+		if n.Type == "text" {
+			texts = append(texts, n)
+		}
+	}
+	for i, a := range texts {
+		for _, b := range texts[i+1:] {
+			if a.X != b.X {
+				continue
+			}
+			if a.Y < b.Y+b.Height && b.Y < a.Y+a.Height {
+				t.Errorf("cards %s (y %d..%d) and %s (y %d..%d) overlap in the same column",
+					a.ID, a.Y, a.Y+a.Height, b.ID, b.Y, b.Y+b.Height)
+			}
+		}
+	}
+
+	// And the group box still encloses everything in its column: a fix that pushes the
+	// children down without growing the group leaves them poking out the bottom. The group
+	// and its cards share a column by construction (group X = card X - 30); cards in
+	// group-less columns (verdicts, header) are skipped.
+	groupByX := map[int]Node{}
+	for _, n := range c.Nodes {
+		if n.Type == "group" {
+			groupByX[n.X+30] = n
+		}
+	}
+	for _, n := range texts {
+		g, ok := groupByX[n.X]
+		if !ok {
+			continue
+		}
+		if n.Y+n.Height > g.Y+g.Height {
+			t.Errorf("card %s (bottom %d) escapes its group %s (bottom %d)",
+				n.ID, n.Y+n.Height, g.ID, g.Y+g.Height)
 		}
 	}
 }

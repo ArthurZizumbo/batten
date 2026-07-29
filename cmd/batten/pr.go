@@ -371,7 +371,7 @@ func writeCost(b *strings.Builder, run *store.Run, nodes []store.Node,
 	// The line the whole principle hangs on. A run nobody ingested a transcript for has NOT
 	// spent zero, and this table is exactly where a zero would be believed.
 	if run.TokensSpent > 0 {
-		fmt.Fprintf(b, "| tokens | %s across %d subagent(s) |\n", humanTokens(run.TokensSpent), subs)
+		fmt.Fprintf(b, "| tokens | %s across %d subagent(s) |\n", render.Tokens(run.TokensSpent), subs)
 		switch {
 		case run.ImputedUSD > 0 && run.UnpricedTokens > 0:
 			// Partially priced: the dollars for the unpriced share do not exist, so the
@@ -410,7 +410,7 @@ func writeCost(b *strings.Builder, run *store.Run, nodes []store.Node,
 			if name == "" {
 				name = n.AgentID
 			}
-			measured = append(measured, fmt.Sprintf("%s %s", name, humanTokens(totalTokens(u))))
+			measured = append(measured, fmt.Sprintf("%s %s", name, render.Tokens(totalTokens(u))))
 		}
 	}
 	if len(measured) > 0 {

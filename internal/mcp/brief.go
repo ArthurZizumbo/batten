@@ -36,6 +36,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ArthurZizumbo/batten/internal/render"
+
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -200,9 +202,9 @@ func tokenPhrase(tokens int64, usd float64) string {
 		return "usage NOT MEASURED"
 	}
 	if usd > 0 {
-		return fmt.Sprintf("%s tokens, $%.2f imputed", humanTokens(tokens), usd)
+		return fmt.Sprintf("%s tokens, $%.2f imputed", render.Tokens(tokens), usd)
 	}
-	return fmt.Sprintf("%s tokens, imputed cost not priced", humanTokens(tokens))
+	return fmt.Sprintf("%s tokens, imputed cost not priced", render.Tokens(tokens))
 }
 
 func verdictPhrase(v *verdictBrief) string {
@@ -210,16 +212,6 @@ func verdictPhrase(v *verdictBrief) string {
 		return "NO verdict (a commit would be denied)"
 	}
 	return fmt.Sprintf("verdict %s, %d evidence", v.Result, v.EvidenceCount)
-}
-
-func humanTokens(n int64) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1_000)
-	}
-	return fmt.Sprintf("%d", n)
 }
 
 func orDash(s string) string {

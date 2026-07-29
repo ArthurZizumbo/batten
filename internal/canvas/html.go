@@ -157,9 +157,9 @@ func headerMeta(in HTMLInput) string {
 	switch {
 	case in.Run.TokensSpent > 0 && in.Run.ImputedUSD > 0:
 		parts = append(parts, fmt.Sprintf("<b>%s</b> tokens · <b>%s</b> imputed <span class=q>(never billed)</span>",
-			humanTokens(in.Run.TokensSpent), render.ImputedShort(in.Run.ImputedUSD, in.Run.UnpricedTokens, in.Run.TokensSpent)))
+			render.Tokens(in.Run.TokensSpent), render.ImputedShort(in.Run.ImputedUSD, in.Run.UnpricedTokens, in.Run.TokensSpent)))
 	case in.Run.TokensSpent > 0:
-		parts = append(parts, fmt.Sprintf("<b>%s</b> tokens · imputed <b>not priced</b>", humanTokens(in.Run.TokensSpent)))
+		parts = append(parts, fmt.Sprintf("<b>%s</b> tokens · imputed <b>not priced</b>", render.Tokens(in.Run.TokensSpent)))
 	default:
 		parts = append(parts, `usage <b>NOT MEASURED</b> <span class=q>(not zero — unknown)</span>`)
 	}
@@ -231,9 +231,9 @@ func detailText(d Detail) string {
 
 	switch {
 	case d.Tokens > 0 && d.Priced:
-		fmt.Fprintf(&b, "tokens: %s · $%.3f imputed\n", humanTokens(d.Tokens), d.ImputedUSD)
+		fmt.Fprintf(&b, "tokens: %s · $%.3f imputed\n", render.Tokens(d.Tokens), d.ImputedUSD)
 	case d.Tokens > 0:
-		fmt.Fprintf(&b, "tokens: %s · not priced\n", humanTokens(d.Tokens))
+		fmt.Fprintf(&b, "tokens: %s · not priced\n", render.Tokens(d.Tokens))
 	default:
 		// The rule that matters most on the surface people look at.
 		b.WriteString("usage: NOT MEASURED (not zero — unknown)\n")

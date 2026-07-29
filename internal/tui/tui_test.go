@@ -157,9 +157,9 @@ func TestAnUnmeasurableCeilingSaysWhyRatherThanShowingZero(t *testing.T) {
 		t.Errorf("an unmeasurable ceiling must never render a figure: %q", line)
 	}
 
-	// A measurable one does show its numbers.
+	// A measurable one does show its numbers (rendered by the shared internal/render form).
 	ok := strip(ceilingLine(store.Ceiling{Kind: "tokens", Cap: 1_000_000, Spent: 250_000, Available: true}))
-	if !strings.Contains(ok, "250k") || !strings.Contains(ok, "1.0M") {
+	if !strings.Contains(ok, "250.0k") || !strings.Contains(ok, "1.0M") {
 		t.Errorf("a measurable ceiling must show spent and cap: %q", ok)
 	}
 }
@@ -287,19 +287,21 @@ func TestAnEmptyProjectRendersSomethingUseful(t *testing.T) {
 	}
 }
 
-func TestFormattingHelpers(t *testing.T) {
-	// The precision drops deliberately as the number grows: a decimal on 250k would be false
-	// precision on a count that moves by thousands between refreshes.
-	for _, c := range []struct {
-		in   int64
-		want string
-	}{
-		{0, "0"}, {999, "999"}, {1000, "1.0k"}, {9_999, "10.0k"}, {250_000, "250k"}, {1_400_000, "1.4M"},
-	} {
-		if got := humanTokens(c.in); got != c.want {
-			t.Errorf("humanTokens(%d) = %q, want %q", c.in, got, c.want)
-		}
+// TestHeaderCountsItsRunsGrammatically is finding #48: the title bar read '1 runs' while the
+// same package already shipped the plural() helper that knows better.
+func TestHeaderCountsItsRunsGrammatically(t *testing.T) {
+	if got := headerLine("p", 1); !strings.Contains(got, "1 run") || strings.Contains(got, "1 runs") {
+		t.Errorf("headerLine(p, 1) = %q, want '1 run'", got)
 	}
+	if got := headerLine("p", 2); !strings.Contains(got, "2 runs") {
+		t.Errorf("headerLine(p, 2) = %q, want '2 runs'", got)
+	}
+}
+
+func TestFormattingHelpers(t *testing.T) {
+	// Token rendering moved to internal/render — this package's private copy had drifted to
+	// its own precision rules, which is exactly how one surface came to disagree with the
+	// next about the same number (#36). render_test owns the canonical cases now.
 	// 12 characters, git's unambiguous-enough length — not the 7 a commit line shows.
 	if got := shortSHA("abc1234def5678901"); got != "abc1234def56" {
 		t.Errorf("shortSHA = %q, want abc1234def56", got)

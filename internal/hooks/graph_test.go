@@ -372,6 +372,37 @@ func TestSessionStartTellsYouWhatTheGateWillDo(t *testing.T) {
 	}
 }
 
+// TestSessionBriefRendersTokensAtTheirOwnScale is finding #36: the brief hand-rolled `%.1fM`
+// while every other surface used the shared renderer, so a measured 42,600 tokens appeared
+// as "0.0M" — an apparent zero, in the one line the agent reads before deciding whether
+// there is budget left to work with.
+func TestSessionBriefRendersTokensAtTheirOwnScale(t *testing.T) {
+	h, _ := guardFixture(t)
+	r, _ := h.Store.EnsureRun("p", "TASK-1", "sess-a")
+	_ = h.Store.SetPhase(r.RunID, "build")
+	if _, err := h.Store.RecordUsage([]store.Usage{{
+		RequestID: "req-1", RunID: r.RunID, Model: "m", TS: r.StartedAt,
+		InputTokens: 40_000, OutputTokens: 2_600, ImputedUSD: 0.20,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := h.sessionStart(hookInput("SessionStart", "sess-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.HookSpecific == nil {
+		t.Fatal("an open run must produce a banner")
+	}
+	ctx := out.HookSpecific.AdditionalContext
+	if !strings.Contains(ctx, "42.6k") {
+		t.Errorf("42,600 measured tokens must read 42.6k, not a rounded megatoken zero:\n%s", ctx)
+	}
+	if strings.Contains(ctx, "0.0M") {
+		t.Errorf("the brief renders a measured count as an apparent zero:\n%s", ctx)
+	}
+}
+
 // TestSessionStartSaysWhenTheGateIsOpenByOverride is finding #10: after `batten override`, the
 // banner kept telling the agent "the close gate will deny a commit" — the literal opposite of
 // what the hook, which checks the override FIRST, was about to do. The agent plans around this

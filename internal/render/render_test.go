@@ -32,6 +32,28 @@ func TestImputedRendersPartialPricingAsAFloor(t *testing.T) {
 	}
 }
 
+// TestTokens is the canonical case table. Five packages carried a private copy of this
+// renderer and a sixth hand-rolled `%.1fM` — which is how a measured 42,600 tokens became
+// "0.0M" in the session brief while `batten runs` printed 42.6k from the same row (#36).
+func TestTokens(t *testing.T) {
+	cases := []struct {
+		in   int64
+		want string
+	}{
+		{0, "0"},
+		{999, "999"},
+		{1_000, "1.0k"},
+		{1_500, "1.5k"},
+		{42_600, "42.6k"},
+		{1_400_000, "1.4M"},
+	}
+	for _, c := range cases {
+		if got := Tokens(c.in); got != c.want {
+			t.Errorf("Tokens(%d) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestUnpricedShare(t *testing.T) {
 	cases := []struct {
 		unpriced, total int64

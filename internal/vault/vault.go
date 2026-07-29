@@ -226,7 +226,7 @@ func (w *Writer) renderBody(b *strings.Builder, r *store.Run, nodes []store.Node
 	switch {
 	case r.TokensSpent > 0 && r.ImputedUSD > 0:
 		fmt.Fprintf(b, "**%s tokens** · **%s imputed** (what this would have cost on the API; never billed)\n\n",
-			humanTokens(r.TokensSpent), render.ImputedShort(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent))
+			render.Tokens(r.TokensSpent), render.ImputedShort(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent))
 		if r.UnpricedTokens > 0 {
 			fmt.Fprintf(b, "The imputed figure is a **floor, not a total**: %d%% of the tokens are on "+
 				"models with no published rate.\n\n", render.UnpricedShare(r.UnpricedTokens, r.TokensSpent))
@@ -236,7 +236,7 @@ func (w *Writer) renderBody(b *strings.Builder, r *store.Run, nodes []store.Node
 		// count and say the price is unknown — never print "$0.00", which would price the
 		// unpriceable as free. Same rule as the per-node "not priced" cell.
 		fmt.Fprintf(b, "**%s tokens** · imputed cost **not priced** (no API rate for this run's model)\n\n",
-			humanTokens(r.TokensSpent))
+			render.Tokens(r.TokensSpent))
 	default:
 		b.WriteString("Usage **not measured** for this run (no transcript ingested). Not zero — unknown.\n\n")
 	}
@@ -522,7 +522,7 @@ func tokensCell(usage map[string]store.Usage, nodeID string) string {
 	if !ok {
 		return "not measured"
 	}
-	return humanTokens(u.Tokens())
+	return render.Tokens(u.Tokens())
 }
 
 func imputedCell(usage map[string]store.Usage, nodeID string) string {
@@ -534,16 +534,6 @@ func imputedCell(usage map[string]store.Usage, nodeID string) string {
 		return "not priced"
 	}
 	return fmt.Sprintf("$%.2f", u.ImputedUSD)
-}
-
-func humanTokens(n int64) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1e3)
-	}
-	return strconv.FormatInt(n, 10)
 }
 
 func shortSHA(s string) string {
