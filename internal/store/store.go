@@ -1358,6 +1358,7 @@ const (
 	RuleWriteSet    = "write_set"
 	RuleDegraded    = "degraded"   // batten could not run at all and said so
 	RuleUnattended  = "unattended" // a rule of the unsupervised run, now a mechanism
+	RuleBashWrite   = "bash_write" // a shell command writing a file it does not own (advisory)
 )
 
 // Event is one row of the replay log: what arrived, and what batten decided about it.

@@ -74,6 +74,8 @@ func main() {
 		err = cmdWorktree(os.Args[2:])
 	case "unattended":
 		err = cmdUnattended(os.Args[2:])
+	case "scan-diff":
+		err = cmdScanDiff(os.Args[2:])
 	case "iterate":
 		err = cmdIterate(os.Args[2:])
 	case "mcp":
@@ -129,6 +131,7 @@ func printUsage() {
   batten worktree <unit> [--merge]   one tree per unit; the merge back is gated like a commit
   batten unattended <unit> [--off]   nobody is watching: 4 rules become denials (/batten-night)
   batten iterate <unit>              count one fix->re-verify round; refuses past max_iterations
+  batten scan-diff <unit> [--strict] the real git diff vs the declared write-sets
   batten demo [--keep]               the whole flow on a throwaway repo; touches nothing of yours
   batten pr <unit> [--out p]         a PR body from the run record: Mermaid DAG, evidence, cost
   batten recover <unit>              re-anchor a run whose base moved (rebase, amend, pull)
@@ -1622,6 +1625,20 @@ func checkSpecOnly(d *dx, sp *spec.Spec) {
 		report("graph", sp.Capabilities.Graph.Provider, have(sp.Capabilities.Graph.Provider))
 		if sp.Capabilities.Graph.Lessons {
 			fmt.Println("  ⚠ graph.lessons is on; it overlaps engram's job. Prefer lessons: false")
+		}
+		// Declaration crossed with reality (plan §5.3 step 2). `query_before_read: true` is an
+		// instruction batten now injects into the agent's orientation — and an instruction to
+		// consult a tool that is not installed is worse than no instruction: the agent either
+		// wastes a turn discovering it, or says it consulted something it could not.
+		if sp.Capabilities.Graph.QueryBeforeRead {
+			if have(sp.Capabilities.Graph.Provider) {
+				fmt.Println("  ✓ query_before_read: agents are told to ask the graph before reading files")
+			} else {
+				d.warn("query_before_read is true and %s is NOT on PATH. Every fanned-out agent will "+
+					"be told to consult a graph it cannot reach.\n"+
+					"    Either install it, or set query_before_read: false so the instruction stops "+
+					"promising something that is not there.", sp.Capabilities.Graph.Provider)
+			}
 		}
 		graphStaleness(sp) // a stale code graph gives wrong answers silently; warn loudly
 		// (graphify dropped its --obsidian export in 0.9.x; the visual graph is now

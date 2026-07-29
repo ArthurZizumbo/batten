@@ -82,6 +82,33 @@ own custom agent, and using it means the DAG, the canvas and the hook matchers a
 agent's name instead of `general-purpose` seven times over. If no `agent:` is declared, use a
 general-purpose subagent.
 
+### Orientation, before a single file is read
+
+If `capabilities.graph.query_before_read` is true — or the phase declares `graph_query: true` —
+every agent's prompt carries this, in this order:
+
+1. **`capabilities.graph.provider`** (graphify): *what the code IS.* `graphify affected "<the thing
+   this agent owns>"` and `graphify god-nodes --json`. Ask it before opening a file.
+2. **`capabilities.memory.provider`** (engram): *what we DECIDED.* `mem_search` for this area — the
+   constraint somebody already hit and wrote down.
+3. **grep** — only as the fallback. It is the most expensive of the three and it answers the other
+   two questions badly.
+
+The order is not decoration: this is the phase that WRITES code, and until now it was the only one
+that consulted nothing. `/batten-plan` asks both memories, `/batten-verify` asks one,
+`/batten-close` writes to one. The fan-out went straight to reading files.
+
+**And the part that makes it more than a suggestion:** if neither memory answered — not installed,
+empty, timed out — the agent must **say so explicitly in its return**. An agent told to consult two
+tools will report having consulted them whether or not they answered, and that is the single most
+likely way this instruction fails. An honest *"graphify was not available, I grepped"* is worth more
+than a claimed consultation, because the claimed one poisons every judgement downstream.
+
+`batten doctor` checks the other half: `query_before_read: true` with graphify not on PATH is a
+warning, because an instruction to consult a tool that is not installed is worse than no instruction.
+
+### What each prompt must carry
+
 Each agent's prompt must carry, and carry *completely*:
 
 - **Its domain's `rules` file** — it reads that FIRST, before writing anything.
@@ -136,6 +163,25 @@ earlier — it makes it finish wrong.
 
 When the agents return:
 
+**First, contrast what happened with what was declared:**
+
+```bash
+batten scan-diff <unit>
+```
+
+It asks git what changed and the database who claimed what. This is the check that does not depend
+on reading shell commands: a code generator, a Makefile target, a python script or any third-party
+tool leaves writes behind that no command parser can see, and this one sees them anyway because it
+never looks at commands.
+
+Two things to read in its output:
+
+- **Files changed that nobody claimed.** batten will not guess whether that was you integrating or
+  an agent going around the fence — look at each one. If an agent wrote outside its write-set, that
+  is the planning bug from §5 arriving late.
+- **Over-declaration**: paths claimed and never touched. Report the number. A plan that fences three
+  times what it needs is fencing badly, and nobody has this measurement.
+
 - Resolve the cross-domain seams — the shared schemas, the API types the frontend consumes, the
   function signatures two domains both call. These are where independent agents disagree, and they
   disagree *plausibly*, so look rather than assume.
@@ -149,11 +195,15 @@ When the agents return:
 ## 8. Report
 
 - Per agent: its write-set, its check results, red or green.
+- **Per agent: which memory it actually consulted, and which one was NOT available.** Not "consulted
+  the graph" — either the query and what it returned, or the plain statement that it could not.
 - What each agent reused instead of writing fresh.
 - Cross-domain conflicts found at integration, and how they were resolved.
 - Any resource contention, and how it was queued.
 - **Any write-set collision, and the planning bug behind it.** Do not quietly fix and move on — a
   collision means the plan was wrong, and the plan is a durable artifact that will be wrong again.
+- **`batten scan-diff`'s two numbers**: files changed that nobody claimed, and how much the plan
+  over-declared.
 - `git status --short`.
 
 Do not commit. The gate phase runs next, and it is what decides whether this is finished.

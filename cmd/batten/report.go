@@ -202,7 +202,7 @@ func reportImpact(b *strings.Builder, st *store.Store, project string, cutoff in
 		return
 	}
 
-	byRule := map[string]int{}
+	byRule, byRuleAdvised := map[string]int{}, map[string]int{}
 	var denied, advised, whileReporting int
 	for _, c := range counts {
 		if c.Enforcement == "report" && c.Decision != store.DecisionAllow {
@@ -214,6 +214,7 @@ func reportImpact(b *strings.Builder, st *store.Store, project string, cutoff in
 			byRule[c.Rule] += c.N
 		case store.DecisionAdvise:
 			advised += c.N
+			byRuleAdvised[c.Rule] += c.N
 		}
 	}
 

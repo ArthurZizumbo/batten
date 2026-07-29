@@ -339,6 +339,13 @@ func (h *Handler) preToolUse(in Input) (*Output, error) {
 		if out := h.destructionGuard(in, bi.Command); out != nil {
 			return withRule(out, store.RuleUnattended), nil
 		}
+		// The write-set guard's other half (plan §5.1): `Edit` on a claimed file is denied and the
+		// same write through `sed -i` used to go through in silence. Advisory for one cycle — see
+		// bashwrite.go. Checked before the verdict gate so a command that is both a commit and a
+		// trespass reports the trespass, which is the more specific fact.
+		if out := h.bashWriteGuard(in, bi.Command); out != nil {
+			return out, nil
+		}
 		// Tagged here rather than at each construction site: this is the one place that knows
 		// which wedge is answering, and the budget branch inside re-tags itself.
 		out, err := h.verdictGate(in, bi.Command)
@@ -778,33 +785,11 @@ func firstPhaseID(s *spec.Spec) string {
 // non-owner is denied — both WITHIN a run (one agent vs another) and ACROSS open runs
 // (session B editing a file session A's agent claimed).
 func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
-	if path == "" {
+	rel, ok := h.repoRel(in, path)
+	if !ok {
 		return nil, nil
 	}
-	rel, err := filepath.Rel(h.Spec.Root, path)
-	if err != nil {
-		return nil, nil
-	}
-	rel = filepath.ToSlash(rel)
-	if strings.HasPrefix(rel, "../") {
-		return nil, nil // outside the repo
-	}
-
-	// Resolve which run and node this write belongs to. A fanned-out agent has an agent_id;
-	// the main loop of a bound session has none but still belongs to a run.
-	myRun, myNode := "", ""
-	if in.AgentID != "" {
-		if node, err := h.Store.NodeByAgent(in.AgentID); err == nil {
-			myRun, myNode = node.RunID, node.NodeID
-		}
-	}
-	if myRun == "" {
-		if u := h.activeUnit(in); u != "" {
-			if r, err := h.Store.ActiveRun(h.Spec.Project, u); err == nil {
-				myRun = r.RunID
-			}
-		}
-	}
+	myRun, myNode := h.attribute(in)
 
 	// Within-run collision (agent vs agent).
 	if myRun != "" {
@@ -875,6 +860,52 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 		}), nil
 	}
 	return nil, nil
+}
+
+// repoRel turns a path from a tool payload into the repo-relative, slash-normalised form the
+// write-set is keyed by, or reports that it is not this repository's business.
+//
+// The `cwd` fallback is plan §5.1 point 2, and it is what makes the Bash path work at all: `Edit`
+// hands over an absolute path, while a shell command says `sed -i s/a/b/ handler.go` and means
+// "relative to wherever this call is running". Resolving that against the repo root instead of the
+// payload's cwd would silently name the wrong file, and a guard that warns about the wrong file is
+// worse than one that says nothing.
+func (h *Handler) repoRel(in Input, path string) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(path) {
+		base := in.CWD
+		if base == "" {
+			base = h.Spec.Root
+		}
+		path = filepath.Join(base, path)
+	}
+	rel, err := filepath.Rel(h.Spec.Root, path)
+	if err != nil {
+		return "", false
+	}
+	rel = filepath.ToSlash(rel)
+	if strings.HasPrefix(rel, "../") || rel == ".." {
+		return "", false // outside the repo
+	}
+	return rel, true
+}
+
+// attribute resolves which run and node a tool call belongs to. A fanned-out agent has an
+// agent_id; the main loop of a bound session has none but still belongs to a run.
+func (h *Handler) attribute(in Input) (myRun, myNode string) {
+	if in.AgentID != "" {
+		if node, err := h.Store.NodeByAgent(in.AgentID); err == nil {
+			return node.RunID, node.NodeID
+		}
+	}
+	if u := h.activeUnit(in); u != "" {
+		if r, err := h.Store.ActiveRun(h.Spec.Project, u); err == nil {
+			return r.RunID, ""
+		}
+	}
+	return "", ""
 }
 
 // inADifferentTreeFrom reports whether THIS session is standing in a different working tree from
@@ -1039,6 +1070,7 @@ func phaseBriefing(sp *spec.Spec, st *store.Store, run *store.Run) string {
 		fmt.Fprintf(&b, "- reads: %s\n", strings.Join(p.Reads, ", "))
 	}
 	b.WriteString(DiffScope(sp, st, p, run))
+	b.WriteString(OrientBeforeReading(sp, p))
 	if p.Fanout {
 		var names []string
 		for _, n := range sortedDomains(sp) {
@@ -1130,6 +1162,52 @@ func DiffScope(sp *spec.Spec, st *store.Store, ph *spec.Phase, run *store.Run) s
 	}
 	return fmt.Sprintf("- scope: `%s..` — this phase operates ONLY on the unit's diff: %d file(s). "+
 		"%s%s\n", short, len(files), strings.Join(shown, ", "), tail)
+}
+
+// OrientBeforeReading is the chain `capabilities.graph.query_before_read` and `phases[].graph_query`
+// have been promising since the beginning, with nobody reading either field.
+//
+// The gap it closes: `/batten-plan` consults graphify AND engram, `/batten-verify` consults engram,
+// `/batten-close` writes to engram — and `/batten-build`, the ONE phase that writes code, consulted
+// nothing. It went straight to reading files, which is the most expensive of the three ways to find
+// out what the code is.
+//
+// The order is not decoration. graphify answers *what the code IS*, engram answers *what we
+// DECIDED*, and grep answers both badly for the price of a full read. Cheapest first.
+//
+// THE HONESTY CLAUSE is the part that makes this more than a suggestion. An agent told to consult
+// two tools will report having consulted them whether or not they answered — that is the single
+// most likely failure of any instruction of this shape. So the instruction demands the opposite: if
+// neither memory was reachable, SAY SO in the return. Principle #3 (fail open, but never in
+// silence) applied to orientation instead of to a gate.
+func OrientBeforeReading(sp *spec.Spec, p *spec.Phase) string {
+	if p == nil {
+		return ""
+	}
+	// Either switch turns it on: the capability is repo-wide, the phase flag is per-phase.
+	if !p.GraphQuery && !sp.Capabilities.Graph.QueryBeforeRead {
+		return ""
+	}
+	var sources []string
+	if sp.Capabilities.GraphEnabled() {
+		sources = append(sources, fmt.Sprintf("**%s** (what the code IS — ask it before opening files)",
+			sp.Capabilities.Graph.Provider))
+	}
+	if m := sp.Capabilities.Memory.Provider; m != "" && m != "none" {
+		sources = append(sources, fmt.Sprintf("**%s** (what we DECIDED — search it for this area)", m))
+	}
+	if len(sources) == 0 {
+		// Declared and nothing to declare it about. Said rather than skipped: a phase asking for a
+		// consultation with no provider configured is a spec that contradicts itself, and `doctor`
+		// says the same thing from the other side.
+		return "- ⚠ this phase asks you to consult the code graph before reading, and no graph or " +
+			"memory provider is configured. There is nothing to consult.\n"
+	}
+	return fmt.Sprintf("- orient BEFORE you read, in this order: %s, and grep only as the fallback "+
+		"— it is the most expensive of the three.\n"+
+		"  If neither answered, **say so explicitly in your return**. Do not imply a consultation "+
+		"that did not happen: a wrong claim here is worse than an honest grep.\n",
+		strings.Join(sources, ", then "))
 }
 
 func sortedDomains(sp *spec.Spec) []string {

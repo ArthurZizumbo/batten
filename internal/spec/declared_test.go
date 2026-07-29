@@ -48,10 +48,6 @@ import (
 // This list is DEBT, not a parking lot. It should get shorter. A new entry is a decision to
 // publish a promise batten does not keep, and it should be made on purpose and in a review.
 var declaredAsFuture = map[string]string{
-	"GraphCap.QueryBeforeRead": "declares the agent should consult the code graph before reading " +
-		"files; nothing enforces or even checks it (plan §5.3, §8)",
-	"Phase.GraphQuery": "same promise at phase level; the fan-out prompt never mentions it " +
-		"(plan §5.3, §8)",
 	"Models.Tiers": "the schema says it 'routes subagents and verifies it from the ledger'. It " +
 		"routes nothing: batten does not spawn subagents, so the routing it promises would have " +
 		"to be advice to the orchestrator, which it never emits (plan §8)",

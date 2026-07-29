@@ -600,6 +600,34 @@ func TestEnteringAPhaseChainsItToThePrevious(t *testing.T) {
 	}
 }
 
+// TestDoctorCrossesQueryBeforeReadWithReality is plan §5.3 step 2.
+//
+// `query_before_read: true` is now an instruction batten injects into every fanned-out agent's
+// orientation. An instruction to consult a tool that is not installed is WORSE than no instruction:
+// the agent either burns a turn discovering that, or reports having consulted something it could
+// not reach. Same shape as every other check here — declaration crossed with reality.
+func TestDoctorCrossesQueryBeforeReadWithReality(t *testing.T) {
+	dir := writeSpec(t, "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n"+
+		// A provider name that is certainly not on anybody's PATH, so the test does not depend on
+		// whether graphify happens to be installed on the machine running it.
+		"capabilities:\n  graph: { provider: graphify-definitely-not-installed, query_before_read: true }\n"+
+		"phases:\n  - id: build\n  - id: close\n    requires_verdict: ok\n")
+	t.Setenv("BATTEN_DB", filepath.Join(t.TempDir(), "batten.db"))
+
+	out := captureStdout(t, func() { inDir(t, dir, func() { _ = cmdDoctor() }) })
+
+	if !strings.Contains(out, "query_before_read") {
+		t.Fatalf("doctor said nothing about query_before_read with the provider absent:\n%s", out)
+	}
+	if !strings.Contains(out, "NOT on PATH") {
+		t.Errorf("the warning does not say the provider is missing:\n%s", out)
+	}
+	// And it must offer the honest alternative, not just complain.
+	if !strings.Contains(out, "query_before_read: false") {
+		t.Errorf("the warning does not offer turning the promise off:\n%s", out)
+	}
+}
+
 func TestCommandHeadsFindsEveryExecutableInACompoundCommand(t *testing.T) {
 	cases := []struct {
 		in   string
