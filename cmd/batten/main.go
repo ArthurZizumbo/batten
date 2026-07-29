@@ -810,7 +810,7 @@ func gateReadyToClose(sp *spec.Spec, st *store.Store, run *store.Run) error {
 	// They diverged, and `batten close --status ok` accepted an agent-asserted verdict that the
 	// commit hook had denied moments earlier — a gate you can walk around is not a gate.
 	if g, ok := sp.Gates[closing.Gate]; ok && len(g.Checks) > 0 {
-		if reason := hooks.GateShortfall(st, run.RunID, closing.Gate, closing.RequiresVerdict); reason != "" {
+		if reason := hooks.GateShortfallAt(st, sp.Root, run.RunID, closing.Gate, closing.RequiresVerdict); reason != "" {
 			return fmt.Errorf("cannot close %s as ok: %s\n"+
 				"Use --status failed to close a run that went wrong", run.UnitID, reason)
 		}
@@ -906,6 +906,9 @@ func cmdCheck(args []string) error {
 	v := store.Verdict{
 		RunID: run.RunID, Gate: gateName, CheckID: unit + "-" + gateName + "-batten",
 		Result: result, Evidence: evidence, Why: why, SafeNextStep: next, Source: "batten",
+		// Fingerprint WHAT the checks just passed against. Without it "batten-verified" survives
+		// a formatter running a second later and starts describing a tree that no longer exists.
+		TargetDigest: store.TargetDigest(sp.Root),
 	}
 	if err := st.SaveVerdict(v, gate.EvidenceRequired()); err != nil {
 		return err

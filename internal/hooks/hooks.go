@@ -364,10 +364,19 @@ var commitRe = regexp.MustCompile(`(^|[;&|]|\s)git(\.exe)?\s+((-{1,2}[^\s=]+(=[^
 // newest row — so `batten check` on an empty diff closed a unit with nothing having reviewed
 // anything at all.
 func GateShortfall(st *store.Store, runID, gate, requires string) string {
+	return GateShortfallAt(st, "", runID, gate, requires)
+}
+
+// GateShortfallAt is GateShortfall with the repo root, which lets it also check that the tree
+// the checks passed against is still the tree being committed.
+func GateShortfallAt(st *store.Store, root, runID, gate, requires string) string {
 	bv, err := st.LatestVerdictBySource(runID, gate, "batten")
 	if err != nil || bv.Result != "ok" {
 		return "has no batten-verified pass. The gate's checks must be RUN, not asserted.\n" +
 			"Run: batten check " + shortUnit(st, runID)
+	}
+	if s := staleTarget(root, bv, shortUnit(st, runID)); s != "" {
+		return s
 	}
 	av, err := st.LatestVerdictNotBySource(runID, gate, "batten")
 	switch {
@@ -382,6 +391,36 @@ func GateShortfall(st *store.Store, runID, gate, requires string) string {
 			av.Result, requires, av.Why, av.SafeNextStep)
 	}
 	return ""
+}
+
+// staleTarget reports that the working tree drifted since the checks ran, or "" when it did not
+// — or when the question cannot be answered here.
+//
+// This is the half of "verified" that was missing. `batten check` proves the declared checks
+// passed; it proved it about a tree, and between then and the commit a formatter, a build
+// script, a file watcher or the agent itself can change that tree. The verdict keeps saying
+// batten-verified about a state that no longer exists.
+//
+// It reports rather than freezes. batten does not own the index and taking it hostage between
+// phases would break every other tool the developer runs. And it degrades honestly: an empty
+// digest means "not measurable here" — a repo that is not a git repo, which is a real shape
+// batten has been field-tested against — and a comparison against "not measurable" would be a
+// denial invented out of an absence.
+func staleTarget(root string, bv *store.Verdict, unit string) string {
+	if root == "" || bv.TargetDigest == "" {
+		return ""
+	}
+	now := store.TargetDigest(root)
+	if now == "" || now == bv.TargetDigest {
+		return ""
+	}
+	// Named, not generic, and carrying its own way out. An error the agent loop cannot act on
+	// sends it hunting; this one says what happened and exactly what clears it.
+	return "has a STALE TARGET: the working tree changed after `batten check` ran, so the pass " +
+		"batten recorded describes a state that no longer exists.\n" +
+		"Something edited the tree between the check and this commit — a formatter, a build " +
+		"step, a file watcher, or the agent itself.\n" +
+		"Re-verify against what you are actually committing: batten check " + unit
 }
 
 // shortUnit resolves a run back to its unit for a message. Falls back to the run id, which is
@@ -528,7 +567,7 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	// produced by running those checks. This is what closes the "I typed 'tests pass' without
 	// running them" hole — the mechanical part of the gate becomes true by construction.
 	if g, ok := h.Spec.Gates[gateName]; ok && len(g.Checks) > 0 {
-		if reason := GateShortfall(h.Store, run.RunID, gateName, closing.RequiresVerdict); reason != "" {
+		if reason := GateShortfallAt(h.Store, h.Spec.Root, run.RunID, gateName, closing.RequiresVerdict); reason != "" {
 			return h.gate("PreToolUse", fmt.Sprintf(
 				"batten: %s %s\nTo proceed anyway (recorded): batten override %s --reason \"...\"",
 				unit, reason, unit)), nil

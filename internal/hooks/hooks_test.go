@@ -718,3 +718,101 @@ func TestTheCommitMessageDecidesWhichUnitIsGated(t *testing.T) {
 		t.Fatalf("a message naming an unopened unit must not ride on the session's verdict; got %q", got)
 	}
 }
+
+// TestAFormatterBetweenCheckAndCommitMakesTheTargetStale.
+//
+// `batten check` proves the declared checks passed. It proved it ABOUT a tree — and between then
+// and the commit, a formatter, a build step, a file watcher or the agent itself can change that
+// tree. The verdict kept saying batten-verified about a state that no longer existed, which
+// hollows out the one claim batten makes: that "verified" means batten watched it pass.
+//
+// Idea adapted from gentle-ai's CAS-bound receipts. batten REPORTS the drift rather than
+// freezing the index: it does not own the index, and taking it hostage between phases would
+// break every other tool the developer runs.
+func TestAFormatterBetweenCheckAndCommitMakesTheTargetStale(t *testing.T) {
+	h, run := gateFixture(t, []string{"go test ./..."}, "enforce")
+	gitBranchAt(t, h.Spec.Root, "feature/TASK-1")
+
+	// A tracked file, committed, then modified — the ordinary mid-work state.
+	src := filepath.Join(h.Spec.Root, "app.go")
+	if err := os.WriteFile(src, []byte("package app\n\nfunc F() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitAddCommit(t, h.Spec.Root, "add app.go")
+	if err := os.WriteFile(src, []byte("package app\n\nfunc F() int { return 2 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	digest := store.TargetDigest(h.Spec.Root)
+	if digest == "" {
+		t.Skip("git is unavailable here, so there is no tree to fingerprint")
+	}
+	for _, v := range []store.Verdict{
+		{RunID: run.RunID, Gate: "qa", CheckID: "review", Result: "ok", Source: "agent",
+			Evidence: []string{"criteria judged"}},
+		{RunID: run.RunID, Gate: "qa", CheckID: "checks", Result: "ok", Source: "batten",
+			Evidence: []string{"go test ./...: PASS"}, TargetDigest: digest},
+	} {
+		if err := h.Store.SaveVerdict(v, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Control: with the tree exactly as the checks left it, the gate is satisfied.
+	if reason := GateShortfallAt(h.Store, h.Spec.Root, run.RunID, "qa", "ok"); reason != "" {
+		t.Fatalf("control failed: an unchanged tree must satisfy the gate, got: %s", reason)
+	}
+
+	// Now something else edits the tree — a formatter, in effect.
+	if err := os.WriteFile(src, []byte("package app\n\nfunc F() int { return 2 } // formatted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reason := GateShortfallAt(h.Store, h.Spec.Root, run.RunID, "qa", "ok")
+	if reason == "" {
+		t.Fatal("the tree changed after the checks ran and the gate still called it verified. " +
+			"`batten-verified` now describes a state that no longer exists")
+	}
+	if !strings.Contains(reason, "STALE TARGET") {
+		t.Errorf("the denial must name the condition, not fail generically:\n%s", reason)
+	}
+	// A recovery command the agent loop can act on, rather than a dead end.
+	if !strings.Contains(reason, "batten check") {
+		t.Errorf("the denial must carry its own way out:\n%s", reason)
+	}
+}
+
+// A repo that is not a git repo has no tree to fingerprint — the literal state of the project
+// batten was field-tested against. "Not measurable" must never harden into a denial: that would
+// be inventing a refusal out of an absence, which is the mirror of inventing a number.
+func TestAnUnmeasurableTargetNeverDenies(t *testing.T) {
+	h, run := gateFixture(t, []string{"go test ./..."}, "enforce")
+	// gateFixture's root is a bare temp dir: no git, so TargetDigest returns "".
+	if store.TargetDigest(h.Spec.Root) != "" {
+		t.Skip("this temp dir is inside a git repo, so the premise does not hold")
+	}
+	for _, v := range []store.Verdict{
+		{RunID: run.RunID, Gate: "qa", CheckID: "review", Result: "ok", Source: "agent",
+			Evidence: []string{"criteria judged"}},
+		{RunID: run.RunID, Gate: "qa", CheckID: "checks", Result: "ok", Source: "batten",
+			Evidence: []string{"go test: PASS"}, TargetDigest: ""},
+	} {
+		if err := h.Store.SaveVerdict(v, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if reason := GateShortfallAt(h.Store, h.Spec.Root, run.RunID, "qa", "ok"); reason != "" {
+		t.Errorf("a tree batten cannot fingerprint must not produce a denial:\n%s", reason)
+	}
+}
+
+func gitAddCommit(t *testing.T, dir, msg string) {
+	t.Helper()
+	for _, args := range [][]string{{"add", "-A"}, {"commit", "-q", "-m", msg}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Skipf("git unavailable (%v): %s", err, out)
+		}
+	}
+}

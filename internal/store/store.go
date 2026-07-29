@@ -247,7 +247,7 @@ CREATE TABLE IF NOT EXISTS overrides (
 // schemaVersion is bumped whenever an additive migration is added below. The base schema
 // (CREATE TABLE IF NOT EXISTS ...) always runs; versioned steps run once, in order, so a
 // database created by an older batten upgrades in place instead of needing a rebuild.
-const schemaVersion = 6
+const schemaVersion = 7
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
@@ -283,6 +283,13 @@ func (s *Store) migrate() error {
 		`ALTER TABLE events ADD COLUMN decision TEXT`, // allow | deny | advise
 		`ALTER TABLE events ADD COLUMN reason TEXT`,
 		`ALTER TABLE events ADD COLUMN rule TEXT`, // verdict_gate | budget | write_set | degraded
+		// v7: the state of the working tree a verdict was made ABOUT.
+		//
+		// `batten check` proved the declared checks passed, and recorded no trace of WHAT they
+		// passed against. A formatter running between the check and the commit leaves the
+		// verdict saying batten-verified about a tree that no longer exists. Empty means the
+		// digest was not measurable (not a git repo) — never "nothing changed".
+		`ALTER TABLE verdicts ADD COLUMN target_digest TEXT`,
 	}
 	for i := have; i < schemaVersion; i++ {
 		if _, err := s.db.Exec(migrations[i]); err != nil {
@@ -734,7 +741,10 @@ type Verdict struct {
 	SafeNextStep         string   `json:"safe_next_step"`
 	RequiresConfirmation bool     `json:"requires_confirmation"`
 	Source               string   `json:"-"` // "agent" (a claim) | "batten" (evidence batten generated)
-	TS                   int64    `json:"-"`
+	// TargetDigest fingerprints the working tree this verdict was made about. Empty means it
+	// could not be measured here, which is NOT the same as "unchanged".
+	TargetDigest string `json:"-"`
+	TS           int64  `json:"-"`
 }
 
 // ErrNoEvidence is the golden rule, mechanized: an approval with nothing to point at
@@ -763,20 +773,23 @@ func (s *Store) SaveVerdict(v Verdict, evidenceRequired bool) error {
 		src = "agent"
 	}
 	_, err = s.db.Exec(`INSERT INTO verdicts
-	  (run_id, node_id, gate, check_id, result, evidence_json, why, safe_next_step, requires_confirmation, source, ts)
-	  VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
-		v.RunID, v.NodeID, v.Gate, v.CheckID, v.Result, string(ev), v.Why, v.SafeNextStep, rc, src, v.TS)
+	  (run_id, node_id, gate, check_id, result, evidence_json, why, safe_next_step, requires_confirmation, source, ts, target_digest)
+	  VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		v.RunID, v.NodeID, v.Gate, v.CheckID, v.Result, string(ev), v.Why, v.SafeNextStep, rc, src, v.TS,
+		nullable(v.TargetDigest))
 	return err
 }
 
 const verdictCols = `gate, check_id, result, evidence_json, COALESCE(why,''),
-	COALESCE(safe_next_step,''), requires_confirmation, COALESCE(source,'agent'), ts`
+	COALESCE(safe_next_step,''), requires_confirmation, COALESCE(source,'agent'), ts,
+	COALESCE(target_digest,'')`
 
 func scanVerdict(runID string, scan func(...any) error) (*Verdict, error) {
 	var v Verdict
 	var ev string
 	var rc int
-	if err := scan(&v.Gate, &v.CheckID, &v.Result, &ev, &v.Why, &v.SafeNextStep, &rc, &v.Source, &v.TS); err != nil {
+	if err := scan(&v.Gate, &v.CheckID, &v.Result, &ev, &v.Why, &v.SafeNextStep, &rc, &v.Source, &v.TS,
+		&v.TargetDigest); err != nil {
 		return nil, err
 	}
 	v.RunID = runID
