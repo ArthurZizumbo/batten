@@ -75,6 +75,63 @@ const partialPricingSpec = "version: 1\nproject: p\nunit:\n  name: TASK\n  patte
 	"phases:\n  - id: build\n    anchor: git_sha\n" +
 	"budget:\n  tokens_per_run: 3000000\n  imputed_usd_per_run: 2.0\n  on_exceed: warn\n"
 
+// TestADirectoryClaimIsRefusedWithTheShapeThatWorks is finding #7 (plan §5.2). A claim of
+// `src/**` or a directory was accepted, echoed back as "owns 1 file(s); any other agent
+// writing them is now denied" — and fenced nothing, because the guard compares exact paths.
+// A false fence is worse than none: the plan trusts it.
+func TestADirectoryClaimIsRefusedWithTheShapeThatWorks(t *testing.T) {
+	dir := gitRepoWithSpec(t, diffFromSpec)
+	db := filepath.Join(dir, "state.db")
+	t.Setenv("BATTEN_DB", db)
+
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := st.EnsureRun("p", "TASK-1", "sess-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddNode(store.Node{NodeID: store.AgentNodeID(r.RunID, "ag-1"), RunID: r.RunID,
+		Kind: "subagent", Label: "api", AgentID: "ag-1"}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	inDir(t, dir, func() {
+		for _, bad := range []string{"src/**", "src/", "src"} {
+			var err error
+			_ = captureStdout(t, func() { err = cmdClaim([]string{"ag-1", bad}) })
+			if err == nil || !strings.Contains(err.Error(), "EXACT paths") {
+				t.Errorf("claim %q = %v, want a refusal explaining the fence matches exact paths", bad, err)
+			}
+		}
+		// The control: a file that does not exist YET is a legitimate claim — agents claim
+		// what they are about to create.
+		var err error
+		_ = captureStdout(t, func() { err = cmdClaim([]string{"ag-1", "src/new_handler.go"}) })
+		if err != nil {
+			t.Fatalf("a future file must be claimable: %v", err)
+		}
+
+		st, e := store.Open(db)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer st.Close()
+		ws, e := st.WriteSet(r.RunID, store.AgentNodeID(r.RunID, "ag-1"))
+		if e != nil {
+			t.Fatal(e)
+		}
+		if len(ws) != 1 || ws[0] != "src/new_handler.go" {
+			t.Errorf("write-set = %v, want exactly the real file — no phantom fence rows", ws)
+		}
+	})
+}
+
 // TestCriteriaFlowFromPlanToPR is ítem 21 end to end: the unit's acceptance criteria leave
 // the markdown (fase A), become rows when the phase opens (fase B), get covered by the
 // verdict's `AC-n:` citations, and the PR then says "AC-1 covered by X" — which is a

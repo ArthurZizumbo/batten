@@ -419,13 +419,40 @@ func cmdClaim(args []string) error {
 		if rel, err := filepath.Rel(sp.Root, f); err == nil && !strings.HasPrefix(rel, "..") {
 			f = rel
 		}
-		files = append(files, filepath.ToSlash(f))
+		f = filepath.ToSlash(f)
+		// A directory or glob claim is accepted by the fence and fences NOTHING: the guard
+		// compares exact repo-relative paths, so `src/**` was recorded, reported as protection,
+		// and protected no file at all (#7). Refusing is the honest option — a false fence is
+		// worse than none, because the plan trusts it. A path that does not exist yet is fine:
+		// agents legitimately claim files they are about to create.
+		if why := dirClaimShape(sp.Root, f); why != "" {
+			return fmt.Errorf("claim: %q is %s, and the write-set fence matches EXACT paths — a "+
+				"pattern would be recorded as protection and protect nothing.\n"+
+				"List the files instead (your shell can expand a glob):\n"+
+				"  batten claim %s <file> <file> ...", f, why, agent)
+		}
+		files = append(files, f)
 	}
 	if err := st.ClaimWriteSet(node.RunID, node.NodeID, files); err != nil {
 		return err
 	}
 	fmt.Printf("%s owns %d file(s); any other agent writing them is now denied\n", agent, len(files))
 	return nil
+}
+
+// dirClaimShape reports why a claimed path is a directory-shaped claim, or "" when it is a
+// plain file path.
+func dirClaimShape(root, f string) string {
+	if strings.ContainsAny(f, "*?[") {
+		return "a glob"
+	}
+	if strings.HasSuffix(f, "/") {
+		return "a directory"
+	}
+	if fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(f))); err == nil && fi.IsDir() {
+		return "a directory"
+	}
+	return ""
 }
 
 // ---------- phase ----------
