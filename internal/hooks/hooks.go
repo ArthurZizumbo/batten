@@ -334,6 +334,11 @@ func (h *Handler) preToolUse(in Input) (*Output, error) {
 		if err := json.Unmarshal(in.ToolInput, &bi); err != nil {
 			return nil, nil
 		}
+		// Rule 1 of the unsupervised run, first: it is the one whose mistake is unrecoverable, so
+		// it does not wait behind a gate that might return "no opinion" for an unrelated reason.
+		if out := h.destructionGuard(in, bi.Command); out != nil {
+			return withRule(out, store.RuleUnattended), nil
+		}
 		// Tagged here rather than at each construction site: this is the one place that knows
 		// which wedge is answering, and the budget branch inside re-tags itself.
 		out, err := h.verdictGate(in, bi.Command)
@@ -502,6 +507,12 @@ func shortUnit(st *store.Store, runID string) string {
 func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	if !commitRe.MatchString(cmd) {
 		return nil, nil
+	}
+	// Rule 4 of the unsupervised run, and it comes before the spec's own gate on purpose. It is
+	// not conditional on the spec declaring a closing gate: a repo with no gate at all still must
+	// not have a commit land at 3am with nobody having read anything.
+	if out := h.unattendedCommitGuard(h.activeUnit(in)); out != nil {
+		return out, nil
 	}
 	closing, ok := h.Spec.ClosingPhase()
 	if !ok || closing.RequiresVerdict == "" {

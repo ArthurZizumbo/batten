@@ -72,6 +72,10 @@ func main() {
 		err = cmdPhase(os.Args[2:])
 	case "worktree":
 		err = cmdWorktree(os.Args[2:])
+	case "unattended":
+		err = cmdUnattended(os.Args[2:])
+	case "iterate":
+		err = cmdIterate(os.Args[2:])
 	case "mcp":
 		err = cmdMCP()
 	case "tui":
@@ -123,6 +127,8 @@ func printUsage() {
   batten check <unit> [--gate g]     RUN the gate's checks and record what they printed
   batten close <unit> [--status s]   close a unit through the gate, releasing its write-sets
   batten worktree <unit> [--merge]   one tree per unit; the merge back is gated like a commit
+  batten unattended <unit> [--off]   nobody is watching: 4 rules become denials (/batten-night)
+  batten iterate <unit>              count one fix->re-verify round; refuses past max_iterations
   batten demo [--keep]               the whole flow on a throwaway repo; touches nothing of yours
   batten pr <unit> [--out p]         a PR body from the run record: Mermaid DAG, evidence, cost
   batten recover <unit>              re-anchor a run whose base moved (rebase, amend, pull)
@@ -435,6 +441,17 @@ func cmdPhase(args []string) error {
 	}
 	if err := st.SetPhase(run.RunID, phaseID); err != nil {
 		return err
+	}
+	// Rule 2 of the unsupervised run, checked before the phase moves. `batten iterate` is what a
+	// well-behaved loop calls, and this is what catches the loop that does not: an unattended run
+	// cannot advance a phase once it has spent its declared rounds.
+	if run.Unattended() {
+		if reached, used, ceiling := hooks.IterationCeiling(run, sp.Budget.MaxIterations); reached {
+			return errors.New(hooks.Refusal(hooks.CodeIterationCeiling, fmt.Sprintf(
+				"%s has used %d of %d iterations and is running unattended: refusing to advance "+
+					"to %s.\nStop and report. A human turns the mode off: "+
+					"batten unattended %s --off", unit, used, ceiling, phaseID, unit)))
+		}
 	}
 	// Which tree this run is standing in. Recorded here, from the spec's own directory, because
 	// that is the identity the write-set guard compares against on the hook path and it must come
@@ -1449,6 +1466,18 @@ func cmdOverride(args []string) error {
 	run, err := st.ActiveRun(sp.Project, unit)
 	if err != nil {
 		return fmt.Errorf("no active run for %s", unit)
+	}
+	// Rule 3 of the unsupervised run. `--reason` exists because an override has to cost a
+	// sentence a human wrote; at 3am there is no human, and a sentence the LOOP wrote satisfies
+	// the letter of the rule and none of its purpose. A blocked verdict at the end of an
+	// unattended run is a successful outcome, so this refusal is not a problem to route around.
+	if run.Unattended() {
+		return errors.New(hooks.Refusal(hooks.CodeUnattendedOverride, fmt.Sprintf(
+			"refusing to override %s: it is running unattended, and an override needs a human "+
+				"reason from a human.\n"+
+				"A blocked verdict at the end of an unsupervised run is a SUCCESSFUL outcome — "+
+				"report it and stop.\n"+
+				"If you are that human and you are awake: batten unattended %s --off", unit, unit)))
 	}
 	gate := ""
 	if c, ok := sp.ClosingPhase(); ok {

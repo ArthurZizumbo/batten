@@ -261,7 +261,7 @@ CREATE TABLE IF NOT EXISTS overrides (
 // schemaVersion is bumped whenever an additive migration is added below. The base schema
 // (CREATE TABLE IF NOT EXISTS ...) always runs; versioned steps run once, in order, so a
 // database created by an older batten upgrades in place instead of needing a rebuild.
-const schemaVersion = 9
+const schemaVersion = 10
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
@@ -325,6 +325,17 @@ func (s *Store) migrate() error {
 		// old behaviour for every run written before this column existed. Never as "a different
 		// tree": that would turn an unknown into a licence.
 		`ALTER TABLE runs ADD COLUMN worktree TEXT`,
+		// v10: whether this run is happening with nobody watching.
+		//
+		// /batten-night's four absolute rules — never delete, never override, do not commit, honour
+		// the iteration ceiling — were 112 lines of markdown asking the model to behave, in the most
+		// dangerous command batten ships. That is the exact category of rule the README's first line
+		// says a hook can impose and a document can only request, and it was the one place batten
+		// had not taken its own medicine.
+		//
+		// One flag on the run turns all four into denials, with no new orchestration: batten still
+		// does not run the loop, it just stops being the only participant that cannot say no.
+		`ALTER TABLE runs ADD COLUMN mode TEXT`,
 	}
 	for i := have; i < schemaVersion; i++ {
 		if _, err := s.db.Exec(migrations[i]); err != nil {
@@ -359,11 +370,20 @@ type Run struct {
 	// Worktree is the root of the working tree this run is bound to. Empty means unrecorded,
 	// which is deliberately NOT the same as "the main tree" — see the v9 migration.
 	Worktree string
+	// Mode is "unattended" while /batten-night owns this run, empty otherwise.
+	Mode string
 }
+
+// ModeUnattended is the one mode there is. A run carrying it is being driven with nobody awake,
+// and four things batten would otherwise allow become denials.
+const ModeUnattended = "unattended"
+
+// Unattended reports whether this run is running with nobody watching.
+func (r *Run) Unattended() bool { return r != nil && r.Mode == ModeUnattended }
 
 const runCols = `run_id, project, unit_id, COALESCE(session_id,''), COALESCE(phase,''),
 	status, COALESCE(base_sha,''), tokens_spent, imputed_usd_spent, quota_start_5h,
-	iterations, started_at, ended_at, COALESCE(worktree,'')`
+	iterations, started_at, ended_at, COALESCE(worktree,''), COALESCE(mode,'')`
 
 // EnsureRun returns the open run for a unit, creating it if absent. Idempotent:
 // hooks fire in any order and may race, so this must never duplicate a run.
@@ -438,7 +458,7 @@ func scanRun(scan func(...any) error) (*Run, error) {
 	var r Run
 	err := scan(&r.RunID, &r.Project, &r.UnitID, &r.SessionID, &r.Phase, &r.Status,
 		&r.BaseSHA, &r.TokensSpent, &r.ImputedUSD, &r.QuotaStart5h,
-		&r.Iterations, &r.StartedAt, &r.EndedAt, &r.Worktree)
+		&r.Iterations, &r.StartedAt, &r.EndedAt, &r.Worktree, &r.Mode)
 	if err != nil {
 		return nil, err
 	}
@@ -466,6 +486,47 @@ func (s *Store) ListRuns(project string, limit int) ([]Run, error) {
 func (s *Store) SetPhase(runID, phase string) error {
 	_, err := s.db.Exec(`UPDATE runs SET phase=? WHERE run_id=?`, phase, runID)
 	return err
+}
+
+// SetMode turns unattended mode on or off for a run. Passing "" turns it off, which is what a
+// human closing the run in the morning does.
+func (s *Store) SetMode(runID, mode string) error {
+	_, err := s.db.Exec(`UPDATE runs SET mode=? WHERE run_id=?`, mode, runID)
+	return err
+}
+
+// Iterate increments a run's iteration counter and returns the new value.
+//
+// `budget.max_iterations` was declared in the spec, returned over MCP, and DRAWN in the TUI as
+// `iters %d/%d` — and runs.iterations was 0 forever, because nothing anywhere incremented it. The
+// only brake an unsupervised loop had against spending the whole window was a sentence in a
+// markdown file. This is the counter finally existing.
+func (s *Store) Iterate(runID string) (int, error) {
+	if _, err := s.db.Exec(`UPDATE runs SET iterations = iterations + 1 WHERE run_id=?`, runID); err != nil {
+		return 0, err
+	}
+	var n int
+	err := s.db.QueryRow(`SELECT iterations FROM runs WHERE run_id=?`, runID).Scan(&n)
+	return n, err
+}
+
+// UnattendedOpenRun returns any open run in the project running unattended, or nil.
+//
+// Project-wide rather than per-session on purpose. The destruction guard has to answer while a
+// tool call is in flight, and attribution can fail — no agent_id, an ambiguous session, a
+// subshell. Asking "is anything here unattended right now" is the question whose WRONG answer is
+// cheap: a needless denial of `rm` costs the loop a line in its report, and a needless allow costs
+// work that nobody recovers, in a run nobody was watching. That asymmetry is rule 1's entire
+// argument, applied to the guard that enforces rule 1.
+func (s *Store) UnattendedOpenRun(project string) (*Run, error) {
+	row := s.db.QueryRow(`SELECT `+runCols+`
+	   FROM runs WHERE project=? AND status='running' AND mode=?
+	   ORDER BY started_at DESC, rowid DESC LIMIT 1`, project, ModeUnattended)
+	r, err := scanRun(row.Scan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return r, err
 }
 
 // SetWorktree records which working tree a run lives in. Idempotent and cheap: it is called from
@@ -1295,7 +1356,8 @@ const (
 	RuleVerdictGate = "verdict_gate"
 	RuleBudget      = "budget"
 	RuleWriteSet    = "write_set"
-	RuleDegraded    = "degraded" // batten could not run at all and said so
+	RuleDegraded    = "degraded"   // batten could not run at all and said so
+	RuleUnattended  = "unattended" // a rule of the unsupervised run, now a mechanism
 )
 
 // Event is one row of the replay log: what arrived, and what batten decided about it.

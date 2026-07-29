@@ -9,11 +9,35 @@ That freedom is exactly why this command is the most dangerous one in the plugin
 fenced harder than the others. Read `batten.yaml` first — it holds the phases, the domains, the
 invariants, the resources, and the ceilings.
 
+## Turn the mode on — first, before anything
+
+```bash
+batten unattended <unit>
+```
+
+This is not bookkeeping. It is what turns the four rules below from things you are asked to do
+into things batten will not let you do: deletes are denied, `batten override` is refused, the
+commit gate refuses regardless of verdicts, and the iteration ceiling is counted for real.
+
+Do it first. A rule that only starts applying halfway through the run did not apply.
+
+You cannot turn it off. `batten unattended <unit> --off` exists for the human who reads the report
+in the morning — running it yourself is taking your own fence down, and the fence is the reason
+this command is allowed to exist.
+
 ## The absolute rules
 
+Each one is now a mechanism. They are still written out, because you should know why you are being
+stopped before you are stopped — but the denial does not depend on you remembering them.
+
 **1. Never delete anything.** Not a file, not a branch, not a commit, not a migration, not a
-checkpoint. Not with `rm`, not with `git checkout --`, not with `git reset --hard`, not by
-truncating a file and rewriting it, not by "cleaning up".
+checkpoint. Not with `rm`, not with `git checkout --`, not with `git restore`, not with
+`git reset --hard`, not with `git clean`, not by truncating a file and rewriting it, not by
+"cleaning up".
+
+*Mechanism:* a PreToolUse matcher denies all of those while the mode is on, with
+`batten.code: unattended_delete`. Truncating redirection (`> file`) is denied only when the file
+already exists — writing a new scratch file destroys nothing.
 
 If you find yourself *wanting* to delete something — dead code, an obsolete test, a file you
 believe you superseded — **do not**. Write it in the "wanted to delete" section of the final
@@ -26,11 +50,23 @@ one you are doing at 3am, and neither can I.
 **2. The budget ceilings are the tripwire.** An unattended run has no human to notice it grinding.
 `budget:` is what replaces that human — check it, and honor `on_exceed`.
 
+*Mechanism:* call `batten iterate <unit>` once per fix → re-verify round. It increments the
+counter that `budget.max_iterations` governs — the counter that read 0 forever because nothing
+ever incremented it — and **exits non-zero when the ceiling is reached**. Branch on that exit
+code. `batten phase` also refuses to advance past the ceiling, which catches the loop that forgets
+to call `iterate` at all.
+
 **3. Never override the gate.** `batten override` requires a human reason, and at 3am there is no
 human to give one. A blocked verdict at the end of an unattended run is a *successful* outcome —
 it means the gate did its job. Report it and stop.
 
+*Mechanism:* `batten override` refuses outright while the mode is on
+(`batten.code: unattended_override`).
+
 **4. Do not commit.** This run stops before the close phase, on purpose.
+
+*Mechanism:* the commit gate denies (`batten.code: unattended_commit`) — **with or without the two
+verdicts**. The point is not that the work is unverified; it is that a human closes.
 
 ## Preflight — stop here if anything is missing
 
@@ -73,12 +109,21 @@ autonomous decision compounds all night.
 If they only touched formatting or copy, say that and skip it.
 
 **Honor `budget.max_iterations`.** That is the ceiling on how many times this fix → re-verify loop
-may go round. When you hit it, **stop.** Do not go around once more. A loop that has failed the same
-check three times is not going to pass it on the fourth; it is going to spend the window.
+may go round. Call `batten iterate <unit>` at the top of each round; when it exits non-zero,
+**stop.** Do not go around once more. A loop that has failed the same check three times is not
+going to pass it on the fourth; it is going to spend the window.
+
+If `budget.max_iterations` is not declared, `batten unattended` says so when you turn the mode on,
+and there is no ceiling to hit. That is a fact about the spec, not permission to loop forever —
+report it.
 
 ## Stop before the close
 
-Do not run the close phase. Do not commit. A human closes.
+Do not run the close phase. Do not commit. A human closes — and if you try, the gate says so.
+
+Leave the mode ON. The person reading the report turns it off with
+`batten unattended <unit> --off`, and that act is what marks the transition from unsupervised to
+supervised. Turning it off yourself at the end would be the run signing off on itself.
 
 ## The report — the actual deliverable
 
@@ -102,6 +147,8 @@ Budget:               [tokens / imputed usd / quota %, each against its ceiling]
                        it is unmeasured. Do not report an unmeasured ceiling as 0.]
 
 WANTED TO DELETE (did not): [file, and why I thought so — or "nothing"]
+                      [plus anything batten REFUSED: `batten report` counts those,
+                       and a refusal you did not write down is one nobody will act on]
 Resources used:       [what was launched, what the probe said, how it was queued]
 Blocked on:           [what stopped, and what it is waiting for]
 

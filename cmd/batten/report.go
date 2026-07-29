@@ -225,6 +225,14 @@ func reportImpact(b *strings.Builder, st *store.Store, project string, cutoff in
 	b.WriteString("\n")
 	fmt.Fprintf(b, "    %d write-set collision(s) stopped\n", byRule[store.RuleWriteSet])
 	fmt.Fprintf(b, "    %d run(s) stopped on budget\n", byRule[store.RuleBudget])
+	// The unsupervised run's own line. This is the number nobody else in the ecosystem can
+	// produce, because it takes a tool that was PRESENT at 3am and said no — "4 destructive
+	// commands refused while nobody was watching" is a different kind of statement from "the
+	// model behaved", and it is the difference between a rule and a request.
+	if n := byRule[store.RuleUnattended]; n > 0 {
+		fmt.Fprintf(b, "    %d action(s) refused during an unattended run   "+
+			"(deletes, and commits before a human read the report)\n", n)
+	}
 	fmt.Fprintf(b, "    %d warning(s) issued without blocking\n", advised)
 	if denied == 0 && advised == 0 {
 		b.WriteString("    nothing was stopped in this window. That is a result, not an empty report.\n")

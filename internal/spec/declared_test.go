@@ -37,9 +37,13 @@ import (
 // or write it down here, with a reason. What you can no longer do is add it and forget.
 
 // declaredAsFuture is the explicit, deliberate list: fields batten.yaml accepts today whose
-// promise batten does not keep. Most have no consumer at all. One — Budget.MaxIterations — has
-// two readers that DISPLAY it and no mechanism that honours it, which is the same lie told with
-// more confidence. Every entry needs a reason and the plan section that owns it.
+// promise batten does not keep. Every entry needs a reason and the plan section that owns it.
+//
+// "No consumer" is the usual reason and it is not the only one. `Budget.MaxIterations` sat here
+// while TWO surfaces read it — MCP returned it and the TUI DREW it as `iters %d/%d` — because
+// nothing INCREMENTED the counter or refused to go past the ceiling. Displaying a promise is not
+// keeping it; it is the same lie told with more confidence. It came off the list when
+// `batten iterate` started counting and `batten phase` started refusing.
 //
 // This list is DEBT, not a parking lot. It should get shorter. A new entry is a decision to
 // publish a promise batten does not keep, and it should be made on purpose and in a review.
@@ -53,10 +57,6 @@ var declaredAsFuture = map[string]string{
 		"to be advice to the orchestrator, which it never emits (plan §8)",
 	"Models.Phases":     "same as Tiers, pinned per phase instead of per difficulty (plan §8)",
 	"Provenance.Format": "provenance metadata for auditing; no writer, no reader (plan §8)",
-	"Budget.MaxIterations": "the ceiling on an UNSUPERVISED loop — declared, returned over MCP, " +
-		"drawn in the TUI as `iters %d/%d`, and never incremented: runs.iterations is 0 forever. " +
-		"The worst entry on this list, because it governs the most dangerous command batten has " +
-		"(plan §5.6)",
 	"Phase.When": "documented as a free-form, advisory condition. Advisory is its whole contract, " +
 		"so it is honest — but nothing reads it either (plan §8)",
 	"Resource.Kind":     "resource contention is declared and never arbitrated (plan §8)",
@@ -341,26 +341,27 @@ func repoRoot(t *testing.T) string {
 
 // ---------- the other half: the unattended run's rules ----------
 
-// nightRulesStillProse is the same idea applied to /batten-night, which is the most dangerous
-// command batten ships and the ONLY one governed entirely by markdown asking the model nicely.
+// The same idea applied to /batten-night, which is the most dangerous command batten ships.
 //
-// Its four absolute rules are 112 lines of prose. batten's whole thesis is that a rule a document
-// can only ask for, a hook can impose — so these four are the loudest possible example of batten
-// not taking its own medicine. The mechanisms are planned (plan §5.6, block 3); until they exist,
-// each rule is registered here on purpose.
+// Its four absolute rules used to be 112 lines of prose asking the model to behave — the loudest
+// possible example of batten not taking its own medicine, since its whole thesis is that a rule a
+// document can only ask for, a hook can impose. All four are mechanisms now (plan §5.6), and this
+// file is what keeps them that way: a rule may be listed as mechanical only if the identifier its
+// mechanism is built on is actually USED in production, not merely declared. That is the exact
+// distinction the rest of this file exists to enforce, applied to the enforcement itself.
 //
-// What this test buys today: a FIFTH prose rule cannot be added to the command without either a
-// mechanism or a conscious entry on this list.
-var nightRulesStillProse = map[string]string{
-	"1": "never delete anything — needs a PreToolUse/Bash matcher denying rm, git reset --hard, " +
-		"git checkout --, and truncating redirection while runs.mode='unattended' (plan §5.6)",
-	"2": "honor the budget ceilings — needs `batten iterate` to actually increment " +
-		"runs.iterations and refuse past budget.max_iterations (plan §5.6)",
-	"3": "never override the gate — needs `batten override` to refuse while mode='unattended' " +
-		"(plan §5.6)",
-	"4": "do not commit — needs the gate to deny the closing phase while mode='unattended' " +
-		"(plan §5.6)",
+// A FIFTH rule still cannot be added to the command by writing it down: it needs a mechanism here,
+// or a conscious entry on the prose list below.
+var nightRulesMechanical = map[string]string{
+	"1": "CodeUnattendedDelete",   // PreToolUse/Bash denies rm, reset --hard, restore, clean, truncation
+	"2": "CodeIterationCeiling",   // `batten iterate` counts; `batten phase` refuses past the ceiling
+	"3": "CodeUnattendedOverride", // `batten override` refuses while mode='unattended'
+	"4": "CodeUnattendedCommit",   // the verdict gate refuses a commit, verdicts or no verdicts
 }
+
+// nightRulesStillProse is the escape hatch, and it is EMPTY. An entry here is a decision to ship
+// an absolute rule for an unsupervised run that nothing enforces.
+var nightRulesStillProse = map[string]string{}
 
 var nightRuleRe = regexp.MustCompile(`(?m)^\*\*(\d+)\.\s+(.+?)\*\*`)
 
@@ -378,26 +379,92 @@ func TestEveryUnattendedRuleIsMechanicalOrRegisteredAsProse(t *testing.T) {
 			"changed shape or this guard is now blind to it", path)
 	}
 
+	used := productionIdentUses(t, root)
 	for _, m := range found {
 		num, text := m[1], strings.TrimSpace(m[2])
-		if _, ok := nightRulesStillProse[num]; !ok {
+		ident, mechanical := nightRulesMechanical[num]
+		if _, prose := nightRulesStillProse[num]; !mechanical && !prose {
 			t.Errorf(`unattended rule %s (%q) is not accounted for.
 
-/batten-night is the most dangerous command batten ships and the only one governed purely by
-asking the model to behave. A new absolute rule may not simply be written down: either give it a
-mechanism, or register it in nightRulesStillProse with the mechanism it is waiting for.`, num, text)
+/batten-night is the most dangerous command batten ships. A new absolute rule may not simply be
+written down: either give it a mechanism and name that mechanism's identifier in
+nightRulesMechanical, or register it in nightRulesStillProse with the mechanism it is waiting for.`,
+				num, text)
+			continue
+		}
+		// Declared is not implemented — the lesson of this entire file. A rule listed as
+		// mechanical whose identifier is only DEFINED and never referenced is prose with a
+		// constant next to it.
+		if mechanical && used[ident] < 2 {
+			t.Errorf(`unattended rule %s (%q) is listed as mechanical via %s, but that identifier
+is used %d time(s) in production — a definition with no caller. The rule is still prose.`,
+				num, text, ident, used[ident])
 		}
 	}
-	for num := range nightRulesStillProse {
-		var present bool
-		for _, m := range found {
-			if m[1] == num {
-				present = true
-			}
-		}
-		if !present {
-			t.Errorf("nightRulesStillProse registers rule %s, which the command no longer states. "+
+	for num := range nightRulesMechanical {
+		if !ruleStated(found, num) {
+			t.Errorf("nightRulesMechanical claims rule %s, which the command no longer states. "+
 				"Remove it, or the list stops describing anything.", num)
 		}
 	}
+	for num := range nightRulesStillProse {
+		if !ruleStated(found, num) {
+			t.Errorf("nightRulesStillProse registers rule %s, which the command no longer states. "+
+				"Remove it, or the list stops describing anything.", num)
+		}
+		if _, both := nightRulesMechanical[num]; both {
+			t.Errorf("rule %s is on both lists; it cannot be a mechanism and prose at once", num)
+		}
+	}
+}
+
+func ruleStated(found [][]string, num string) bool {
+	for _, m := range found {
+		if m[1] == num {
+			return true
+		}
+	}
+	return false
+}
+
+// productionIdentUses counts every identifier occurrence in production Go, so a constant that is
+// declared and never referenced can be told apart from one that governs something. The
+// declaration itself counts as one, which is why the threshold above is two.
+func productionIdentUses(t *testing.T, root string) map[string]int {
+	t.Helper()
+	uses := map[string]int{}
+	fset := token.NewFileSet()
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "graphify-out", "node_modules", "vendor", "testdata":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") || strings.HasSuffix(p, "_test.go") {
+			return nil
+		}
+		f, perr := parser.ParseFile(fset, p, nil, 0)
+		if perr != nil {
+			return nil
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch v := n.(type) {
+			case *ast.Ident:
+				uses[v.Name]++
+			case *ast.SelectorExpr:
+				uses[v.Sel.Name]++
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", root, err)
+	}
+	return uses
 }

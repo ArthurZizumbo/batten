@@ -47,6 +47,16 @@ const (
 	CodeWrongUnit    = "wrong_unit"     // the message names a unit this session is not working
 	CodeDegraded     = "degraded"       // batten could not run at all
 	CodeNoChecks     = "gate_has_no_checks"
+
+	// The four absolute rules of an unsupervised run, which used to be four paragraphs of
+	// markdown. None of them is retryable and none of them carries a `fix`, for the same reason
+	// the write-set collision does not: there is no legitimate way through. A `fix` here would be
+	// an instruction to cross the fence, and the loop reading it is the one nobody is awake to
+	// stop. The way through is a human in the morning.
+	CodeUnattendedDelete   = "unattended_delete"   // rule 1 — nothing gets deleted
+	CodeIterationCeiling   = "iteration_ceiling"   // rule 2 — budget.max_iterations, finally counted
+	CodeUnattendedOverride = "unattended_override" // rule 3 — a human reason needs a human
+	CodeUnattendedCommit   = "unattended_commit"   // rule 4 — a human closes
 )
 
 // envelope is the machine-readable half of a decision.
@@ -70,6 +80,14 @@ func (e envelope) render() string {
 		fmt.Fprintf(&b, "batten.fix: %s\n", e.Fix)
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// Refusal renders a COMMAND-LINE refusal with the same machine-readable tail a hook denial
+// carries. Two of the unsupervised run's four rules are enforced by the CLI rather than by a
+// hook — `batten override` and `batten iterate` — and a loop reading stderr deserves the same
+// thing a loop reading a hook payload gets. Neither takes a `fix`: see unattended.go.
+func Refusal(code, message string) string {
+	return envelope{Code: code, Retry: false, Message: message}.render()
 }
 
 // gateWith is h.gate plus the envelope. Every denial in the gate goes through it.
