@@ -52,7 +52,10 @@ func Open(path string) (*Store, error) {
 		}
 	}
 	s := &Store{db: db}
-	if err := s.migrate(); err != nil {
+	// Retried, because the failure this most often hits is an antivirus holding the file open
+	// for the few milliseconds after it is created — see transient.go. Reporting that as a
+	// broken store would put "batten did NOT run" in front of a user whose machine is fine.
+	if err := retryTransient(5, s.migrate); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -247,7 +250,7 @@ CREATE TABLE IF NOT EXISTS overrides (
 // schemaVersion is bumped whenever an additive migration is added below. The base schema
 // (CREATE TABLE IF NOT EXISTS ...) always runs; versioned steps run once, in order, so a
 // database created by an older batten upgrades in place instead of needing a rebuild.
-const schemaVersion = 7
+const schemaVersion = 8
 
 func (s *Store) migrate() error {
 	if _, err := s.db.Exec(schema); err != nil {
@@ -290,6 +293,14 @@ func (s *Store) migrate() error {
 		// verdict saying batten-verified about a tree that no longer exists. Empty means the
 		// digest was not measurable (not a git repo) — never "nothing changed".
 		`ALTER TABLE verdicts ADD COLUMN target_digest TEXT`,
+		// v8: the enforcement mode in force when the decision was taken.
+		//
+		// `enforcement: report` is batten's honest off-switch: gates warn instead of blocking,
+		// and it is what `init` writes by default. What was missing is the other half of a kill
+		// switch worth having — knowing what got through while it was off. Without this column
+		// the events all look alike, and "we ran in report mode for three weeks" has no record
+		// of what that cost.
+		`ALTER TABLE events ADD COLUMN enforcement TEXT`,
 	}
 	for i := have; i < schemaVersion; i++ {
 		if _, err := s.db.Exec(migrations[i]); err != nil {
@@ -1197,7 +1208,10 @@ type Event struct {
 	Decision string // allow | deny | advise; empty for a bare record
 	Reason   string
 	Rule     string
-	TS       int64
+	// Enforcement is the mode in force when this was decided: "enforce" or "report". It is what
+	// lets a report say what got through while the gates were only warning.
+	Enforcement string
+	TS          int64
 }
 
 // LogEvent records an event with no decision attached. Kept for callers that are only
@@ -1213,18 +1227,20 @@ func (s *Store) LogDecision(e Event) error {
 		e.TS = now()
 	}
 	_, err := s.db.Exec(`INSERT INTO events
-	  (run_id, node_id, hook, ts, payload, decision, reason, rule) VALUES (?,?,?,?,?,?,?,?)`,
+	  (run_id, node_id, hook, ts, payload, decision, reason, rule, enforcement)
+	  VALUES (?,?,?,?,?,?,?,?,?)`,
 		nullable(e.RunID), nullable(e.NodeID), e.Hook, e.TS, string(e.Payload),
-		nullable(e.Decision), nullable(e.Reason), nullable(e.Rule))
+		nullable(e.Decision), nullable(e.Reason), nullable(e.Rule), nullable(e.Enforcement))
 	return err
 }
 
 // DecisionCount is one row of "what batten actually stopped", grouped the way a human would
 // ask for it.
 type DecisionCount struct {
-	Decision string
-	Rule     string
-	N        int
+	Decision    string
+	Rule        string
+	Enforcement string
+	N           int
 }
 
 // CountDecisions reports what batten decided since a point in time.
@@ -1237,13 +1253,13 @@ func (s *Store) CountDecisions(project string, since int64) ([]DecisionCount, er
 	// run (an unattributable commit, a degraded hook) belong to whoever is asking: they happened
 	// in this working tree, which is the only place batten was running.
 	rows, err := s.db.Query(`
-	  SELECT e.decision, COALESCE(e.rule,''), COUNT(*)
+	  SELECT e.decision, COALESCE(e.rule,''), COALESCE(e.enforcement,''), COUNT(*)
 	    FROM events e
 	    LEFT JOIN runs r ON r.run_id = e.run_id
 	   WHERE e.decision IS NOT NULL
 	     AND e.ts >= ?
 	     AND (e.run_id IS NULL OR r.project = ?)
-	   GROUP BY e.decision, e.rule`, since, project)
+	   GROUP BY e.decision, e.rule, e.enforcement`, since, project)
 	if err != nil {
 		return nil, err
 	}
@@ -1252,7 +1268,7 @@ func (s *Store) CountDecisions(project string, since int64) ([]DecisionCount, er
 	var out []DecisionCount
 	for rows.Next() {
 		var c DecisionCount
-		if err := rows.Scan(&c.Decision, &c.Rule, &c.N); err != nil {
+		if err := rows.Scan(&c.Decision, &c.Rule, &c.Enforcement, &c.N); err != nil {
 			return nil, err
 		}
 		out = append(out, c)

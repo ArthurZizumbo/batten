@@ -203,8 +203,11 @@ func reportImpact(b *strings.Builder, st *store.Store, project string, cutoff in
 	}
 
 	byRule := map[string]int{}
-	var denied, advised int
+	var denied, advised, whileReporting int
 	for _, c := range counts {
+		if c.Enforcement == "report" && c.Decision != store.DecisionAllow {
+			whileReporting += c.N
+		}
 		switch c.Decision {
 		case store.DecisionDeny:
 			denied += c.N
@@ -225,6 +228,20 @@ func reportImpact(b *strings.Builder, st *store.Store, project string, cutoff in
 	fmt.Fprintf(b, "    %d warning(s) issued without blocking\n", advised)
 	if denied == 0 && advised == 0 {
 		b.WriteString("    nothing was stopped in this window. That is a result, not an empty report.\n")
+	}
+
+	// What got through while the gates were only warning.
+	//
+	// `enforcement: report` is batten's honest off-switch, and it is what `init` writes by
+	// default — so this is not an edge case, it is the state most adopters are in. A kill switch
+	// is only worth having if you can find out what happened while it was off, and that is the
+	// half batten was missing: without it, "we ran in report mode for three weeks" has no record
+	// of what that cost.
+	if whileReporting > 0 {
+		fmt.Fprintf(b, "\n    ⚠ %d of these were WARNINGS ONLY: enforcement is `report`, so the "+
+			"gate did not block them.\n", whileReporting)
+		fmt.Fprintf(b, "      Those %d tool call(s) went through. Set `enforcement: enforce` in "+
+			"batten.yaml when you trust what you see above.\n", whileReporting)
 	}
 
 	// The honesty line, and it is not optional. Without it "3 commits denied" reads as a

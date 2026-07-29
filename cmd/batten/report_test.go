@@ -258,3 +258,69 @@ func TestReportRejectsAnUnknownFlagInsteadOfIgnoringIt(t *testing.T) {
 	})
 	_ = os.Getenv("BATTEN_DB")
 }
+
+// TestReportSaysWhatGotThroughWhileTheGatesWereOnlyWarning.
+//
+// `enforcement: report` is batten's honest off-switch — gates warn instead of blocking — and it
+// is what `init` writes by default, so this is the state most adopters are actually in, not an
+// edge case. A kill switch is only worth having if you can find out what happened while it was
+// off, and that is the half batten was missing: the events all looked alike, so "we ran in report
+// mode for three weeks" had no record of what it cost.
+func TestReportSaysWhatGotThroughWhileTheGatesWereOnlyWarning(t *testing.T) {
+	dir, st, run := reportFixture(t)
+
+	for _, e := range []store.Event{
+		{RunID: run.RunID, Hook: "PreToolUse", Decision: store.DecisionAdvise,
+			Rule: store.RuleVerdictGate, Reason: "no verdict", Enforcement: "report"},
+		{RunID: run.RunID, Hook: "PreToolUse", Decision: store.DecisionAdvise,
+			Rule: store.RuleWriteSet, Reason: "collision", Enforcement: "report"},
+		{RunID: run.RunID, Hook: "PreToolUse", Decision: store.DecisionAllow, Enforcement: "report"},
+	} {
+		if err := st.LogDecision(e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out := captureStdout(t, func() {
+		inDir(t, dir, func() {
+			if err := cmdReport(nil); err != nil {
+				t.Fatal(err)
+			}
+		})
+	})
+
+	if !strings.Contains(out, "WARNINGS ONLY") {
+		t.Errorf("two gate decisions were taken in report mode and the report did not say they "+
+			"went through unblocked:\n%s", out)
+	}
+	if !strings.Contains(out, "2 of these") {
+		t.Errorf("the count of unblocked decisions is wrong or missing:\n%s", out)
+	}
+	// The allowed call is not one of them: batten had no objection to it in the first place.
+	if strings.Contains(out, "3 of these") {
+		t.Errorf("a call batten never objected to was counted as something that got through:\n%s", out)
+	}
+}
+
+// And when the gates were actually enforcing, the warning must not appear — a report that always
+// carries a caveat teaches the reader to skip it.
+func TestNoUnblockedWarningWhenEnforcing(t *testing.T) {
+	dir, st, run := reportFixture(t)
+	if err := st.LogDecision(store.Event{
+		RunID: run.RunID, Hook: "PreToolUse", Decision: store.DecisionDeny,
+		Rule: store.RuleVerdictGate, Reason: "no verdict", Enforcement: "enforce",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	out := captureStdout(t, func() {
+		inDir(t, dir, func() {
+			if err := cmdReport(nil); err != nil {
+				t.Fatal(err)
+			}
+		})
+	})
+	if strings.Contains(out, "WARNINGS ONLY") {
+		t.Errorf("the gate blocked this one; nothing got through:\n%s", out)
+	}
+}

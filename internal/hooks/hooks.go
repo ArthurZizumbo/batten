@@ -255,13 +255,21 @@ func (h *Handler) record(event string, in Input, raw []byte, out *Output) {
 	// whole file body, and this INSERT sits on the fast path of every tool call in every
 	// session sharing the DB. 4KB keeps the log diagnostic (event shape, ids, decisions)
 	// without turning the events table into a mirror of the working tree.
+	// The mode in force, recorded with the decision. `enforcement: report` is batten's honest
+	// off-switch — gates warn instead of blocking — and this is what lets a report answer the
+	// question that matters when it is turned back on: what got through while it was off.
+	mode := "enforce"
+	if h.Spec.ReportOnly() {
+		mode = "report"
+	}
 	_ = h.Store.LogDecision(store.Event{
-		RunID:    runID,
-		Hook:     event,
-		Payload:  truncateBytes(raw, 4096),
-		Decision: decision,
-		Reason:   reason,
-		Rule:     rule,
+		RunID:       runID,
+		Hook:        event,
+		Payload:     truncateBytes(raw, 4096),
+		Decision:    decision,
+		Reason:      reason,
+		Rule:        rule,
+		Enforcement: mode,
 	})
 }
 
