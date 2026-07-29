@@ -69,23 +69,51 @@ func Run(sp *spec.Spec, st *store.Store, unitID string) (*Result, error) {
 	res.Nodes, res.Edges = len(c.Nodes), len(c.Edges)
 
 	if vlt := sp.Capabilities.Obsidian.Vault; vlt != "" {
+		// `export:` chooses WHICH files land in the vault. An empty list keeps the historical
+		// default — everything — but a user who wrote `export: [canvas]` was, until now, getting
+		// all three anyway: the field was the guard's tenth instance, declared and never read.
+		exports := sp.Capabilities.Obsidian.Export
+		wants := func(kind string) bool {
+			if len(exports) == 0 {
+				return true
+			}
+			for _, e := range exports {
+				if e == kind {
+					return true
+				}
+			}
+			return false
+		}
+
 		w := VaultWriter(sp)
 		// The claims the fan-out actually made. Best-effort like the usage read below: a failure
 		// here leaves WriteSets nil, and the note then says "not recorded" — which is the honest
 		// reading of a query that did not answer.
 		w.WriteSets, _ = st.WriteSetsByRun(run.RunID)
-		res.CanvasPath = w.CanvasPath(unitID)
-		if err := c.WriteFile(res.CanvasPath); err != nil {
-			return res, err
+		canvasRel := ""
+		if wants("canvas") {
+			res.CanvasPath = w.CanvasPath(unitID)
+			if err := c.WriteFile(res.CanvasPath); err != nil {
+				return res, err
+			}
+			// Only a canvas that exists gets embedded: a note linking a file the export list
+			// excluded would be a broken link shipped on purpose.
+			canvasRel = w.CanvasRel(unitID)
 		}
-		usg, _ := st.UsageByNode(run.RunID)
-		if err := w.WriteRun(run, nodes, edges, rv, bv, usg, w.CanvasRel(unitID)); err != nil {
-			return res, err
+		if wants("runs") {
+			usg, _ := st.UsageByNode(run.RunID)
+			if err := w.WriteRun(run, nodes, edges, rv, bv, usg, canvasRel); err != nil {
+				return res, err
+			}
+			res.RunNotePath = w.RunNotePath(unitID)
 		}
-		if err := w.WriteBases(); err != nil {
-			return res, err
+		if wants("verdicts") {
+			// The .base dashboards are where verdicts surface as their own artifact — the
+			// "needs a human" list is a query over verdict properties.
+			if err := w.WriteBases(); err != nil {
+				return res, err
+			}
 		}
-		res.RunNotePath = w.RunNotePath(unitID)
 		return res, nil
 	}
 

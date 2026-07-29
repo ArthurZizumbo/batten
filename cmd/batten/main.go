@@ -807,7 +807,11 @@ func cmdCanvas(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("wrote %s (%d nodes, %d edges)\n", res.CanvasPath, res.Nodes, res.Edges)
+	if res.CanvasPath != "" {
+		fmt.Printf("wrote %s (%d nodes, %d edges)\n", res.CanvasPath, res.Nodes, res.Edges)
+	} else {
+		fmt.Println("canvas not written: capabilities.obsidian.export excludes it — add \"canvas\" to the list, or use --out for a one-off file")
+	}
 	if res.RunNotePath != "" {
 		fmt.Printf("wrote run note %s — open the vault in Obsidian\n", res.RunNotePath)
 	}

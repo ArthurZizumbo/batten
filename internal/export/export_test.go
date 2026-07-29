@@ -346,6 +346,69 @@ func TestACheckOnlyRunSaysTheReviewerIsMissing(t *testing.T) {
 	}
 }
 
+// TestExportHonorsTheDeclaredList closes the guard's tenth instance (ítem 23, plan §8).
+// `capabilities.obsidian.export` declared WHICH files the vault gets and nothing read it:
+// a user who wrote `export: [canvas]` received the note and the dashboards anyway. A field
+// the user writes believing it governs, and that does not govern, is worse than its absence.
+func TestExportHonorsTheDeclaredList(t *testing.T) {
+	vault := t.TempDir()
+	dir := t.TempDir()
+	y := "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
+		"phases:\n  - id: build\n  - id: close\n    requires_verdict: ok\n" +
+		"capabilities:\n  obsidian:\n    vault: '" + filepath.ToSlash(vault) + "'\n    export: [canvas]\n"
+	if err := os.WriteFile(filepath.Join(dir, "batten.yaml"), []byte(y), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sp, err := spec.LoadFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "batten.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	r, _ := st.EnsureRun("p", "TASK-3", "sess-a")
+	_ = st.AddNode(store.Node{NodeID: "n-a", RunID: r.RunID, Kind: "subagent", Label: "solo", Status: "ok"})
+
+	res, err := Run(sp, st, "TASK-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.CanvasPath == "" {
+		t.Fatal("export: [canvas] must still write the canvas")
+	}
+	if _, err := os.Stat(res.CanvasPath); err != nil {
+		t.Errorf("the canvas was not written: %v", err)
+	}
+	if res.RunNotePath != "" {
+		t.Errorf("export: [canvas] excludes the run note, and one was written anyway: %q", res.RunNotePath)
+	}
+	notePath := VaultWriter(sp).RunNotePath("TASK-3")
+	if _, err := os.Stat(notePath); err == nil {
+		t.Errorf("export: [canvas] excludes the run note, and %q exists on disk", notePath)
+	}
+	// The dashboards are the `verdicts` export; none was asked for.
+	bases, _ := filepath.Glob(filepath.Join(vault, "batten", "p", "*.base"))
+	if len(bases) > 0 {
+		t.Errorf("export: [canvas] excludes the dashboards, and %d .base file(s) were written: %v",
+			len(bases), bases)
+	}
+
+	// Control: the fixture declares all three and must keep getting all three — and an EMPTY
+	// list must also keep the historical everything-by-default, or adopting the field would
+	// silently empty every existing vault.
+	sp2, st2 := fixture(t, t.TempDir())
+	res2, err := Run(sp2, st2, "TASK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.RunNotePath == "" || res2.CanvasPath == "" {
+		t.Errorf("export: [runs, verdicts, canvas] must produce note and canvas; got note=%q canvas=%q",
+			res2.RunNotePath, res2.CanvasPath)
+	}
+}
+
 func TestExpandHomeLeavesAbsolutePathsAlone(t *testing.T) {
 	if got := expandHome("/var/vaults/acme"); got != "/var/vaults/acme" {
 		t.Errorf("an absolute path must not be rewritten; got %q", got)

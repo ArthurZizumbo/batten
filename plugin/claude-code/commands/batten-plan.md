@@ -113,7 +113,7 @@ like this may have been solved before; batten governs the process, but the decis
 Pull anything relevant into the plan rather than re-deriving it. batten does NOT store this itself —
 it interoperates; episodic memory is engram's job, structural memory is graphify's.
 
-## Model routing (if `models` is set in batten.yaml)
+## Model routing
 
 Classify each sub-task by difficulty so the build phase runs it on the right-sized model — a
 color change does not need the model that plans architecture. Use three questions:
@@ -122,10 +122,11 @@ color change does not need the model that plans architecture. Use three question
 - requires a design decision (not just carrying one out)? → higher tier
 - can it fail in a subtle, hard-to-notice way (ML, concurrency, auth)? → higher tier
 
-Zero yes → `mechanical`; one → `moderate`; two or three → `complex`. Map each to its model via
-`models.tiers`, and note the tier + model beside each sub-task's write-set in the plan artifact.
-A domain with its own `model:` overrides the tier. Phases in `models.phases` (usually plan and
-verify) always use their pinned model regardless of tier.
+Zero yes → `mechanical`; one → `moderate`; two or three → `complex`. Note the classification and
+the model you chose beside each sub-task's write-set in the plan artifact. The choice is yours as
+the orchestrator — batten deliberately does not route models. What it does is **verify**: a domain
+that pins `model:` in batten.yaml is checked against the usage ledger, and `batten show` flags
+"declared haiku, ran opus" as a deviation instead of a silent overspend.
 
 ## God nodes raise the tier (if a code graph exists)
 

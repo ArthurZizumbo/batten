@@ -29,28 +29,18 @@ type Spec struct {
 	Domains      map[string]Domain   `yaml:"domains"`
 	Resources    map[string]Resource `yaml:"resources"`
 	Gates        map[string]Gate     `yaml:"gates"`
-	Provenance   Provenance          `yaml:"provenance"`
 	Budget       Budget              `yaml:"budget"`
-	Models       Models              `yaml:"models"`
 	Capabilities Capabilities        `yaml:"capabilities"`
 
 	// Root is the directory batten.yaml was loaded from. Not serialized.
 	Root string `yaml:"-"`
-}
 
-// Models declares which Anthropic model to use for what — the point being that planning
-// deserves a strong model and renaming a variable does not. batten cannot change the main
-// loop's model (that is the user's /model), but it CAN route subagents (the Agent tool takes
-// a model; custom agents carry one in frontmatter) and, uniquely, VERIFY the routing happened:
-// the ledger records the model each node actually ran on.
-type Models struct {
-	// Tiers maps a difficulty label the planner assigns to a model id/alias.
-	Tiers map[string]string `yaml:"tiers"` // e.g. {mechanical: haiku, moderate: sonnet, complex: opus}
-	// Phases pins whole phases to a model — plan/verify want judgment, so a strong model.
-	Phases map[string]string `yaml:"phases"` // e.g. {plan: opus, verify: opus}
+	// models.{tiers,phases} and provenance.format were REMOVED from the declared surface
+	// (plan §8, ítem 23). The schema promised "batten routes subagents and verifies it from
+	// the ledger" and batten deliberately does not orchestrate, so the promise could never be
+	// kept; provenance.format had no writer and no reader. Per-domain routing survives as
+	// Domain.Model, which `batten show` DOES verify against the ledger.
 }
-
-func (m Models) Set() bool { return len(m.Tiers) > 0 || len(m.Phases) > 0 }
 
 // ReportOnly reports whether gates should warn instead of deny.
 func (s *Spec) ReportOnly() bool { return s.Enforcement == "report" }
@@ -114,10 +104,6 @@ type Gate struct {
 }
 
 func (g Gate) EvidenceRequired() bool { return g.Evidence == "required" }
-
-type Provenance struct {
-	Format string `yaml:"format"`
-}
 
 // Budget is the tripwire an unattended overnight run otherwise lacks.
 //
@@ -311,13 +297,6 @@ func (s *Spec) Validate() error {
 		case "block", "warn", "downgrade_effort":
 		default:
 			add("budget.on_exceed must be block|warn|downgrade_effort, got %q", s.Budget.OnExceed)
-		}
-	}
-
-	// A model pinned to a phase that does not exist is a typo that would silently never apply.
-	for phaseID := range s.Models.Phases {
-		if _, ok := s.Phase(phaseID); !ok {
-			add("models.phases references phase %q, which is not defined", phaseID)
 		}
 	}
 

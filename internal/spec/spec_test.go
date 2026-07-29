@@ -42,9 +42,6 @@ resources:
 budget:
   tokens_per_run: 1000
   on_exceed: warn
-models:
-  phases:
-    plan: opus
 `
 
 func load(t *testing.T, body string) (*Spec, error) {
@@ -157,11 +154,6 @@ func TestReferentialIntegrity(t *testing.T) {
 			"domain contends for a resource that does not exist",
 			strings.Replace(valid, "    resources: [gpu]", "    resources: [tpu]", 1),
 			`unknown resource "tpu"`,
-		},
-		{
-			"a model is pinned to a phase that does not exist",
-			strings.Replace(valid, "    plan: opus", "    paln: opus", 1),
-			`models.phases references phase "paln"`,
 		},
 		{
 			"duplicate phase id",

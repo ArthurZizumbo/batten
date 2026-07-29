@@ -48,11 +48,10 @@ import (
 // This list is DEBT, not a parking lot. It should get shorter. A new entry is a decision to
 // publish a promise batten does not keep, and it should be made on purpose and in a review.
 var declaredAsFuture = map[string]string{
-	"Models.Tiers": "the schema says it 'routes subagents and verifies it from the ledger'. It " +
-		"routes nothing: batten does not spawn subagents, so the routing it promises would have " +
-		"to be advice to the orchestrator, which it never emits (plan §8)",
-	"Models.Phases":     "same as Tiers, pinned per phase instead of per difficulty (plan §8)",
-	"Provenance.Format": "provenance metadata for auditing; no writer, no reader (plan §8)",
+	// models.{tiers,phases} and provenance.format were on this list and are GONE from the spec
+	// (ítem 23): the first promise batten deliberately cannot keep (it does not orchestrate),
+	// the second had no writer and no reader. Removal, not implementation, was the decision —
+	// the honest exit #2 of the guard's error message has a sibling: stop promising.
 	"Phase.When": "documented as a free-form, advisory condition. Advisory is its whole contract, " +
 		"so it is honest — but nothing reads it either (plan §8)",
 	"Resource.Kind":     "resource contention is declared and never arbitrated (plan §8)",
@@ -64,12 +63,8 @@ var declaredAsFuture = map[string]string{
 	"Unit.Locator": "how to find a unit's block inside the plan document. `batten init` writes it " +
 		"from the backlog's real heading shape, and nothing reads it back (plan §8)",
 
-	// THE TENTH INSTANCE, and this guard found it on the first run it ever made — which is the
-	// argument for the guard, made by the guard.
-	"ObsidianCap.Export": "declares WHICH exports the vault should write (runs | verdicts | " +
-		"canvas). Nothing reads it: export.Run writes the note, the dashboards and the canvas " +
-		"unconditionally, so a user who asks for `export: [canvas]` gets all three. `batten init` " +
-		"writes the field into the generated batten.yaml, so the promise ships by default (plan §8)",
+	// ObsidianCap.Export — THE TENTH INSTANCE, found by this guard on the first run it ever
+	// made — was here until ítem 23 wired it up: export.Run now honours the list.
 }
 
 // enforcedBySpecValidation names the fields whose consumer IS the spec package: Load refuses a

@@ -104,21 +104,6 @@
         "$ref": "#/$defs/gate"
       }
     },
-    "provenance": {
-      "description": "What anchors a closed unit to reproducible evidence.",
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "format": {
-          "description": "A one-line template stamped at close. Placeholders are filled from the run: {id}, {git_sha7}, plus any project-specific keys your close phase resolves (e.g. {mlflow_run}, {dvc_rev}). Use '-' for the ones that do not apply to a given unit.",
-          "type": "string",
-          "examples": [
-            "{id} @ {git_sha7}",
-            "{id} @ {git_sha7} + mlflow:{mlflow_run} + dvc:{dvc_rev}"
-          ]
-        }
-      }
-    },
     "budget": {
       "description": "The tripwire an unattended overnight run otherwise lacks.\n\nOn a subscription the marginal cost of a token is zero, so \"dollars spent\" is the wrong ceiling. Three honest ceilings replace it, and batten enforces whichever ones it can actually measure. A ceiling it cannot measure is reported as unavailable — never as zero.",
       "type": "object",
@@ -272,27 +257,6 @@
         "report"
       ],
       "description": "enforce (default) denies; report turns gates into visible warnings — the adoption ramp."
-    },
-    "models": {
-      "type": "object",
-      "additionalProperties": false,
-      "description": "Model routing by difficulty. batten routes subagents and verifies it from the ledger.",
-      "properties": {
-        "tiers": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "difficulty label -> model, e.g. {mechanical: haiku, complex: opus}"
-        },
-        "phases": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          },
-          "description": "phase id -> model, e.g. {plan: opus, verify: opus}"
-        }
-      }
     }
   },
   "$defs": {

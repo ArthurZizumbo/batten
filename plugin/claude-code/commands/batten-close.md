@@ -38,10 +38,11 @@ To `artifacts[<closing kind>]` with `{id}` substituted:
 - The acceptance-criteria table: each criterion, what satisfies it, **and the evidence** — carried
   over from the verdict, not re-asserted from memory.
 - Standards actually met: linters, coverage per domain against its floor, each domain's invariants.
-- **The provenance key.** If `provenance.format` is declared, fill it exactly — every placeholder,
-  `-` for the ones that do not apply to this unit. `{git_sha7}` is `git rev-parse --short=7 HEAD`.
-  This one line is what makes the unit reproducible a year from now; a wrong one is worse than none,
-  so do not guess a value you do not have.
+- **The provenance line.** Anchor the unit to reproducible evidence: at minimum
+  `<id> @ <git_sha7>` (`git rev-parse --short=7 HEAD`), plus any project-specific key your close
+  resolves (an mlflow run, a data revision), `-` for the ones that do not apply to this unit.
+  This one line is what makes the unit reproducible a year from now; a wrong one is worse than
+  none, so do not guess a value you do not have.
 
 ## 3. Commit
 
