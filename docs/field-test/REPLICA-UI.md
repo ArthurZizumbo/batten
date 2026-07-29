@@ -21,7 +21,29 @@ regresión de `on_exceed: block` (`53227e8`). Esa rama nunca se había ejercitad
 
 ---
 
-## Resultado: 6 de 8 pasan, 1 falla, 1 pasa a medias
+## Re-corrida final — 2026-07-29, sobre `04b2065`
+
+> **Las dos matrices pasan enteras: 11/11 en la réplica de proyecto_ui, 15/15 en `batten demo`.**
+> Los dos hallazgos de abajo están arreglados (el silencio del primer commit en `5b02b0c`, el
+> ancla muda y el verde falso de graphify en `d850c23`), y la réplica se regeneró desde cero con
+> [`scripts/replica-ui.sh`](../../scripts/replica-ui.sh) antes de medir.
+
+Y ahora hay una **segunda** matriz. `batten demo` construye su propio repo, corre el flujo entero
+y lo borra — así que es a la vez el recorrido de adopción y el test de integración end-to-end que
+el proyecto no tenía. Sus 15 comprobaciones cubren lo que la réplica no puede: las dos cuñas
+enfrentadas de verdad (un check que **corre** y falla por un motivo real, una colisión de
+write-set entre dos agentes), el target estancado, y las tres promesas de aislamiento.
+
+| | réplica de proyecto_ui | `batten demo` |
+|---|---|---|
+| pruebas | 11 | 15 |
+| repo git | **no** | sí |
+| código | ninguno | dos dominios con un bug real |
+| lo que sólo ella prueba | la degradación sin git, sin checks y sin build files | el check que corre, la colisión, el target estancado, el aislamiento |
+
+---
+
+## Resultado de la primera corrida: 6 de 8 pasan, 1 falla, 1 pasa a medias
 
 | # | prueba | resultado |
 |---|---|---|
