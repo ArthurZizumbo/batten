@@ -369,6 +369,23 @@ func (s *Spec) ClosingPhase() (Phase, bool) {
 	return Phase{}, false
 }
 
+// ClosingGateName is the gate the commit gate enforces: the closing phase's own gate, falling
+// back to the last gate any phase declares. Empty when nothing declares one. The hook, the
+// CLI and the statusline all need this same resolution, and each having its own copy is how
+// two of them come to disagree about which gate an override opened.
+func (s *Spec) ClosingGateName() string {
+	if c, ok := s.ClosingPhase(); ok && c.Gate != "" {
+		return c.Gate
+	}
+	g := ""
+	for _, p := range s.Phases {
+		if p.Gate != "" {
+			g = p.Gate
+		}
+	}
+	return g
+}
+
 // DomainFor returns the domain owning a repo-relative file path.
 func (s *Spec) DomainFor(rel string) (string, bool) {
 	rel = filepath.ToSlash(rel)

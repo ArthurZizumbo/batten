@@ -33,6 +33,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/ArthurZizumbo/batten/internal/render"
 	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
@@ -224,8 +225,12 @@ func (w *Writer) renderBody(b *strings.Builder, r *store.Run, nodes []store.Node
 	// zero, so this is not a bill: it is what those tokens WOULD have cost on the API.
 	switch {
 	case r.TokensSpent > 0 && r.ImputedUSD > 0:
-		fmt.Fprintf(b, "**%s tokens** · **$%.2f imputed** (what this would have cost on the API; never billed)\n\n",
-			humanTokens(r.TokensSpent), r.ImputedUSD)
+		fmt.Fprintf(b, "**%s tokens** · **%s imputed** (what this would have cost on the API; never billed)\n\n",
+			humanTokens(r.TokensSpent), render.ImputedShort(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent))
+		if r.UnpricedTokens > 0 {
+			fmt.Fprintf(b, "The imputed figure is a **floor, not a total**: %d%% of the tokens are on "+
+				"models with no published rate.\n\n", render.UnpricedShare(r.UnpricedTokens, r.TokensSpent))
+		}
 	case r.TokensSpent > 0:
 		// Tokens were measured but no rate was available (e.g. an unpriced model). Report the
 		// count and say the price is unknown — never print "$0.00", which would price the

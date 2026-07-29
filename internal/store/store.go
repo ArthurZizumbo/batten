@@ -372,6 +372,12 @@ type Run struct {
 	Worktree string
 	// Mode is "unattended" while /batten-night owns this run, empty otherwise.
 	Mode string
+	// UnpricedTokens is the share of TokensSpent on models with no published rate. Those
+	// tokens contributed $0 to ImputedUSD not because they were free but because no price
+	// exists — so whenever this is > 0, ImputedUSD is a FLOOR, and every surface that prints
+	// it must say so. It rides on the Run because #33 happened surface by surface: each one
+	// rendered the dollar figure on its own and none of them could see the gap.
+	UnpricedTokens int64
 }
 
 // ModeUnattended is the one mode there is. A run carrying it is being driven with nobody awake,
@@ -383,7 +389,10 @@ func (r *Run) Unattended() bool { return r != nil && r.Mode == ModeUnattended }
 
 const runCols = `run_id, project, unit_id, COALESCE(session_id,''), COALESCE(phase,''),
 	status, COALESCE(base_sha,''), tokens_spent, imputed_usd_spent, quota_start_5h,
-	iterations, started_at, ended_at, COALESCE(worktree,''), COALESCE(mode,'')`
+	iterations, started_at, ended_at, COALESCE(worktree,''), COALESCE(mode,''),
+	(SELECT COALESCE(SUM(u.input_tokens+u.output_tokens+u.cache_write_5m+u.cache_write_1h+u.cache_read),0)
+	 FROM usage u WHERE u.run_id = runs.run_id AND u.imputed_usd=0
+	 AND (u.input_tokens+u.output_tokens+u.cache_write_5m+u.cache_write_1h+u.cache_read)>0)`
 
 // EnsureRun returns the open run for a unit, creating it if absent. Idempotent:
 // hooks fire in any order and may race, so this must never duplicate a run.
@@ -458,7 +467,7 @@ func scanRun(scan func(...any) error) (*Run, error) {
 	var r Run
 	err := scan(&r.RunID, &r.Project, &r.UnitID, &r.SessionID, &r.Phase, &r.Status,
 		&r.BaseSHA, &r.TokensSpent, &r.ImputedUSD, &r.QuotaStart5h,
-		&r.Iterations, &r.StartedAt, &r.EndedAt, &r.Worktree, &r.Mode)
+		&r.Iterations, &r.StartedAt, &r.EndedAt, &r.Worktree, &r.Mode, &r.UnpricedTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -1172,6 +1181,10 @@ type Ceiling struct {
 	// to print "install the statusline", which is the remedy for exactly one of the causes and
 	// misdirects for the others.
 	Reason string
+	// UnpricedTokens and TotalTokens qualify the imputed_usd kind only: when UnpricedTokens
+	// is > 0, Spent is missing the dollars for exactly that volume and is a floor, not a total.
+	UnpricedTokens int64
+	TotalTokens    int64
 }
 
 // tokenReason and the constants below are the causes a ceiling can be unmeasurable. They are
@@ -1220,7 +1233,8 @@ func (s *Store) Budget(runID string, tokensCap int64, usdCap, quotaCap float64) 
 	}
 	if usdCap > 0 {
 		c := Ceiling{Kind: "imputed_usd", Spent: r.ImputedUSD, Cap: usdCap,
-			Exceeded: measured && r.ImputedUSD >= usdCap, Available: measured}
+			Exceeded: measured && r.ImputedUSD >= usdCap, Available: measured,
+			UnpricedTokens: r.UnpricedTokens, TotalTokens: r.TokensSpent}
 		if !measured {
 			c.Reason = reasonNoUsage
 		}
@@ -1475,6 +1489,34 @@ func (s *Store) HasOverride(runID, gate string) (bool, error) {
 	return n > 0, err
 }
 
+// OverrideDetail is what an override put on the record: which gate it opened, the human
+// reason, and when.
+type OverrideDetail struct {
+	Gate   string
+	Reason string
+	TS     int64
+}
+
+// OverrideFor returns the newest override covering a run's gate, or nil. HasOverride answers
+// the gate's question — is it open? — and nothing more; the reading surfaces need the reason
+// and the timestamp, because a run whose gate is open by override while `batten show` still
+// says "the close gate will deny a commit" states the opposite of the truth (#10). An escape
+// hatch that is auditable only by opening SQLite by hand is not on the record in any sense
+// that matters.
+func (s *Store) OverrideFor(runID, gate string) (*OverrideDetail, error) {
+	row := s.db.QueryRow(`SELECT gate, reason, ts FROM overrides WHERE run_id=? AND (gate=? OR gate='*')
+	   ORDER BY ts DESC, rowid DESC LIMIT 1`, runID, gate)
+	var o OverrideDetail
+	err := row.Scan(&o.Gate, &o.Reason, &o.TS)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &o, nil
+}
+
 // ---------- headroom measurement ----------
 
 // SetHeadroom records whether the compression proxy was live for a run. Called once at run
@@ -1624,10 +1666,10 @@ func (s *Store) WriteSetOwnerAcrossOpenRuns(project, path, excludeRun string) (*
 // these rather than letting them rot silently.
 func (s *Store) StaleRuns(project string, maxAge time.Duration) ([]Run, error) {
 	cutoff := now() - int64(maxAge.Seconds())
-	rows, err := s.db.Query(`SELECT `+runCols+` FROM runs r
-	   WHERE r.project=? AND r.status='running'
-	     AND COALESCE((SELECT MAX(ts) FROM events e WHERE e.run_id=r.run_id), r.started_at) < ?
-	   ORDER BY r.started_at`, project, cutoff)
+	rows, err := s.db.Query(`SELECT `+runCols+` FROM runs
+	   WHERE runs.project=? AND runs.status='running'
+	     AND COALESCE((SELECT MAX(ts) FROM events e WHERE e.run_id=runs.run_id), runs.started_at) < ?
+	   ORDER BY runs.started_at`, project, cutoff)
 	if err != nil {
 		return nil, err
 	}
@@ -1671,10 +1713,22 @@ type ModelSpend struct {
 	Requests   int
 	Tokens     int64
 	ImputedUSD float64
+	// UnpricedRequests counts requests whose model had no published rate. Their tokens are
+	// exact; their dollars are unknown — not zero. The renderer needs the split so it never
+	// prints a hard $0.00 for a price that was never computed.
+	UnpricedRequests int
 }
 
 func (s *Store) MeasureByModel(project string) ([]ModelSpend, error) {
-	rows, err := s.db.Query(`SELECT u.model, COUNT(*), SUM(u.input_tokens+u.output_tokens), SUM(u.imputed_usd)
+	// Tokens sum all five buckets — same definition as runs.tokens_spent (RecordUsageFenced)
+	// and batten.schema.json. Counting only input+output here made this table disagree with
+	// `batten runs` over the same rows by whatever factor the cache traffic dictated.
+	rows, err := s.db.Query(`SELECT u.model, COUNT(*),
+	   SUM(u.input_tokens+u.output_tokens+u.cache_write_5m+u.cache_write_1h+u.cache_read),
+	   SUM(u.imputed_usd),
+	   SUM(CASE WHEN u.imputed_usd=0
+	            AND (u.input_tokens+u.output_tokens+u.cache_write_5m+u.cache_write_1h+u.cache_read)>0
+	       THEN 1 ELSE 0 END)
 	   FROM usage u JOIN runs r ON r.run_id=u.run_id
 	   WHERE (?='' OR r.project=?) GROUP BY u.model ORDER BY SUM(u.imputed_usd) DESC`, project, project)
 	if err != nil {
@@ -1684,7 +1738,7 @@ func (s *Store) MeasureByModel(project string) ([]ModelSpend, error) {
 	var out []ModelSpend
 	for rows.Next() {
 		var m ModelSpend
-		if err := rows.Scan(&m.Model, &m.Requests, &m.Tokens, &m.ImputedUSD); err != nil {
+		if err := rows.Scan(&m.Model, &m.Requests, &m.Tokens, &m.ImputedUSD, &m.UnpricedRequests); err != nil {
 			return nil, err
 		}
 		out = append(out, m)

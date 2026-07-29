@@ -66,6 +66,128 @@ func TestHumanTokens(t *testing.T) {
 	}
 }
 
+// TestMeasureNeverPricesTheUnpriceableAsFree is finding #32's render half. A model with no
+// published rate showed as `$0.00` under "spend by model" — byte-identical to a measured row
+// that genuinely rounds to zero. The two facts are opposites and must not share a rendering.
+func TestMeasureNeverPricesTheUnpriceableAsFree(t *testing.T) {
+	unpriced := store.ModelSpend{Model: "claude-opus-4-9", Requests: 2, Tokens: 57_900, UnpricedRequests: 2}
+	if got := measurePrice(unpriced); strings.Contains(got, "$0.00") || !strings.Contains(got, "UNPRICED") {
+		t.Errorf("fully unpriced row rendered %q; must say UNPRICED and never $0.00", got)
+	}
+
+	// A partially unpriced row is a floor, not a total. A skeptical reader doing the
+	// arithmetic must not be able to mistake it for a complete figure.
+	mixed := store.ModelSpend{Model: "m", Requests: 3, ImputedUSD: 0.39, UnpricedRequests: 1}
+	if got := measurePrice(mixed); !strings.HasPrefix(got, "≥") || !strings.Contains(got, "unpriced") {
+		t.Errorf("partially unpriced row rendered %q; must read as a floor (≥) and name the gap", got)
+	}
+
+	// And the control: measured-and-tiny genuinely is $0.00. The fix must not take that away.
+	priced := store.ModelSpend{Model: "haiku", Requests: 1, ImputedUSD: 0.0000008}
+	if got := measurePrice(priced); got != "$0.00" {
+		t.Errorf("measured row rendered %q, want $0.00 — a real measurement that rounds down", got)
+	}
+}
+
+const partialPricingSpec = "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
+	"phases:\n  - id: build\n    anchor: git_sha\n" +
+	"budget:\n  tokens_per_run: 3000000\n  imputed_usd_per_run: 2.0\n  on_exceed: warn\n"
+
+// TestAnOverrideIsVisibleOnEveryReadingSurface is finding #10. After `batten override`, the
+// hook allows the commit — it checks the override before anything else — while `batten show`
+// kept printing "the close gate will deny a commit" (the literal opposite of the truth),
+// `batten runs` showed no trace, and the canvas contained no 'override' string. The statusline
+// and MCP read the same store and say it correctly; the CLI surfaces were simply not asking.
+func TestAnOverrideIsVisibleOnEveryReadingSurface(t *testing.T) {
+	dir := gitRepoWithSpec(t, diffFromSpec)
+	db := filepath.Join(dir, "state.db")
+	t.Setenv("BATTEN_DB", db)
+
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := st.EnsureRun("p", "TASK-1", "sess-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.Override(r.RunID, "*", "hotfix for the Friday demo"); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	inDir(t, dir, func() {
+		show := captureStdout(t, func() { _ = cmdShow([]string{"TASK-1"}) })
+		if strings.Contains(show, "will deny a commit") {
+			t.Errorf("show promises a denial the hook will not deliver:\n%s", show)
+		}
+		if !strings.Contains(show, "overridden") || !strings.Contains(show, "Friday demo") {
+			t.Errorf("show must name the override and its reason:\n%s", show)
+		}
+
+		runsOut := captureStdout(t, func() { _ = cmdRuns() })
+		if !strings.Contains(runsOut, "overridden") {
+			t.Errorf("runs shows no trace of the override:\n%s", runsOut)
+		}
+
+		cv := filepath.Join(dir, "t.canvas")
+		_ = captureStdout(t, func() { _ = cmdCanvas([]string{"TASK-1", "--out", cv}) })
+		raw, err := os.ReadFile(cv)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "override") {
+			t.Errorf("the canvas draws the gate with no trace of the override that opened it")
+		}
+	})
+}
+
+// TestPartiallyPricedSpendReadsAsAFloorEverywhere is finding #33 end to end. With 38% of a
+// run's tokens on a model with no published rate, `batten budget`, `batten runs` and
+// `batten show` all presented $0.39 as a completed measurement. The dollars for that share
+// do not exist: the figure is a floor, and a skeptical reader doing the arithmetic must
+// reach that conclusion from the output alone.
+func TestPartiallyPricedSpendReadsAsAFloorEverywhere(t *testing.T) {
+	dir := gitRepoWithSpec(t, partialPricingSpec)
+	db := filepath.Join(dir, "state.db")
+	t.Setenv("BATTEN_DB", db)
+
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := st.EnsureRun("p", "TASK-1", "sess-x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.RecordUsage([]store.Usage{
+		{RequestID: "req-1", RunID: r.RunID, Model: "priced", TS: r.StartedAt,
+			InputTokens: 100_000, OutputTokens: 30_000, ImputedUSD: 0.39},
+		{RequestID: "req-2", RunID: r.RunID, Model: "unpriced-future-model", TS: r.StartedAt,
+			InputTokens: 70_000, OutputTokens: 10_000},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	inDir(t, dir, func() {
+		budget := captureStdout(t, func() { _ = cmdBudget(nil) })
+		for _, want := range []string{"≥$0.39", "floor", "38%"} {
+			if !strings.Contains(budget, want) {
+				t.Errorf("budget: %q missing — the partial figure reads as a total:\n%s", want, budget)
+			}
+		}
+		runs := captureStdout(t, func() { _ = cmdRuns() })
+		if !strings.Contains(runs, "≥$0.39") || !strings.Contains(runs, "floor") {
+			t.Errorf("runs must mark the figure as a floor and explain the mark:\n%s", runs)
+		}
+		show := captureStdout(t, func() { _ = cmdShow([]string{"TASK-1"}) })
+		if !strings.Contains(show, "floor, not a total") {
+			t.Errorf("show presents the partial figure as a measurement:\n%s", show)
+		}
+	})
+}
+
 // modelMatches decides whether `batten show` flags a routing deviation. A false alarm here
 // trains people to ignore the column, so aliases must resolve: a spec saying "opus" is satisfied
 // by a run that actually used "claude-opus-4-20250514".

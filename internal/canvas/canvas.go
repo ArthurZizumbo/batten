@@ -15,7 +15,9 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"time"
 
+	"github.com/ArthurZizumbo/batten/internal/render"
 	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
@@ -102,7 +104,12 @@ const (
 // proof that the declared checks were RUN. Rendering only the newest row — which is what this
 // took before — meant `batten check` painted its check output over the reviewer's evidence, and
 // the canvas showed one half of a two-half rule as though it were the whole gate.
-func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, batten *store.Verdict) *Canvas {
+//
+// It also takes the override, because the override rewrites what every verdict node means: the
+// hook checks it BEFORE the verdicts, so a canvas that draws "no verdict" in red while the gate
+// stands open is asserting a denial that will not happen (#10).
+func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, batten *store.Verdict,
+	override *store.OverrideDetail) *Canvas {
 	c := &Canvas{Nodes: []Node{}, Edges: []Edge{}}
 
 	// Group nodes by phase. A subagent's phase is the phase node that spawned it.
@@ -238,7 +245,7 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, ba
 	// their own column — and once either exists the run is at the gate, so the half that is
 	// still MISSING gets a node too. A canvas that draws one green pass and omits the absent
 	// reviewer reads as a run that is ready to land; it is not.
-	if reviewer != nil || batten != nil {
+	if reviewer != nil || batten != nil || override != nil {
 		x := len(phases) * gapX
 		slots := []struct {
 			id, title, missing string
@@ -271,6 +278,15 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, ba
 				Color: color, Text: body,
 			})
 		}
+		if override != nil {
+			c.Nodes = append(c.Nodes, Node{
+				ID: "override", Type: "text", X: x, Y: len(slots) * (nodeH + 120),
+				Width: nodeW + 80, Height: nodeH + 80, Color: colOrange,
+				Text: fmt.Sprintf("## gate OPEN by override\n\n**audited, not verified** — a commit "+
+					"will be allowed regardless of the verdicts above.\n\nreason: %s\nrecorded: %s",
+					override.Reason, time.Unix(override.TS, 0).UTC().Format("2006-01-02 15:04 UTC")),
+			})
+		}
 	}
 
 	// Header: what this run cost and where it stands.
@@ -278,8 +294,8 @@ func Render(run *store.Run, nodes []store.Node, edges []store.Edge, reviewer, ba
 		run.UnitID, run.RunID, run.Status, run.Phase)
 	if run.TokensSpent > 0 {
 		// Imputed, not billed: on a subscription this is the value pulled out of the plan.
-		head += fmt.Sprintf("\ntokens **%s**\nimputed **$%.2f**",
-			humanTokens(run.TokensSpent), run.ImputedUSD)
+		head += fmt.Sprintf("\ntokens **%s**\nimputed **%s**",
+			humanTokens(run.TokensSpent), render.ImputedShort(run.ImputedUSD, run.UnpricedTokens, run.TokensSpent))
 	}
 	if run.BaseSHA != "" {
 		head += fmt.Sprintf("\nbase `%s`", run.BaseSHA)

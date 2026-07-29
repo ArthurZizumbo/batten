@@ -629,15 +629,7 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 		return nil, nil // explicitly overridden, and it is on the record
 	}
 
-	gateName := closing.Gate
-	if gateName == "" {
-		// The closing phase does not name a gate; use whichever gate any phase demands.
-		for _, p := range h.Spec.Phases {
-			if p.Gate != "" {
-				gateName = p.Gate
-			}
-		}
-	}
+	gateName := h.Spec.ClosingGateName()
 
 	v, err := h.Store.LatestVerdict(run.RunID, gateName)
 	if err != nil {
@@ -1249,8 +1241,16 @@ func (h *Handler) sessionStart(in Input) (*Output, error) {
 			fmt.Fprintf(&b, ", %.1fM tokens / $%.2f imputed",
 				float64(r.TokensSpent)/1e6, r.ImputedUSD)
 		}
+		// An override opens the gate regardless of the verdict state, so this line must not
+		// promise a denial the hook will not deliver (#10): the agent plans around this text.
+		ov, _ := h.Store.OverrideFor(r.RunID, h.Spec.ClosingGateName())
 		if v, err := h.Store.LatestVerdict(r.RunID, ""); err == nil {
 			fmt.Fprintf(&b, ", verdict `%s` (%d evidence)", v.Result, len(v.Evidence))
+			if ov != nil {
+				b.WriteString(" — **overridden**: the gate will allow a commit regardless")
+			}
+		} else if ov != nil {
+			b.WriteString(", **no verdict — gate OPEN by override**: a commit lands unverified (audited)")
 		} else {
 			b.WriteString(", **no verdict yet** — the close gate will deny a commit")
 		}

@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ArthurZizumbo/batten/internal/render"
 	"github.com/ArthurZizumbo/batten/internal/spec"
 	"github.com/ArthurZizumbo/batten/internal/store"
 )
@@ -371,10 +372,18 @@ func writeCost(b *strings.Builder, run *store.Run, nodes []store.Node,
 	// spent zero, and this table is exactly where a zero would be believed.
 	if run.TokensSpent > 0 {
 		fmt.Fprintf(b, "| tokens | %s across %d subagent(s) |\n", humanTokens(run.TokensSpent), subs)
-		if run.ImputedUSD > 0 {
+		switch {
+		case run.ImputedUSD > 0 && run.UnpricedTokens > 0:
+			// Partially priced: the dollars for the unpriced share do not exist, so the
+			// figure is a floor — and the PR is the one artifact strangers read without
+			// knowing what to distrust, so it says so in place.
+			fmt.Fprintf(b, "| imputed | **≥$%.2f — a floor, not a total**: %d%% of the tokens have no "+
+				"published rate *(never a bill: what the priced share would have cost on the API)* |\n",
+				run.ImputedUSD, render.UnpricedShare(run.UnpricedTokens, run.TokensSpent))
+		case run.ImputedUSD > 0:
 			fmt.Fprintf(b, "| imputed | $%.2f *(not a bill: what these tokens would have cost on "+
 				"the API, and on a subscription the marginal cost of a token is zero)* |\n", run.ImputedUSD)
-		} else {
+		default:
 			b.WriteString("| imputed | **not priced** — no published API rate for this run's model |\n")
 		}
 	} else {

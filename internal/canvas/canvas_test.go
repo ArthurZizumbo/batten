@@ -9,7 +9,7 @@ import (
 	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
-func fixture() (*store.Run, []store.Node, []store.Edge, *store.Verdict, *store.Verdict) {
+func fixture() (*store.Run, []store.Node, []store.Edge, *store.Verdict, *store.Verdict, *store.OverrideDetail) {
 	run := &store.Run{RunID: "r1", Project: "p", UnitID: "US-034", Phase: "verify", Status: "running"}
 	nodes := []store.Node{
 		{NodeID: "p-build", RunID: "r1", Kind: "phase", Label: "build", Status: "ok"},
@@ -26,7 +26,7 @@ func fixture() (*store.Run, []store.Node, []store.Edge, *store.Verdict, *store.V
 		Evidence: []string{"3 tests failing"}, Why: "the suite is red", SafeNextStep: "fix TestFoo"}
 	bv := &store.Verdict{RunID: "r1", Gate: "qa", CheckID: "checks", Result: "ok", Source: "batten",
 		Evidence: []string{"go build ./...: exit 0"}, Why: "the declared checks ran"}
-	return run, nodes, edges, rv, bv
+	return run, nodes, edges, rv, bv, nil
 }
 
 // TestRenderProducesValidJSONCanvas pins the contract with the format, not with our code.
@@ -155,7 +155,7 @@ func TestWriteFileCreatesItsDirectoryAndEmitsParseableJSON(t *testing.T) {
 // state — a unit whose run just started — and it must not emit malformed JSON.
 func TestEmptyRunRendersAnOpenableCanvas(t *testing.T) {
 	run := &store.Run{RunID: "r0", Project: "p", UnitID: "US-000", Status: "running"}
-	c := Render(run, nil, nil, nil, nil)
+	c := Render(run, nil, nil, nil, nil, nil)
 	if c == nil {
 		t.Fatal("Render must not return nil")
 	}
@@ -190,7 +190,7 @@ func TestASubagentWhoseParentPhaseIsMissingStillAppears(t *testing.T) {
 		{Src: "p-build", Dst: "r1:n-b1", Rel: "spawn"}, // dangling: unscoped, not in nodes
 	}
 
-	c := Render(run, nodes, edges, nil, nil)
+	c := Render(run, nodes, edges, nil, nil, nil)
 
 	ids := map[string]bool{}
 	for _, n := range c.Nodes {

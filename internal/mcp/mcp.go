@@ -34,6 +34,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/ArthurZizumbo/batten/internal/render"
 	"github.com/ArthurZizumbo/batten/internal/spec"
 	"github.com/ArthurZizumbo/batten/internal/store"
 )
@@ -178,25 +179,29 @@ type verdictInfo struct {
 }
 
 type runInfo struct {
-	RunID      string        `json:"run_id"`
-	Project    string        `json:"project"`
-	Unit       string        `json:"unit" jsonschema:"the work-item id, e.g. US-034"`
-	Phase      string        `json:"phase" jsonschema:"the phase the run is currently in"`
-	Status     string        `json:"status" jsonschema:"running | ok | blocked | failed | rolled_back"`
-	BaseSHA    string        `json:"base_sha" jsonschema:"the anchor commit the unit's diff is computed from"`
-	Tokens     int64         `json:"tokens" jsonschema:"exact token count across every bucket, including cache reads"`
-	ImputedUSD float64       `json:"imputed_usd" jsonschema:"what those tokens WOULD have cost on the API; not a bill"`
-	Iterations int           `json:"iterations"`
-	StartedAt  string        `json:"started_at" jsonschema:"RFC3339"`
-	EndedAt    string        `json:"ended_at" jsonschema:"RFC3339, empty while the run is open"`
-	Verdict    *verdictBrief `json:"verdict" jsonschema:"null means NO verdict has been recorded: a commit would be denied"`
+	RunID      string  `json:"run_id"`
+	Project    string  `json:"project"`
+	Unit       string  `json:"unit" jsonschema:"the work-item id, e.g. US-034"`
+	Phase      string  `json:"phase" jsonschema:"the phase the run is currently in"`
+	Status     string  `json:"status" jsonschema:"running | ok | blocked | failed | rolled_back"`
+	BaseSHA    string  `json:"base_sha" jsonschema:"the anchor commit the unit's diff is computed from"`
+	Tokens     int64   `json:"tokens" jsonschema:"exact token count across every bucket, including cache reads"`
+	ImputedUSD float64 `json:"imputed_usd" jsonschema:"what those tokens WOULD have cost on the API; not a bill"`
+	// UnpricedTokens keeps imputed_usd honest: those tokens carry NO published rate and
+	// contributed $0 to the figure, so when this is > 0 imputed_usd is a floor, not a total.
+	UnpricedTokens int64         `json:"unpriced_tokens,omitempty" jsonschema:"tokens on models with no published rate; when > 0, imputed_usd is a FLOOR, not a total"`
+	Iterations     int           `json:"iterations"`
+	StartedAt      string        `json:"started_at" jsonschema:"RFC3339"`
+	EndedAt        string        `json:"ended_at" jsonschema:"RFC3339, empty while the run is open"`
+	Verdict        *verdictBrief `json:"verdict" jsonschema:"null means NO verdict has been recorded: a commit would be denied"`
 }
 
 func (q *queries) runInfo(r store.Run) runInfo {
 	ri := runInfo{
 		RunID: r.RunID, Project: r.Project, Unit: r.UnitID, Phase: r.Phase,
 		Status: r.Status, BaseSHA: r.BaseSHA, Tokens: r.TokensSpent, ImputedUSD: r.ImputedUSD,
-		Iterations: r.Iterations, StartedAt: rfc3339(r.StartedAt), EndedAt: rfc3339p(r.EndedAt),
+		UnpricedTokens: r.UnpricedTokens,
+		Iterations:     r.Iterations, StartedAt: rfc3339(r.StartedAt), EndedAt: rfc3339p(r.EndedAt),
 	}
 	if v, err := q.st.LatestVerdict(r.RunID, ""); err == nil {
 		ri.Verdict = &verdictBrief{Gate: v.Gate, Result: v.Result, EvidenceCount: len(v.Evidence)}
@@ -562,6 +567,10 @@ type ceilingInfo struct {
 	Exceeded          bool     `json:"exceeded"`
 	Available         bool     `json:"available" jsonschema:"false means the ceiling is declared but NOT enforced, because it cannot be measured"`
 	UnavailableReason string   `json:"unavailable_reason,omitempty"`
+	// SpentIsFloor marks a partially priced imputed_usd ceiling: part of the run's tokens
+	// have no published rate and contributed $0, so spent is a floor, not a total.
+	SpentIsFloor bool   `json:"spent_is_floor,omitempty" jsonschema:"imputed_usd only: part of the tokens have no published rate, so spent is a FLOOR, not a total"`
+	FloorReason  string `json:"floor_reason,omitempty"`
 }
 
 type budgetOutput struct {
@@ -596,7 +605,8 @@ func (q *queries) budget(_ context.Context, _ *sdk.CallToolRequest, in budgetInp
 
 	if !b.Set() {
 		out.Note = joinNotes(note, "batten.yaml declares no budget ceiling, so nothing is enforced. "+
-			"This run has spent "+fmt.Sprintf("%d tokens (~$%.2f imputed).", r.TokensSpent, r.ImputedUSD))
+			fmt.Sprintf("This run has spent %d tokens (%s).",
+				r.TokensSpent, render.ImputedLong(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent)))
 		return reply(out)
 	}
 
@@ -611,6 +621,11 @@ func (q *queries) budget(_ context.Context, _ *sdk.CallToolRequest, in budgetInp
 			ci.Spent, ci.Remaining = &spent, &remaining
 		} else {
 			ci.UnavailableReason = c.Reason + " — this ceiling is declared but NOT enforced"
+		}
+		if c.Kind == "imputed_usd" && c.UnpricedTokens > 0 {
+			ci.SpentIsFloor = true
+			ci.FloorReason = fmt.Sprintf("%d%% of this run's tokens are on models with no published rate; "+
+				"their dollars are missing from spent", render.UnpricedShare(c.UnpricedTokens, c.TotalTokens))
 		}
 		out.Ceilings = append(out.Ceilings, ci)
 	}

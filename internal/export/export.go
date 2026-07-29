@@ -62,9 +62,10 @@ func Run(sp *spec.Spec, st *store.Store, unitID string) (*Result, error) {
 	// that defect — `batten show` and the TUI were fixed first.
 	rv, _ := st.LatestVerdictNotBySource(run.RunID, "", "batten")
 	bv, _ := st.LatestVerdictBySource(run.RunID, "", "batten")
+	ov, _ := st.OverrideFor(run.RunID, sp.ClosingGateName())
 
 	res := &Result{}
-	c := canvas.Render(run, nodes, edges, rv, bv)
+	c := canvas.Render(run, nodes, edges, rv, bv, ov)
 	res.Nodes, res.Edges = len(c.Nodes), len(c.Edges)
 
 	if vlt := sp.Capabilities.Obsidian.Vault; vlt != "" {

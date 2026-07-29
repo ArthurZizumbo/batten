@@ -372,6 +372,34 @@ func TestSessionStartTellsYouWhatTheGateWillDo(t *testing.T) {
 	}
 }
 
+// TestSessionStartSaysWhenTheGateIsOpenByOverride is finding #10: after `batten override`, the
+// banner kept telling the agent "the close gate will deny a commit" — the literal opposite of
+// what the hook, which checks the override FIRST, was about to do. The agent plans around this
+// text, so a false denial promise here is a false fact about the world.
+func TestSessionStartSaysWhenTheGateIsOpenByOverride(t *testing.T) {
+	h, _ := guardFixture(t)
+	r, _ := h.Store.EnsureRun("p", "TASK-1", "sess-a")
+	_ = h.Store.SetPhase(r.RunID, "build")
+	if err := h.Store.Override(r.RunID, "*", "hotfix for the demo"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := h.sessionStart(hookInput("SessionStart", "sess-a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out == nil || out.HookSpecific == nil {
+		t.Fatal("an open run must produce a banner")
+	}
+	ctx := out.HookSpecific.AdditionalContext
+	if strings.Contains(ctx, "the close gate will deny a commit") {
+		t.Errorf("the gate stands open by override and the banner promises a denial:\n%s", ctx)
+	}
+	if !strings.Contains(ctx, "override") {
+		t.Errorf("the override is invisible in the banner the agent reads:\n%s", ctx)
+	}
+}
+
 // Ambiguity must be loud. Two open units and an unbound session means the gates cannot attribute
 // anything — and a gate that silently is not there is worse than no gate.
 func TestAmbiguousSessionIsToldSoLoudly(t *testing.T) {

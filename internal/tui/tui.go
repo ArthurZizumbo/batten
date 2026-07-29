@@ -16,6 +16,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/ArthurZizumbo/batten/internal/render"
 	"github.com/ArthurZizumbo/batten/internal/spec"
 	"github.com/ArthurZizumbo/batten/internal/store"
 )
@@ -353,9 +354,14 @@ func (m *Model) bindingLine(r store.Run) string {
 }
 
 // totals is the exactly-measured pair. "imputed" is load-bearing: on a subscription these
-// dollars are not a bill, they are the value being pulled out of the plan.
+// dollars are not a bill, they are the value being pulled out of the plan. The dollar half
+// comes from the shared renderer so a partially unpriced run reads as a floor here too.
 func totals(r store.Run) string {
-	return fmt.Sprintf("%s · $%.2f imputed", humanTokens(r.TokensSpent), r.ImputedUSD)
+	usd := render.ImputedShort(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent)
+	if usd == "not priced" {
+		return fmt.Sprintf("%s · imputed not priced (no published rate)", humanTokens(r.TokensSpent))
+	}
+	return fmt.Sprintf("%s · %s imputed", humanTokens(r.TokensSpent), usd)
 }
 
 // ---------- right pane: the selected run ----------
@@ -616,7 +622,7 @@ func amounts(c store.Ceiling) string {
 	case "tokens":
 		return humanTokens(int64(c.Spent)) + " / " + humanTokens(int64(c.Cap))
 	case "imputed_usd":
-		return fmt.Sprintf("$%.2f / $%.2f imputed", c.Spent, c.Cap)
+		return fmt.Sprintf("%s / $%.2f imputed", render.ImputedShort(c.Spent, c.UnpricedTokens, c.TotalTokens), c.Cap)
 	case "quota_pct":
 		return fmt.Sprintf("%.1f%% / %.1f%% of the 5h window", c.Spent, c.Cap)
 	}

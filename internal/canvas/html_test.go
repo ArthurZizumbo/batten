@@ -9,7 +9,7 @@ import (
 
 func htmlFixture(t *testing.T) (string, HTMLInput) {
 	t.Helper()
-	run, nodes, edges, rv, bv := fixture()
+	run, nodes, edges, rv, bv, _ := fixture()
 	in := HTMLInput{
 		Run: run, Reviewer: rv, Batten: bv, Retries: 1,
 		Details: map[string]Detail{
@@ -19,7 +19,7 @@ func htmlFixture(t *testing.T) (string, HTMLInput) {
 			"n-b1": {Kind: "subagent", Domain: "web", AgentID: "web-1", Status: "running"},
 		},
 	}
-	page, err := Render(run, nodes, edges, rv, bv).HTML(in)
+	page, err := Render(run, nodes, edges, rv, bv, nil).HTML(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestTheHTMLNeverInventsANumber(t *testing.T) {
 
 // The header's gate line is the first thing read, so it must agree with the gate itself.
 func TestTheHeaderGateLineIsHonest(t *testing.T) {
-	run, nodes, edges, rv, bv := fixture()
+	run, nodes, edges, rv, bv, _ := fixture()
 
 	cases := []struct {
 		name     string
@@ -92,7 +92,7 @@ func TestTheHeaderGateLineIsHonest(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			page, err := Render(run, nodes, edges, c.reviewer, c.batten).
+			page, err := Render(run, nodes, edges, c.reviewer, c.batten, nil).
 				HTML(HTMLInput{Run: run, Reviewer: c.reviewer, Batten: c.batten})
 			if err != nil {
 				t.Fatal(err)
@@ -116,7 +116,7 @@ func TestTheEmbeddedDataCannotCloseItsOwnScriptTag(t *testing.T) {
 		NodeID: "n1", RunID: "r1", Kind: "subagent",
 		Domain: `evil</script><script>alert(1)</script>`, Status: "ok",
 	}}
-	page, err := Render(run, nodes, nil, nil, nil).HTML(HTMLInput{Run: run})
+	page, err := Render(run, nodes, nil, nil, nil, nil).HTML(HTMLInput{Run: run})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -31,6 +31,7 @@ import (
 	"github.com/ArthurZizumbo/batten/internal/gitx"
 	"github.com/ArthurZizumbo/batten/internal/hooks"
 	"github.com/ArthurZizumbo/batten/internal/mcp"
+	"github.com/ArthurZizumbo/batten/internal/render"
 	"github.com/ArthurZizumbo/batten/internal/scan"
 	"github.com/ArthurZizumbo/batten/internal/spec"
 	"github.com/ArthurZizumbo/batten/internal/statusline"
@@ -358,15 +359,7 @@ func cmdVerdict(args []string) error {
 		return err
 	}
 	if gate == "" {
-		if c, ok := sp.ClosingPhase(); ok && c.Gate != "" {
-			gate = c.Gate
-		} else {
-			for _, p := range sp.Phases {
-				if p.Gate != "" {
-					gate = p.Gate
-				}
-			}
-		}
+		gate = sp.ClosingGateName()
 	}
 	v.RunID, v.Gate = run.RunID, gate
 
@@ -533,7 +526,8 @@ func cmdRuns() error {
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "UNIT\tSTATUS\tPHASE\tVERDICT\tTOKENS\tIMPUTED")
-	verified := false
+	verified, floor, overridden := false, false, false
+	gate := sp.ClosingGateName()
 	for _, r := range runs {
 		verdict := "—"
 		if v, err := st.LatestVerdict(r.RunID, ""); err == nil {
@@ -545,10 +539,23 @@ func cmdRuns() error {
 				verified = true
 			}
 		}
+		// An override opens the gate no matter what the verdict column says; a row that
+		// hides it presents an ungoverned run as a governed one (#10).
+		if ov, err := st.OverrideFor(r.RunID, gate); err == nil && ov != nil {
+			if verdict == "—" {
+				verdict = "overridden"
+			} else {
+				verdict += " (overridden)"
+			}
+			overridden = true
+		}
 		tok, usd := "—", "—"
 		if r.TokensSpent > 0 {
 			tok = humanTokens(r.TokensSpent)
-			usd = fmt.Sprintf("$%.2f", r.ImputedUSD)
+			usd = render.ImputedShort(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent)
+			if r.UnpricedTokens > 0 {
+				floor = true
+			}
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", r.UnitID, r.Status, r.Phase, verdict, tok, usd)
 	}
@@ -557,6 +564,12 @@ func cmdRuns() error {
 	}
 	if verified {
 		fmt.Println("* batten-verified: the gate's checks were actually run")
+	}
+	if overridden {
+		fmt.Println("overridden: the gate is OPEN by `batten override` — the commit is audited, not verified. Details: batten show <unit>")
+	}
+	if floor {
+		fmt.Println("≥ / not priced: part of those tokens are on models with no published rate — the dollar figure is a floor, never a total")
 	}
 	return nil
 }
@@ -589,8 +602,8 @@ func cmdShow(args []string) error {
 	fmt.Printf("%s  run=%s  status=%s  phase=%s  base=%s\n",
 		run.UnitID, run.RunID, run.Status, run.Phase, run.BaseSHA)
 	if run.TokensSpent > 0 {
-		fmt.Printf("usage: %s tokens, $%.2f imputed (what this would have cost on the API)\n",
-			humanTokens(run.TokensSpent), run.ImputedUSD)
+		fmt.Printf("usage: %s tokens, %s\n",
+			humanTokens(run.TokensSpent), render.ImputedLong(run.ImputedUSD, run.UnpricedTokens, run.TokensSpent))
 	}
 	nodes, _ := st.Nodes(run.RunID)
 	models, _ := st.ModelsByNode(run.RunID) // what each node actually ran on, from the ledger
@@ -623,7 +636,18 @@ func cmdShow(args []string) error {
 	// own check output, so the screen showed one half of a two-half rule.
 	bv, bErr := st.LatestVerdictBySource(run.RunID, "", "batten")
 	av, aErr := st.LatestVerdictNotBySource(run.RunID, "", "batten")
+	// The override changes what every line below means: the gate is OPEN no matter what the
+	// verdicts say, so claiming "the close gate will deny a commit" here states the literal
+	// opposite of what the hook will do (#10). The statusline and MCP already read this from
+	// the same store; the CLI was simply not asking.
+	ov, _ := st.OverrideFor(run.RunID, sp.ClosingGateName())
 	if bErr != nil && aErr != nil {
+		if ov != nil {
+			fmt.Printf("\nno verdict — and the gate is OPEN anyway: overridden %s\n  reason: %s\n"+
+				"a commit will be ALLOWED without verification (audited, not verified)\n",
+				time.Unix(ov.TS, 0).Format("2006-01-02 15:04"), ov.Reason)
+			return nil
+		}
 		fmt.Println("\nno verdict: the close gate will deny a commit")
 		return nil
 	}
@@ -647,6 +671,10 @@ func cmdShow(args []string) error {
 	if bErr != nil {
 		fmt.Printf("no batten-verified pass yet — run: batten check %s\n", run.UnitID)
 	}
+	if ov != nil {
+		fmt.Printf("⚠ overridden %s: the gate will allow a commit REGARDLESS of the verdicts above\n"+
+			"  reason: %s\n", time.Unix(ov.TS, 0).Format("2006-01-02 15:04"), ov.Reason)
+	}
 	return nil
 }
 
@@ -669,6 +697,7 @@ func canvasHTML(sp *spec.Spec, st *store.Store, unit, out string) error {
 	usg, _ := st.UsageByNode(run.RunID)
 	rv, _ := st.LatestVerdictNotBySource(run.RunID, "", "batten")
 	bv, _ := st.LatestVerdictBySource(run.RunID, "", "batten")
+	ov, _ := st.OverrideFor(run.RunID, sp.ClosingGateName())
 
 	details := map[string]canvas.Detail{}
 	for _, n := range nodes {
@@ -689,12 +718,12 @@ func canvasHTML(sp *spec.Spec, st *store.Store, unit, out string) error {
 		}
 	}
 
-	c := canvas.Render(run, nodes, edges, rv, bv)
+	c := canvas.Render(run, nodes, edges, rv, bv, ov)
 	if out == "" {
 		out = filepath.Join(sp.Root, ".batten", unit+".html")
 	}
 	if err := c.WriteHTML(out, canvas.HTMLInput{
-		Run: run, Details: details, Reviewer: rv, Batten: bv, Retries: retries,
+		Run: run, Details: details, Reviewer: rv, Batten: bv, Retries: retries, Override: ov,
 	}); err != nil {
 		return err
 	}
@@ -765,7 +794,8 @@ func cmdCanvas(args []string) error {
 		// still needs a second one.
 		rv, _ := st.LatestVerdictNotBySource(run.RunID, "", "batten")
 		bv, _ := st.LatestVerdictBySource(run.RunID, "", "batten")
-		c := canvas.Render(run, nodes, edges, rv, bv)
+		ov, _ := st.OverrideFor(run.RunID, sp.ClosingGateName())
+		c := canvas.Render(run, nodes, edges, rv, bv, ov)
 		if err := c.WriteFile(out); err != nil {
 			return err
 		}
@@ -803,7 +833,7 @@ func cmdMeasure() error {
 			if name == "" {
 				name = "(unknown)"
 			}
-			fmt.Printf("  %-28s %d req, %s tokens, $%.2f\n", name, m.Requests, humanTokens(m.Tokens), m.ImputedUSD)
+			fmt.Printf("  %-28s %d req, %s tokens, %s\n", name, m.Requests, humanTokens(m.Tokens), measurePrice(m))
 		}
 		fmt.Println()
 	}
@@ -815,6 +845,20 @@ func cmdMeasure() error {
 		printFlagComparison(groups, "code graph")
 	}
 	return nil
+}
+
+// measurePrice renders one model row's dollar column. A model with no published rate has no
+// dollar figure — never $0.00 under a header reading "spend by model", which would price the
+// unpriceable as free (the vault note already enforces this rule). A partially unpriced row
+// is a floor, not a total, and says so.
+func measurePrice(m store.ModelSpend) string {
+	switch {
+	case m.UnpricedRequests > 0 && m.UnpricedRequests == m.Requests:
+		return "UNPRICED (no published rate; tokens exact)"
+	case m.UnpricedRequests > 0:
+		return fmt.Sprintf("≥$%.2f (%d of %d req unpriced)", m.ImputedUSD, m.UnpricedRequests, m.Requests)
+	}
+	return fmt.Sprintf("$%.2f", m.ImputedUSD)
 }
 
 // printFlagComparison renders one with/without comparison (headroom, code graph). It refuses
@@ -1390,8 +1434,8 @@ func cmdBudget(args []string) error {
 			fmt.Printf("%s  usage NOT MEASURED (not zero — nothing has been ingested for this run)\n",
 				r.UnitID)
 		} else {
-			fmt.Printf("%s  %s tokens, $%.2f imputed\n",
-				r.UnitID, humanTokens(r.TokensSpent), r.ImputedUSD)
+			fmt.Printf("%s  %s tokens, %s\n",
+				r.UnitID, humanTokens(r.TokensSpent), render.ImputedLong(r.ImputedUSD, r.UnpricedTokens, r.TokensSpent))
 		}
 
 		if !b.Set() {
@@ -1417,7 +1461,12 @@ func cmdBudget(args []string) error {
 				fmt.Printf("  %s %-12s %s / %s  %s\n", mark, c.Kind,
 					humanTokens(int64(c.Spent)), humanTokens(int64(c.Cap)), bar(c.Spent/c.Cap))
 			case c.Kind == "imputed_usd":
-				fmt.Printf("  %s %-12s $%.2f / $%.2f  %s\n", mark, c.Kind, c.Spent, c.Cap, bar(c.Spent/c.Cap))
+				fmt.Printf("  %s %-12s %s / $%.2f  %s\n", mark, c.Kind,
+					render.ImputedShort(c.Spent, c.UnpricedTokens, c.TotalTokens), c.Cap, bar(c.Spent/c.Cap))
+				if c.UnpricedTokens > 0 && c.UnpricedTokens < c.TotalTokens {
+					fmt.Printf("      a floor, not a total: %d%% of the tokens have no published rate\n",
+						render.UnpricedShare(c.UnpricedTokens, c.TotalTokens))
+				}
 			case c.Kind == "quota_pct":
 				fmt.Printf("  %s %-12s %.1f%% / %.1f%% of the rolling 5h window  %s\n",
 					mark, c.Kind, c.Spent, c.Cap, bar(c.Spent/c.Cap))

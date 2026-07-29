@@ -29,6 +29,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ArthurZizumbo/batten/internal/render"
 	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
@@ -56,6 +57,9 @@ type HTMLInput struct {
 	Reviewer *store.Verdict
 	Batten   *store.Verdict
 	Retries  int
+	// Override, when set, means the gate stands open no matter what the verdicts say — and
+	// the header line must say that instead of promising a denial that will not happen (#10).
+	Override *store.OverrideDetail
 }
 
 // WriteHTML renders the canvas as a standalone page.
@@ -152,8 +156,8 @@ func headerMeta(in HTMLInput) string {
 	}
 	switch {
 	case in.Run.TokensSpent > 0 && in.Run.ImputedUSD > 0:
-		parts = append(parts, fmt.Sprintf("<b>%s</b> tokens · <b>$%.2f</b> imputed <span class=q>(never billed)</span>",
-			humanTokens(in.Run.TokensSpent), in.Run.ImputedUSD))
+		parts = append(parts, fmt.Sprintf("<b>%s</b> tokens · <b>%s</b> imputed <span class=q>(never billed)</span>",
+			humanTokens(in.Run.TokensSpent), render.ImputedShort(in.Run.ImputedUSD, in.Run.UnpricedTokens, in.Run.TokensSpent)))
 	case in.Run.TokensSpent > 0:
 		parts = append(parts, fmt.Sprintf("<b>%s</b> tokens · imputed <b>not priced</b>", humanTokens(in.Run.TokensSpent)))
 	default:
@@ -167,7 +171,12 @@ func headerMeta(in HTMLInput) string {
 }
 
 // gateLine says whether this run could land, in the same words every other surface uses.
+// The override is checked first because that is the order the hook decides in: an open
+// override makes every other answer here moot.
 func gateLine(in HTMLInput) string {
+	if in.Override != nil {
+		return `<span class=warn>gate OPEN by override — a commit lands unverified (audited)</span>`
+	}
 	switch {
 	case in.Reviewer == nil && in.Batten == nil:
 		return `<span class=bad>no verdict — a commit would be denied</span>`

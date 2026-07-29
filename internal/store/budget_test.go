@@ -215,6 +215,118 @@ func TestQuotaIsMeasuredAsADeltaFromTheRunsBaseline(t *testing.T) {
 // TestMeasureRefusesToConcludeFromTooFewRuns: the headroom/code-graph comparison. With fewer
 // than three runs on a side, the honest answer is "insufficient data", not a number that will
 // be quoted back as fact.
+// TestMeasureByModelAgreesWithTheRunLedger is finding #31. `batten measure` summed only
+// input+output while runs.tokens_spent — recomputed from the SAME usage rows — sums all five
+// buckets, which is the project's own definition of a token (batten.schema.json). The two
+// surfaces disagreed by whatever factor the cache traffic dictated: 21.9× in the field test,
+// 107.7× in the re-verification. The invariant is exact equality over the same rows.
+func TestMeasureByModelAgreesWithTheRunLedger(t *testing.T) {
+	s := open(t)
+	r := run(t, s, "US-1", "sess-a")
+	if _, err := s.RecordUsage([]Usage{
+		{RequestID: "req-1", RunID: r.RunID, NodeID: "n-a", Model: "opus", TS: r.StartedAt,
+			InputTokens: 2000, OutputTokens: 1000, CacheWrite5m: 100_000, CacheWrite1h: 20_000,
+			CacheRead: 200_000, ImputedUSD: 0.96},
+		{RequestID: "req-2", RunID: r.RunID, NodeID: "n-a", Model: "haiku", TS: r.StartedAt,
+			InputTokens: 200, OutputTokens: 100, CacheWrite5m: 5_000, CacheRead: 20_000,
+			ImputedUSD: 0.01},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	byModel, err := s.MeasureByModel("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var measured int64
+	for _, m := range byModel {
+		measured += m.Tokens
+	}
+	got, err := s.Run(r.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if measured != got.TokensSpent {
+		t.Errorf("measure sums %d tokens; the run ledger says %d — the same rows must yield the same total",
+			measured, got.TokensSpent)
+	}
+	// And the absolute value, so both being wrong together cannot pass: all five buckets.
+	if measured != 348_300 {
+		t.Errorf("measure total = %d, want 348300 (2000+1000+100000+20000+200000 + 200+100+5000+20000)", measured)
+	}
+}
+
+// TestARunCarriesItsUnpricedShare is finding #33's data half. Every surface that prints a
+// run's imputed dollars needs to know how much of the spend has no published rate — without
+// it, each surface renders the partial figure as a total, which is exactly how four of them
+// were caught doing it independently. The share rides on the Run row itself.
+func TestARunCarriesItsUnpricedShare(t *testing.T) {
+	s := open(t)
+	r := run(t, s, "US-1", "sess-a")
+	if _, err := s.RecordUsage([]Usage{
+		{RequestID: "req-1", RunID: r.RunID, NodeID: "n-a", Model: "priced", TS: r.StartedAt,
+			InputTokens: 100_000, OutputTokens: 30_000, ImputedUSD: 0.39},
+		{RequestID: "req-2", RunID: r.RunID, NodeID: "n-a", Model: "future-model", TS: r.StartedAt,
+			InputTokens: 70_000, OutputTokens: 10_000}, // no rate: contributes tokens, no dollars
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Run(r.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.UnpricedTokens != 80_000 {
+		t.Errorf("UnpricedTokens = %d, want 80000 — the run must know its dollar figure is a floor",
+			got.UnpricedTokens)
+	}
+	// The ceilings carry the same fact, so `batten budget`'s imputed line can say it.
+	cs, err := s.Budget(got.RunID, 0, 2.0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cs) != 1 || cs[0].Kind != "imputed_usd" {
+		t.Fatalf("ceilings = %+v, want exactly the imputed_usd one", cs)
+	}
+	if cs[0].UnpricedTokens != 80_000 || cs[0].TotalTokens != 210_000 {
+		t.Errorf("imputed ceiling carries unpriced=%d total=%d, want 80000/210000",
+			cs[0].UnpricedTokens, cs[0].TotalTokens)
+	}
+}
+
+// TestMeasureByModelSeparatesUnpricedRequests is finding #32's data half: a request whose
+// model has no published rate carries exact tokens and an UNKNOWN price. Without the split,
+// the renderer's only option is a hard $0.00 under "spend by model" — pricing the
+// unpriceable as free, which the vault note already refuses to do.
+func TestMeasureByModelSeparatesUnpricedRequests(t *testing.T) {
+	s := open(t)
+	r := run(t, s, "US-1", "sess-a")
+	if _, err := s.RecordUsage([]Usage{
+		{RequestID: "req-1", RunID: r.RunID, NodeID: "n-a", Model: "priced", TS: r.StartedAt,
+			InputTokens: 40_000, OutputTokens: 10_000, ImputedUSD: 0.27},
+		{RequestID: "req-2", RunID: r.RunID, NodeID: "n-a", Model: "future-model", TS: r.StartedAt,
+			InputTokens: 50_000, OutputTokens: 7_900}, // no rate exists: ImputedUSD stays 0
+	}); err != nil {
+		t.Fatal(err)
+	}
+	byModel, err := s.MeasureByModel("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]ModelSpend{}
+	for _, m := range byModel {
+		got[m.Model] = m
+	}
+	if m := got["priced"]; m.UnpricedRequests != 0 {
+		t.Errorf("priced model reported %d unpriced request(s), want 0", m.UnpricedRequests)
+	}
+	if m := got["future-model"]; m.UnpricedRequests != 1 || m.Requests != 1 {
+		t.Errorf("unpriced model = %+v, want Requests=1 UnpricedRequests=1", m)
+	}
+	if m := got["future-model"]; m.Tokens != 57_900 {
+		t.Errorf("unpriced model lost its tokens: %d, want 57900 — only the price is unknown", m.Tokens)
+	}
+}
+
 func TestMeasureRefusesToConcludeFromTooFewRuns(t *testing.T) {
 	s := open(t)
 
