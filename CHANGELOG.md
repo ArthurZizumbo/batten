@@ -10,6 +10,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ### Security
 
+- **The sha256 verification was proven against real GitHub infrastructure, not only a local
+  server.** Rehearsing the publication plan's R2 reversal drill on a throwaway public repo produced
+  the mirror case by accident: a release whose `checksums.txt` claimed hashes the archives did not
+  have. `bootstrap.sh` refused it — nothing installed, cache not seeded, exit 0 — twice, once at the
+  explicit tag and once at `releases/latest/download` after the drill moved that pointer onto it.
+  The same run also exercised the BSD `hash *name` spelling that Git Bash's `sha256sum` writes and
+  no local test had covered.
+
 - **The bootstraps verify the release's sha256 before installing anything.** Both scripts
   downloaded 14 MB and checked nothing but that the binary answered `version` — which a hostile
   binary answers happily, and seven hooks plus the MCP server execute that file. GoReleaser has

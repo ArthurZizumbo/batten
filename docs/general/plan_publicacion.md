@@ -229,7 +229,7 @@ Qué mirar, en este orden:
 3. Un `git commit` sin veredicto se **deniega** (control positivo: sin esto el PASS no prueba nada).
 4. Borrar `$ROOT/bin` y abrir sesión nueva: restaura del caché **sin red**.
 
-### 2.2 — La reversa (nueva)
+### 2.2 — La reversa — **ENSAYADA. El drill corrigió la propia tabla.**
 
 Un plan de publicación sin reversa es una lista de deseos. Los datos duros primero, porque la
 reversa se diseña sobre ellos: `latest` es un **puntero móvil** y el cliente no pinea nada; el caché
@@ -247,19 +247,48 @@ que deja de coincidir.
 | falla | reversa | notas |
 |---|---|---|
 | **R1** — `gh run watch` termina rojo: el tag existe, el release no | fix forward: corregir, borrar el tag remoto, re-taggear igual | es la ÚNICA falla que ensaya goreleaser y el interplay prerelease/latest de verdad — el drill de abajo no los cubre, y se estrenan acá |
-| **R2** — release publicado, assets rotos (naming, binario malo) | `gh release edit <tag> --draft=true` → los assets 404an → arreglar → `-beta.N+1` → `--latest` | máquinas con caché siguen con el último bueno; instalaciones nuevas caen al no-gate **ruidoso-una-vez** del bootstrap — el mismo estado que cualquier descarga fallida |
+| **R2** — release publicado, assets rotos (naming, binario malo) | `gh release edit <tag> --draft=true` → arreglar → `-beta.N+1` → `--latest`. **Y con ≥2 releases, borrar o draftear también el anterior** — ver la corrección de abajo | los assets 404an **solo si es el único release**; máquinas con caché siguen con el último bueno; instalaciones nuevas caen al no-gate **ruidoso-una-vez** del bootstrap |
 | **R3** — una máquina instaló la versión mala | runbook de dos líneas: borrar `$ROOT/bin/batten*` y `$DATA/bin/batten*`, abrir sesión nueva (re-bootstrap del `latest` ya arreglado) | detección: `batten doctor` la nombra (warn). El candidato mecánico —que el restore del caché compare contra `plugin.json`— queda anotado en §10, S-M, **no** bloquea beta |
 | **R4** — `gh run watch` se cae o flakea | `gh run list --workflow=release.yml` + `gh run view <id> --log-failed`; re-mirar | **nunca re-taggear por una falla de observación** — el workflow puede haber terminado bien |
 
 - **mecanismo** — esta tabla, más el smoke del paso 5 como disparador (el smoke es lo que convierte
   "assets rotos" de queja de usuario en detección propia).
 - **criterio** — cada falla tiene comandos escritos (esta tabla) **y el drill de R2 se ensayó una
-  vez**, con evidencia guardada (los tres curls con timestamp: 200 → draft → 404 → undraft+latest →
-  200 y `releases/latest/download` re-resuelve).
-- **verificación** — el drill **solo funciona en un repo de prueba PÚBLICO** con un release de
-  assets dummy: en este mismo repo un draft no crea el tag (el workflow no dispara) y los assets de
-  un draft exigen auth — el flip a 404 no se demuestra con curl anónimo; y en un repo privado el
-  curl anónimo da 404 siempre, o sea el drill "pasa" sin probar nada.
+  vez**, con evidencia. ✅ Ensayado el **2026-07-30** en `ArthurZizumbo/dummyforbatten`, público y
+  desechable, con assets **reales** (no dummies) para que el mismo ensayo sirviera de smoke:
+
+  ```
+  22:01:27Z  latest/download/batten_windows_amd64.tar.gz   200   ← publicado, --latest
+  22:01:41Z  (tras --draft=true)                           200   ← NO 404. ver corrección 1
+  22:03:36Z  plain=200  cache-buster=404                         ← ver corrección 2
+  22:03:58Z  plain=404  cache-buster=404
+  22:05:15Z  (tras --draft=false --latest)                 200   ← latest re-resuelve a v0.0.1-drill
+  ```
+
+- **las tres correcciones que salieron de ENSAYARLO, y la primera contradice esta misma tabla:**
+  1. **Draftear NO produce 404 si hay otro release.** `latest` es un puntero móvil, así que
+     draftear el malo **promueve el anterior en silencio** y la URL sigue devolviendo 200 — con
+     otros bytes. El tag explícito sí da 404. Esta tabla decía "los assets 404an" y eso solo vale
+     cuando el release es el único, o sea **hasta beta.1 y no después**. Desde beta.2 la reversa
+     de R2 necesita draftear o borrar también el anterior, o el cliente instala una versión vieja
+     creyendo que instala la última.
+  2. **La reversa tiene ventana de propagación, y se midió.** En el origen es inmediata
+     (cache-buster → 404 al instante); la URL **plana**, que es la que usa el bootstrap, siguió
+     sirviendo 200 durante **~35-45 s**. No es "GitHub cachea": es un número.
+  3. **El fail-closed de §3.1 atrapó el caso mirror contra GitHub real, dos veces.** El release
+     manipulado (`checksums.txt` con hashes falsos) fue rechazado por su tag explícito — y otra vez
+     sin querer, cuando la corrección 1 hizo que `latest` lo promoviera. `$ROOT/bin` vacío, caché
+     sin sembrar, exit 0. Es la primera prueba de §3.1 contra infraestructura real y no contra un
+     `httptest.Server`.
+- **de yapa, el smoke que ningún check local puede dar** — `bootstrap.sh` instaló desde un release
+  de GitHub **de verdad**: `releases/latest/download` resolvió, el nombre del asset coincidió con lo
+  que produce el template, el sha256 se verificó contra un `checksums.txt` servido por GitHub, y
+  `batten version` respondió. De paso ejercitó la grafía BSD (`hash *nombre`) que `sha256sum` de Git
+  Bash escribe y que ningún test local cubría — el `awk` la acepta.
+- **verificación** — el drill **solo funciona en un repo de prueba PÚBLICO** con un release: en este
+  mismo repo un draft no crea el tag (el workflow no dispara) y los assets de un draft exigen auth —
+  el flip a 404 no se demuestra con curl anónimo; y en un repo privado el curl anónimo da 404
+  siempre, o sea el drill "pasa" sin probar nada.
 - **costo** — S (la tabla) + S (el drill).
 - **depende de** — nada para escribir y ensayar; de §2 pasos 1-4 para valer en producción.
 
@@ -684,7 +713,7 @@ adjetivo indefinido.
 | **C1** | ≥1 adopción externa completada con **M1 = sí** (protocolo §6 entero, artefactos archivados) | §6 |
 | **C2** | ✅ los **6 BLOQUEA** de §5 cerrados, cada uno con su test diferencial | §5 |
 | **C3** | ✅ verificación sha256 en los dos bootstraps con la matriz de manipulación en verde | §3.1 |
-| **C4** | la reversa §2.2 escrita **y el drill R2 ensayado una vez** con evidencia | §2.2 |
+| **C4** | ✅ la reversa §2.2 escrita **y el drill R2 ensayado una vez** con evidencia | §2.2 |
 | **C5** | la métrica §4.2 respondida: ≥10 runs, el número, y la decisión del umbral **anotada en este documento** | §4.2 |
 | **C6** | ✅ `declaredAsFuture` con **cero entradas** y `on_exceed` sin valores muertos | §7 |
 | **C7** | ✅ **cero documentos mintiendo a HEAD** — la lista al pie | abajo |
@@ -732,12 +761,13 @@ paralelo desde hoy**:
 ~~§1.0 sweep de tokens~~ ✅ · ~~§3.1 checksum fail-closed~~ ✅ · ~~§4.2 métrica (v12 + measure +
 dogfood)~~ ✅ *(maquinaria; el número necesita ≥10 runs y los acumula el dogfood)* ·
 ~~§5-BLOQUEA los 6 fixes~~ ✅ · ~~§7 campos declarados~~ ✅ · ~~C7 docs~~ ✅ ·
-**§2.2 escribir la reversa + drill R2 en repo de prueba — LO ÚNICO QUE QUEDA de esta vía.**
+~~§2.2 escribir la reversa + drill R2 en repo de prueba~~ ✅ **ensayado en `dummyforbatten`** — la vía paralela está COMPLETA.
 
-La tabla de §2.2 ya está escrita; falta **ensayar el drill R2 una vez**, y eso necesita una decisión
-tuya que este plan no puede tomar: el drill solo prueba algo **en un repo de prueba PÚBLICO** con un
-release de assets dummy (§2.2, *verificación*), o sea que hay que crear ese repo. Es C4 de §8 y es lo
-único de la vía paralela que sigue en rojo.
+Ensayado el 2026-07-30 en `ArthurZizumbo/dummyforbatten`. **La vía paralela entera está en verde**,
+que es la regla de tráfico de esta sección: entra toda antes del tag.
+
+Lo serial queda esperando **la decisión 1.2** — el push, el tag y el release — que es tuya. La 1.1
+ya está tomada y ejecutada (A2).
 
 **Cadena serial:**
 
