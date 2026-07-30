@@ -321,6 +321,10 @@ dashboard cannot.
 /plugin install batten
 ```
 
+**The full install guide is [`docs/INSTALL.md`](docs/INSTALL.md)** — Windows without Git Bash,
+building it yourself instead of downloading (`go install` included), where the state lives and why,
+adopting mid-sprint, and running two sessions in parallel.
+
 > **On Windows, expect your antivirus to complain at least once.** Defender classifies freshly
 > built, unsigned Go binaries as `Trojan:Win32/*!ml` — a machine-learning verdict, not a signature.
 > It happened to this project's own binary: byte-identical builds got different answers and an

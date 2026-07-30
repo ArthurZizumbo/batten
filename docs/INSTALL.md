@@ -3,8 +3,18 @@
 batten se instala como plugin de Claude Code, y **el binario llega solo**: un hook `SessionStart`
 corre el bootstrap, que en el primer arranque descarga el binario estático de tu plataforma desde
 el GitHub Release a **`${CLAUDE_PLUGIN_ROOT}/bin/batten`**. Esa ruta no es una preferencia: es la
-única que los ocho hooks y el servidor MCP nombran, y es el directorio que Claude Code agrega al
-PATH — que es lo que hace que el `batten` pelado de los comandos `/batten-*` resuelva.
+única que los hooks y el servidor MCP nombran, y es el directorio que Claude Code agrega al PATH —
+que es lo que hace que el `batten` pelado de los comandos `/batten-*` resuelva.
+
+> *(Regla de conteo, porque este repo publicó "7 hooks" y "8 hooks" a la vez: `hooks.json` declara
+> **8 entradas** sobre **6 eventos**. Siete invocan el binario; la octava es el bootstrap, que es
+> forma shell porque tiene que correr cuando el binario todavía no existe.)*
+
+**Qué verifica antes de instalar nada.** El bootstrap baja también el `checksums.txt` del mismo
+release, saca **la línea de su propio asset** y compara. Es la única parte del bootstrap que
+**falla cerrado**: hash distinto, `checksums.txt` inalcanzable, o una máquina sin herramienta de
+sha256 son la misma frase —nadie puede responder por estos bytes— y reciben la misma respuesta: no
+se instala nada, el caché no se siembra, y stderr nombra la url, el hash esperado y el obtenido.
 
 Se guarda además una copia en `${CLAUDE_PLUGIN_DATA}/bin`. Eso es **caché**: `${CLAUDE_PLUGIN_ROOT}`
 se borra en cada actualización del plugin, así que después de un update el bootstrap restaura desde
@@ -28,6 +38,61 @@ a mano (o si querés ver la salida completa):
 Requiere `System32\tar.exe`, que Windows trae desde 10 1803. El script lo invoca por ruta completa
 a propósito: el `tar` del PATH suele ser el GNU tar de Git Bash, que lee `C:\Users\...` como un host
 remoto y no desempaca nada.
+
+### Windows y el antivirus
+
+**Es esperable que Defender se queje al menos una vez, y no es que batten esté infectado.**
+Windows Defender clasifica binarios de Go recién compilados y **sin firmar** como
+`Trojan:Win32/*!ml`. El sufijo `!ml` es un veredicto de un modelo de machine learning, no una
+firma, y se comporta como tal: le pasó al binario de este proyecto, con dos builds del **mismo**
+código dando respuestas distintas y un re-escaneo explícito de esos mismos bytes volviendo limpio.
+Eso es la forma de un falso positivo. batten todavía no está firmado con Authenticode.
+
+Importa más que un cartel feo. Si el binario cae en cuarentena **después** de instalarse, cada
+hook queda apuntando a un archivo que ya no existe, mueren en silencio, y `batten doctor` no puede
+avisarte porque doctor **es** el binario que falta. El bootstrap detecta el patrón —una segunda
+restauración desde el caché dentro del mismo día— y lo dice en `SessionStart`. Si ves ese mensaje,
+mirá la cuarentena de tu antivirus.
+
+Qué podés hacer:
+
+- **Reportar el falso positivo** en <https://www.microsoft.com/en-us/wdsi/filesubmission>. Es
+  gratis y sirve para ese binario; cada release es uno nuevo.
+- **Compilarlo vos** — ver abajo. Un binario que produce tu propio toolchain no viaja por la red.
+
+## Compilarlo vos, sin descargar nada
+
+Tres caminos, y ninguno reemplaza al bootstrap: los tres terminan en el mismo lugar, porque
+`${CLAUDE_PLUGIN_ROOT}/bin/batten` es la única ruta que los hooks invocan.
+
+```bash
+# a) desde un checkout — el camino de desarrollo, deja el binario donde va
+scripts/build-plugin.sh          # macOS/Linux
+scripts/build-plugin.ps1         # Windows
+
+# b) go install, sin clonar nada
+go install github.com/ArthurZizumbo/batten/cmd/batten@latest
+#    deja el binario en $(go env GOPATH)/bin. Eso NO alcanza por sí solo: hay que ponerlo
+#    donde los hooks miran.
+cp "$(go env GOPATH)/bin/batten" "$CLAUDE_PLUGIN_ROOT/bin/batten"       # .exe en Windows
+
+# c) desde el checkout, a mano
+go build -o "$CLAUDE_PLUGIN_ROOT/bin/batten" ./cmd/batten
+```
+
+Con el binario ya en su lugar, el bootstrap lo ve y **no descarga nada** — es un `stat` y sale.
+
+> **Por qué el paso de copiar no se puede saltear**, aunque engram sí lo permita: el `.mcp.json` de
+> engram invoca `engram` pelado y resuelve por PATH. batten deliberadamente no hace eso, y la razón
+> tiene nombre — un `batten` cualquiera en el PATH satisfacía `command -v batten` mientras el
+> archivo que los hooks nombran no existía, así que el bootstrap cantaba victoria sobre un `bin/`
+> vacío y nada quedaba gobernado. Los hooks nombran un archivo, no un comando.
+
+> **Un detalle honesto de `v0.1.0-beta.1`:** un binario hecho con `go install` reporta
+> `batten 0.1.0` en vez de `0.1.0-beta.1`, porque la versión la inyecta GoReleaser por ldflags y
+> ese tag todavía no traía el fallback que la lee del módulo. `batten doctor` va a decir que el
+> plugin y el binario no coinciden. Está arreglado para el próximo tag; mientras tanto, usá (a) o
+> (c), o ignorá ese aviso puntual.
 
 ## Instalación (5 pasos)
 

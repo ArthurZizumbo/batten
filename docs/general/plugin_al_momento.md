@@ -33,6 +33,8 @@ pidiéndole al agente que tenga cuidado.
 | configuración | `batten init` escribe un `batten.yaml` funcional **en modo `report`**: los gates avisan, no bloquean |
 | primer valor | `batten demo` corre el flujo entero en un repo desechable y lo borra; no toca nada tuyo |
 | superficie | 28 subcomandos, 7 hooks, 6 slash-commands, 2 skills, 1 servidor MCP |
+
+*(Regla de conteo de los hooks: `hooks.json` declara **8 entradas** sobre **6 eventos**. Siete invocan el binario; la octava es el bootstrap, en forma shell porque corre cuando el binario todavía no existe. El repo llegó a publicar 7 y 8 a la vez, cada uno contestando una pregunta distinta y ninguno diciendo cuál.)*
 | estado | 17 paquetes en verde en Linux/macOS/Windows · matrices de aceptación 41/41 y 26/26 |
 | honestidad | 13 hallazgos del field test siguen abiertos y están listados, no escondidos |
 

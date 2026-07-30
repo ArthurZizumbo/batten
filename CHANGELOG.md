@@ -8,6 +8,16 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.1.0-beta.1] — 2026-07-30
+
+The first tagged version, and the first that anyone other than its author can install.
+
+Everything below shipped in this tag. It carried a second, earlier set of notes written before the
+tag was cut; those follow under *"What the field test changed"* and are kept as written rather than
+merged, because they are the record of a different exercise.
+
 ### Security
 
 - **The sha256 verification was proven against real GitHub infrastructure, not only a local
@@ -193,11 +203,11 @@ reaching the end of the flow, or break the central promise in silence?
   guard runs without `-I`; it was verified red against the previous commit, red with the token
   planted in `graph.json`, and green on the swept tree.
 
-## [0.1.0-beta.1] — 2026-07-29
+### What the field test changed
 
-The first tagged version. It is a **beta** for one honest reason: batten has never been installed
-on a repository other than this one, by anyone who did not write it. Everything below has been
-exercised, and most of it was found by exercising it.
+It is a **beta** for one honest reason: batten has never been installed on a repository other than
+this one, by anyone who did not write it. Everything below has been exercised, and most of it was
+found by exercising it.
 
 ### The field test, and what it changed
 

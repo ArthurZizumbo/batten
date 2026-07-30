@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -45,7 +46,30 @@ import (
 	"github.com/ArthurZizumbo/batten/internal/usage"
 )
 
-var version = "0.1.0"
+// version is what `batten version` prints and what `doctor` compares the installed binary
+// against. GoReleaser overrides it with `-X main.version={{.Version}}`; buildVersion recovers it
+// for every other way batten can legitimately be built.
+var version = buildVersion("0.1.0")
+
+// buildVersion answers "which batten is this" for a binary GoReleaser did not stamp.
+//
+// `go install github.com/ArthurZizumbo/batten/cmd/batten@v0.1.0-beta.1` is a real installation
+// path — it is the only one engram offers, it is the fallback when a download is blocked, and it
+// builds from source the user can audit. Without this it reported the hardcoded default, so a
+// perfectly good install disagreed with `plugin.json` and `batten doctor` told the user their
+// plugin and binary "disagree about what batten is" and to reinstall. A diagnostic that fires on
+// a healthy machine is worse than no diagnostic.
+//
+// The module version is what the go toolchain embeds for a module-versioned build. "(devel)" is
+// what it embeds for a plain `go build` in a checkout, which is not a version and must not be
+// presented as one — that case keeps the fallback.
+func buildVersion(fallback string) string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return fallback
+	}
+	return strings.TrimPrefix(info.Main.Version, "v")
+}
 
 func main() {
 	if len(os.Args) < 2 {
