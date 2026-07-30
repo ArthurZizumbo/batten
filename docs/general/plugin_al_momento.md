@@ -1,11 +1,45 @@
 # batten — el plugin al momento
 
-> Estado real del plugin a **2026-07-29** (cierre del bloque 4), rama `refinamiento-plugin`,
-> versión `0.1.0`, **sin release taggeado**. Todo lo que sigue está verificado contra el código
-> o contra salida capturada de una corrida real. Donde algo se declara y nadie lo lee, lo digo
-> y lo cuento.
+> **Manual y estado real del plugin.** Actualizado a **2026-07-30**, rama `refinamiento-plugin`,
+> HEAD `c47d57a`, versión `0.1.0-beta.1` en los manifiestos, **sin release taggeado todavía**.
+> Todo lo que sigue está verificado contra el código o contra salida capturada de una corrida real.
+> Donde algo se declara y nadie lo lee, lo digo y lo cuento.
 >
-> Este documento se reescribe al cerrar cada bloque de [`plan_mejora.md`](plan_mejora.md).
+> Los cuatro bloques de [`plan_mejora.md`](plan_mejora.md) están cerrados. Lo que queda por hacer
+> está en [`plan_publicacion.md`](plan_publicacion.md); este documento describe lo que **hay**.
+
+---
+
+## 0. Resumen ejecutivo
+
+**Qué es.** Un plugin de Claude Code que convierte el proceso declarado de un repo —fases, gates,
+dominios, write-sets— en **negaciones mecánicas**. Una regla que un `AGENTS.md` solo puede *pedir*,
+un hook de `PreToolUse` puede **imponer**.
+
+**Por qué existe.** El 78 % de las fallas de agentes son silenciosas: el agente reporta éxito y el
+trabajo está mal ([arXiv:2607.07405](https://arxiv.org/html/2607.07405v1)). En las mismas
+mediciones, los gates deterministas **triplicaron** la fiabilidad, y lo hicieron negando cosas, no
+pidiéndole al agente que tenga cuidado.
+
+**Qué impone hoy, mecánicamente:** siete reglas (§1), de las cuales las dos que más importan son
+*no hay commit sin veredicto con evidencia citada* y *dos agentes no escriben el mismo archivo*.
+
+**Cómo se ve desde afuera:**
+
+| | |
+|---|---|
+| instalación | plugin de marketplace; el binario llega solo en el primer `SessionStart` |
+| configuración | `batten init` escribe un `batten.yaml` funcional **en modo `report`**: los gates avisan, no bloquean |
+| primer valor | `batten demo` corre el flujo entero en un repo desechable y lo borra; no toca nada tuyo |
+| superficie | 27 subcomandos, 7 hooks, 6 slash-commands, 2 skills, 1 servidor MCP |
+| estado | 17 paquetes en verde en Linux/macOS/Windows · matrices de aceptación 41/41 y 26/26 |
+| honestidad | 14 hallazgos del field test siguen abiertos y están listados, no escondidos |
+
+**Dónde vive el estado.** `~/.batten/batten.db`, siempre; `BATTEN_DB` lo sobreescribe. SQLite es
+canónico y todo lo demás —canvas, PR, TUI, vault— es proyección con pérdida.
+
+**Lo que no hace.** No orquesta al agente, no comprime contexto, no guarda memoria episódica, no
+inventa tu workflow y no manda nada por red.
 
 ---
 
@@ -58,9 +92,10 @@ PR generado) existe para que esas negaciones sean **auditables** y no sospechosa
 | **2** | `decision` en `events` · `batten report` · `batten demo` · los `.tape` · `batten pr` con DAG Mermaid · canvas HTML autocontenido · README reposicionado · **el sobre de fallo tipado** | ✅ (el GIF falta: vhs/ttyd/ffmpeg no instalados) |
 | **3** | `retry_of` + `depends_on` + `diff_from` + **el guard de valores de columna** · **worktrees** · **modo desatendido** · parseo de Bash advisory · **`scan-diff`** · la cadena graphify→engram | ✅ (el ítem 19 quedó absorbido por los worktrees) |
 | **4** | **honestidad de superficie** (measure con los 5 buckets · UNPRICED/≥$ · el imputado parcial como piso EN el Run · el override visible en todo el CLI) · **fuera del spec** models.tiers/models.phases/provenance.format + obsidian.export cableado · **ciclo de vida** (check/verdict no bifurcan, ids validados ^$, show --run real) · **presentación** (render.Tokens único, narrowExit, canvas sin solape, tui con isatty, init --help/--from) · **criterios como dato** (internal/plan · tabla criteria · AC-n citado en evidencia · `batten status` · el PR cuenta cobertura) · el claim de directorio se rechaza | ✅ |
+| **5** | **distribución** — el camino por el que otra persona lo recibe, que es trabajo distinto del motor: el destino del binario · el bit de ejecución · Windows sin Git Bash · los comandos fallando fuerte · el camino de release ejecutado · el schema que rechazaba el propio spec · el grafo al día | ✅ |
 
-**Suite verde en 16 paquetes** (`internal/render` e `internal/plan` son nuevos), `gofmt`/`go vet`
-limpios, CI en Linux/macOS/Windows.
+**Suite verde en 17 paquetes** (`internal/install` es nuevo), `gofmt`/`go vet` limpios, CI en
+Linux/macOS/Windows.
 
 ---
 
@@ -102,7 +137,7 @@ convierte el segundo en una decisión.
 | componente | ruta | qué hace |
 |---|---|---|
 | binario | `plugin/claude-code/bin/batten[.exe]` | todo; los hooks lo invocan en forma exec |
-| bootstrap | `scripts/bootstrap.sh` | descarga el binario del release si falta |
+| bootstrap | `scripts/bootstrap.{sh,ps1,cmd}` | pone el binario donde los hooks ya lo buscan |
 | hooks | `hooks/hooks.json` | registra los 7 eventos |
 | comandos | `commands/*.md` | los 6 slash-commands |
 | skills | `skills/*/SKILL.md` | `batten-engine`, `batten-verdict` |
@@ -110,19 +145,83 @@ convierte el segundo en una decisión.
 
 **Los hooks son forma exec, no shell.** El binario lee el JSON del hook por stdin y escribe la
 decisión por stdout. Sin `jq`, sin `curl`, sin `bash` — que es exactamente lo que hace frágiles en
-Windows a los hooks que sí lo usan.
+Windows a los hooks que sí lo usan. La única excepción es el bootstrap, que es forma shell por
+necesidad y por eso lleva el despacho de §4.2.
 
-`.gitattributes` no es estilo sino corrección: `bootstrap.sh` commiteado con CRLF da
-`#!/usr/bin/env bash\r` → *bad interpreter* en todo Linux/macOS, el binario nunca se descarga y los
-hooks no-opean **en silencio**. CI lo verifica, y `doctor` lo chequea también en la copia instalada
-—que es otra cosa que el repo—.
+### 4.1 — Hay UNA ruta, y es la del plugin
 
-### Variable de entorno crítica
+**`${CLAUDE_PLUGIN_ROOT}/bin/batten[.exe]`.** No es una preferencia: es la única ruta que nombran
+los siete hooks, el servidor MCP y `batten doctor`, y es el directorio que **Claude Code agrega al
+PATH** — que es lo que hace resolver el `batten` pelado de los bloques bash de los `/batten-*`.
 
-**`BATTEN_DB`** — ruta de la base. Si no está puesta, `dbPath()` **cae a la base real del usuario**
-(`~/.batten/batten.db`). Cualquier prueba en sandbox debe exportarla antes de *cada* comando.
-Nunca `${CLAUDE_PLUGIN_DATA}` (los hooks la tienen seteada y la terminal del usuario no, así que el
-estado se parte en dos bases) ni `${CLAUDE_PLUGIN_ROOT}` (se borra en cada update del plugin).
+`${CLAUDE_PLUGIN_DATA}/bin` guarda una **copia, y solo eso**. `${CLAUDE_PLUGIN_ROOT}` se borra
+entero en cada actualización del plugin (el `bin/` se publica vacío a propósito), así que después de
+un update el bootstrap **restaura desde la copia** en vez de volver a bajar 14 MB.
+
+> Esto estuvo al revés y fue el peor bug de distribución que tuvo el proyecto: el bootstrap
+> instalaba en `$DATA/bin`, imprimía `installed`, y después ningún hook existía, el MCP no arrancaba,
+> cada bloque bash era `command not found` y `doctor` decía *"the gate is not running at all"* sobre
+> una máquina donde el bootstrap acababa de tener éxito. Un contrato escrito en cuatro archivos y
+> nada los comparaba. Ahora `internal/install` es el único que sabe la ruta, y los tests **corren**
+> el bootstrap contra un tar.gz real servido localmente.
+
+### 4.2 — Cómo llega el binario, en las tres plataformas
+
+El hook de `SessionStart` corre una sola línea, y el `||` es el despacho entre sistemas:
+
+```
+bash "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.sh" || powershell -NoProfile -ExecutionPolicy Bypass -File "${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.ps1"
+```
+
+Funciona en las dos plataformas por una razón concreta: **`bootstrap.sh` sale 0 siempre**, incluso
+con la descarga fallada. Así que el fallback dispara bajo exactamente una condición —*no hay bash en
+esta máquina*, el caso de Windows sin Git Bash— y en Unix nunca se invoca `powershell`. Ese
+invariante tiene test en las dos direcciones; si alguien lo rompe, el fallback empieza a dispararse
+en Unix.
+
+Los dos scripts hacen lo mismo en el mismo orden: **1)** ¿ya está en `$ROOT/bin`? listo, una sola
+llamada a `stat` y nada más — es el camino de cada sesión; **2)** ¿hay copia en `$DATA/bin`? se
+restaura y se prueba corriéndola; **3)** se descarga del release, se instala en `$ROOT/bin`, se
+prueba, y se siembra la copia.
+
+Ninguno de los dos dice `installed` sin haber corrido `batten version` primero. Un bootstrap que
+imprime éxito sobre un archivo a medio escribir enseña a confiar en un gate que no está.
+
+**`bootstrap.cmd`** es la entrada a mano para Windows (`scripts\bootstrap.cmd`), y lo que
+[`INSTALL.md`](../INSTALL.md) le dice a alguien que no tiene bash.
+
+### 4.3 — Tres cosas que solo se rompen en la máquina de otro
+
+Las tres son invisibles para quien escribe el repo en Windows, y las tres las decide el repo y no el
+entorno de cada uno:
+
+- **Finales de línea.** `.gitattributes` no es estilo sino corrección: un `bootstrap.sh` commiteado
+  con CRLF da `#!/usr/bin/env bash\r` → *bad interpreter* en todo Linux/macOS, el binario nunca se
+  descarga y los hooks no-opean **en silencio**. CI lo verifica y `doctor` lo chequea también en la
+  copia instalada —que es otra cosa que el repo—.
+- **El bit de ejecución.** Los seis `.sh` están trackeados `100755`. Sin él, en macOS y Linux es
+  `Permission denied` con la misma consecuencia total y silenciosa. Lo imponen `internal/install`
+  (en los tres runners) y el job de lint.
+- **Qué `tar` corre.** El `tar` del PATH suele ser el GNU tar de Git Bash, que lee `C:\Users\…` como
+  un **host remoto** ("Cannot connect to C: resolve failed") y no desempaca nada. El `.ps1` invoca
+  `%SystemRoot%\System32\tar.exe` por ruta completa —bsdtar, que sí acepta letras de unidad— y el
+  `.sh` dejó de pasarle rutas absolutas a `tar`.
+
+### 4.4 — Antes de taggear
+
+`scripts/release-check.sh <tag>` es todo lo que se puede verificar **sin publicar**: que los dos
+números de versión escritos a mano concuerden con el tag, que las seis plataformas cross-compilen,
+que los seis archives se llamen exactamente lo que el bootstrap va a pedir, y que cada uno traiga un
+binario **para esa** plataforma (por magic bytes: ELF, Mach-O, PE). Lo que no se puede verificar
+antes —que `releases/latest/download` resuelva— el script lo dice en voz alta en vez de callarlo.
+
+### Variables de entorno
+
+| variable | qué hace |
+|---|---|
+| **`BATTEN_DB`** | ruta de la base. Sin ella, `dbPath()` **cae a la base real del usuario** (`~/.batten/batten.db`): cualquier prueba en sandbox debe exportarla antes de *cada* comando. Nunca apuntarla a `${CLAUDE_PLUGIN_DATA}` (los hooks tienen esa variable y tu terminal no, así que el estado se parte en dos bases) ni a `${CLAUDE_PLUGIN_ROOT}` (se borra en cada update) |
+| **`BATTEN_VAULT`** | el vault de Obsidian, y gana sobre `capabilities.obsidian.vault`. Existe por lo mismo que `BATTEN_DB`: `batten.yaml` está commiteado, así que una ruta personal ahí publica la carpeta de alguien y le entrega a cada clonador un spec que escribe en un directorio que no tiene |
+| `BATTEN_BOOTSTRAP_BASE_URL` | solo para los tests: apunta el bootstrap a un servidor local. Nada de una instalación lo setea |
 
 ---
 
@@ -130,7 +229,7 @@ estado se parte en dos bases) ni `${CLAUDE_PLUGIN_ROOT}` (se borra en cada updat
 
 | evento | matcher | qué hace batten |
 |---|---|---|
-| `SessionStart` | `startup\|resume\|clear\|compact` | bootstrap del binario + banner: qué unit está abierto, si hay veredicto, a qué unit está atada la sesión, **el briefing de la fase activa** (qué lee, si hace fan-out, qué exige su gate, y el **alcance del diff**), y **si el gate no está gobernando nada** |
+| `SessionStart` | `startup\|resume\|clear\|compact` | bootstrap del binario (§4.2, la única entrada en forma shell) + banner: qué unit está abierto, si hay veredicto, a qué unit está atada la sesión, **el briefing de la fase activa** (qué lee, si hace fan-out, qué exige su gate, y el **alcance del diff**), y **si el gate no está gobernando nada** |
 | `PreToolUse` | `Bash` | **rule 1 desatendida** → **bash write guard** (advisory) → **verdict gate** sobre `git commit` → presupuesto |
 | `PreToolUse` | `Write\|Edit\|NotebookEdit` | **write-set guard** |
 | `PostToolUse` | `Bash` | ata la sesión al unit tras `batten phase`; cierra el run tras un commit exitoso |
@@ -171,6 +270,10 @@ batten.fix: batten doctor
 ---
 
 ## 6. El CLI completo — 27 subcomandos
+
+Los 27 que lista `batten --help`, más `batten version`. Todos leen y escriben la misma base; ninguno
+manda nada por red. Los que un usuario toca a mano son media docena — el resto los invocan los
+hooks, las skills o los slash-commands.
 
 ### Arranque y salud
 
@@ -897,7 +1000,7 @@ coincida — no hardcodean un workflow.
 
 ---
 
-## 17. Los cuatro guards meta — batten aplicándose su propia medicina
+## 17. Los guards meta — batten aplicándose su propia medicina
 
 Un tercio del plan de mejora resultó ser **un solo modo de falla repetido nueve veces**: batten
 declaraba una capacidad de gobierno y no la imponía. Es *exactamente* el modo de falla que batten
@@ -925,6 +1028,25 @@ que no podía inventar ninguna. La heurística se angostó y la afirmación tamb
 corrección es el punto de tenerlos.
 
 Lo que ya **no** se puede hacer: agregar un campo y olvidarse.
+
+### Y cinco más, del bloque 5 — sobre lo que se envía, no sobre lo que corre
+
+La auditoría de distribución mostró que el motor estaba gobernado y **el paquete no**. Estos cinco
+imponen sobre el artefacto lo mismo que los cuatro de arriba imponen sobre el spec:
+
+| guard | dónde | qué impone |
+|---|---|---|
+| `TestManifestsInvokeTheBinaryBootstrapInstalls` | `internal/install` | los 7 hooks y el MCP nombran la ruta que el bootstrap realmente puebla — y ninguno lee `${CLAUDE_PLUGIN_DATA}` |
+| `TestTrackedShellScriptsAreExecutable` | `internal/install` | ningún `.sh` trackeado sin bit de ejecución (lee el **índice**, no el árbol: en Windows el modo del árbol no significa nada) |
+| `TestEveryCommandRefusesToRunWithoutTheBinary` | `internal/install` | el primer bloque `bash` de cada comando y skill trae su preflight — la regla, no la lista, así que un comando nuevo la hereda |
+| `TestTheSpecsThisRepoShipsHaveNoDeadKeys` | `internal/spec` | ningún spec que el repo envíe declara claves que batten no lea; el schema publicado y los ejemplos no pueden contradecirse |
+| `TestEveryMigrationIsAdditive` | `internal/store` | las migraciones son **expand-only**, y `len(migrations) == schemaVersion` |
+
+Los cinco tests del bootstrap **ejecutan los scripts de verdad** contra un `tar.gz` real servido por
+un servidor local: solo la fuente de descarga es falsa. `curl`, `tar`, la plantilla del nombre del
+asset, el `chmod` y el auto-chequeo `batten version` son el código que se envía. Es la respuesta
+directa a que el camino de release estuviera "verificado leyéndolo" — y leerlo es exactamente lo que
+no vio el bug.
 
 ---
 
@@ -956,7 +1078,7 @@ el modelo como un hecho sobre los datos.
 
 ## 19. Estado de calidad
 
-- **Suite verde en 16 paquetes**, CI en Linux/macOS/Windows, `gofmt`/`go vet` limpios.
+- **Suite verde en 17 paquetes**, CI en Linux/macOS/Windows, `gofmt`/`go vet` limpios.
 - **Field test hecho**: 90 comportamientos confirmados funcionando, 80 hallazgos, los 63 sin
   verificar pasados por un verificador adversarial → 52 confirmados, 11 refutados.
   Ver [`../FIELD-TEST.md`](../FIELD-TEST.md). **Al cierre del bloque 4, los hallazgos
@@ -968,7 +1090,13 @@ el modelo como un hecho sobre los datos.
 - **Cada fix lleva un test que FALLA contra el commit anterior**, verificado revirtiendo el
   *comportamiento* y dejando los símbolos — si se revierte el archivo entero falla por error de
   compilación, y eso no prueba nada.
+- **El camino de release, ejecutado:** seis cross-compiles verificados por magic bytes, y el archive
+  real de Windows servido por HTTP local y bajado por el bootstrap de verdad → `batten version`
+  responde `0.1.0-beta.1`. Lo que falta es publicarlo.
 - **Sin release taggeado.** Nunca adoptado por un proyecto ajeno, con gente que no lo escribió.
+- **14 hallazgos confirmados del field test siguen abiertos**, listados uno por uno en el
+  [CHANGELOG](../../CHANGELOG.md) y en [`plan_publicacion.md`](plan_publicacion.md) §5. Eran 15: el
+  #1 —un typo en una clave top-level ignorado en silencio— se cerró con `spec.UnknownKeys`.
 
 ### La lección técnica que se repitió en cada bloque
 
@@ -979,22 +1107,39 @@ exclusión de la base de batten que miraba nombres convencionales cuando `BATTEN
 usuario diga. El `MOVED BASE` sobre una corrida impecable, porque el gate preguntaba desde el árbol
 equivocado. `batten report` archivando la denegación de la regla 4 bajo la causa incorrecta.
 
+Y el bloque 5 la repitió entera: el binario aterrizando donde ningún hook lo invoca, el `tar` de
+MSYS leyendo `C:\Users\…` como un host remoto, y **CI rojo en su propio spec** porque el schema
+publicado rechazaba el `batten.yaml` del proyecto mientras `doctor` lo aprobaba. Las tres salieron
+de correr, no de leer — y dos de ellas de correr cosas que el propio repo ya tenía escritas y
+nunca ejecutaba.
+
 Ninguna de esas se ve leyendo el código.
 
 ---
 
 ## 20. Lo que falta
 
-**Los cuatro bloques del plan están completos.** Lo que queda es lo de fuera de ciclo:
+**Los cinco bloques están completos.** El detalle, con su orden y su verificación, está en
+[`plan_publicacion.md`](plan_publicacion.md); acá el resumen:
 
-**Fuera de ciclo, de gentle-ai:** la **verificación de firma con minisign** del release.
-`bootstrap.sh` descarga el binario **sin verificar nada**. Es una brecha real de cadena de
-suministro y la mejor razón para hacer el release taggeado.
+**Bloqueado en dos decisiones que no son de código:**
+
+1. **`docs/field-test/`** no describe la réplica sintética: describe el proyecto privado. Siete de
+   sus nueve archivos ya son públicos; `verified.json` no lo es todavía y filtra. Limpiar hacia
+   adelante o purgar historia — y hay que decidirlo **antes** de publicar, porque un release
+   congela el contenido y encarece la purga.
+2. **El push, el tag y el release** están en espera por lo mismo: el merge a `main` es parte de la
+   decisión anterior, no un paso independiente.
+
+**Lo primero después de publicar:** la **verificación de la descarga**. Los bootstraps bajan 14 MB y
+no verifican nada, teniendo GoReleaser publicado un `checksums.txt` que nadie lee. Es la única parte
+del bootstrap que debe **fallar cerrado**: un binario no verificado es peor que ningún binario,
+porque los hooks lo invocarían.
 
 **Lo que ningún trabajo interno cierra:**
 
-- No hay **release taggeado**. El camino de release está verificado leyéndolo, no ejecutándolo.
-- batten **nunca fue adoptado por un proyecto ajeno**, con gente que no lo escribió.
+- batten **nunca fue adoptado por un proyecto ajeno**, con gente que no lo escribió. Es la razón por
+  la que la versión se llama `beta`.
 - El formato de transcript que batten parsea **no es una API pública**. Cuando se rompe, batten
   reporta el conteo como no disponible en vez de adivinar — correcto, pero el ledger puede quedarse
   ciego sin aviso.
@@ -1022,3 +1167,13 @@ suministro y la mejor razón para hacer el release taggeado.
 11. **Advisory antes de denegar, cuando el chequeo es heurístico.** Un ciclo midiendo falsos
     positivos, con el número a la vista, antes de darle dientes.
 12. **No declarar lo que no se implementa** — y no confiar en que eso se recuerde: son cuatro tests.
+13. **Un contrato, un hogar.** El defecto recurrente de este código es el mismo hecho escrito en
+    varios archivos hasta que se contradicen: cinco copias del formato de tokens, tres del nombre
+    del gate de cierre, cuatro de la ruta del binario instalado, seis lectores del vault. Antes de
+    escribir un `filepath.Join` o un formato, buscar el paquete que ya sabe esa respuesta.
+14. **El binario va donde los hooks lo invocan**, y solo ahí. Todo lo demás es caché.
+15. **Las migraciones son expand-only.** Dos binarios de batten comparten una base y `doctor` avisa
+    del desfase porque el desfase es lo normal. Se contrae en un release posterior, cuando ya nadie
+    lee lo que se va.
+16. **Lo que se envía se verifica corriéndolo.** El motor tenía guards y el paquete no, y ahí entró
+    el peor bug de distribución del proyecto. Los tests del bootstrap ejecutan el bootstrap.

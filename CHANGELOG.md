@@ -273,13 +273,17 @@ boundary rather than an oversight — `batten scan-diff` is the after-the-fact c
 
 Beyond the field test:
 
-- **The plugin has never been installed from a release.** The install path is verified by reading it,
-  not by executing it, and an audit of that path found real breakage in it: the bootstrap downloads
-  the binary to a directory the hooks do not invoke, `bootstrap.sh` is committed without an exec bit,
-  and there is no PowerShell fallback for Windows without Git Bash. **Until that is fixed, install
-  from source**: `go build -o plugin/claude-code/bin/batten ./cmd/batten`.
-- **`bootstrap.sh` verifies no signature** on the binary it downloads. That is a real supply-chain
-  gap and the best argument for a signed release; minisign verification is the next release's work.
+- **The plugin has never been installed from a published release**, because there has not been one.
+  The audit that found the three install blockers above is closed, and the path is now executed
+  rather than read: `scripts/release-check.sh` cross-compiles all six platforms and checks each
+  archive's name and magic bytes, and the suite drives the real `bootstrap.sh` and `bootstrap.ps1`
+  against a real archive over a local server. What no local check can prove is that
+  `releases/latest/download` resolves — that needs the tag.
+- **The bootstraps verify no checksum** on the binary they download, although GoReleaser publishes
+  `checksums.txt` in every release. That is a real supply-chain gap and the best argument for a
+  signed release; checksum verification, then minisign, is the next release's work — and it is the
+  one part of the bootstrap that must fail *closed*, because an unverified binary is worse than no
+  binary when the hooks are the thing that would run it.
 - **The transcript format batten parses is not a public API.** When it breaks, batten reports the
   count as unavailable rather than guessing — correct, but the ledger can go blind without notice.
 - **No GIF in the README.** The `.tape` scripts are written and verified in content; recording them

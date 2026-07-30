@@ -11,8 +11,12 @@
 > hallazgo verificado del field test, o una fuente citada. Donde el estudio externo se equivoca,
 > lo digo.
 >
-> Contexto: [`plugin_al_momento.md`](plugin_al_momento.md) · [`adopcion_y_esencia.md`](adopcion_y_esencia.md) ·
+> Contexto: [`plugin_al_momento.md`](plugin_al_momento.md) · [`plan_publicacion.md`](plan_publicacion.md) ·
 > [`../FIELD-TEST.md`](../FIELD-TEST.md) · [`../QUICKSTART.md`](../QUICKSTART.md)
+>
+> **Este plan está cerrado.** Sus cuatro bloques se cumplieron; lo que quedó vivo de
+> `adopcion_y_esencia.md` y de `gentle_ai.md` —los dos borrados— está en
+> [`plan_publicacion.md`](plan_publicacion.md), que es el plan vigente.
 
 ---
 
@@ -1016,8 +1020,10 @@ prerrequisito de los contadores.
 
 ### Bloque 1b — lo que trajo gentle-ai ✅ (2026-07-28)
 
-Evaluación completa en [`gentle_ai.md`](gentle_ai.md). 4 aceptadas, 1 rechazada quedándome con su
-mitad útil, 3 nuevas encontradas leyendo las notas de release.
+4 aceptadas, 1 rechazada quedándome con su mitad útil, 3 nuevas encontradas leyendo las notas de
+release. (El documento que las evaluaba, `gentle_ai.md`, se borró al aplicarse: lo único que seguía
+vivo era la verificación de firma del release, y está en
+[`plan_publicacion.md`](plan_publicacion.md) §3.)
 
 | | qué | commit |
 |---|---|---|
