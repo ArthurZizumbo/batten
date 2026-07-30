@@ -1,0 +1,21 @@
+# What must never end up inside a generated, committed artifact.
+#
+# graphify has two modes and only one of them is safe here. `graphify . --code-only` indexes the
+# AST and nothing else — that is how graphify-out/ has always been built, and it is what `batten
+# doctor` tells you to run. Plain `graphify update .` also indexes docs, and GRAPH_REPORT.md's own
+# "next steps" line recommends exactly that. Run it once and docs/field-test lands inside
+# graph.json and graph.html: 328 references, verbatim.
+#
+# That matters more than it looks, for two reasons. The field-test notes describe a private
+# project, and the CI guard against tracked personal paths EXCLUDES graphify-out — a machine-
+# generated 2 MB JSON is unreviewable in a diff, which is the same reason .gitattributes marks it
+# linguist-generated. So a generated file is the one place where something private can be
+# committed and no human or check will ever see it.
+docs/field-test/
+
+# Personal working material. Same rule as .gitignore, restated here because a graph is built from
+# the working tree, not from the index — an untracked file is still fair game for the extractor.
+*.local.md
+*.pdf
+.claude/settings.json
+.claude/settings.local.json
