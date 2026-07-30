@@ -4,9 +4,250 @@ What has actually landed, newest first. Fixes found by *using* batten on itself 
 **[dogfood]** — they are the ones that justify the exercise.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow
-[Semantic Versioning](https://semver.org/spec/v2.0.0.html). Nothing has been released yet.
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+Nothing yet.
+
+## [0.1.0-beta.1] — 2026-07-29
+
+The first tagged version. It is a **beta** for one honest reason: batten has never been installed
+on a repository other than this one, by anyone who did not write it. Everything below has been
+exercised, and most of it was found by exercising it.
+
+### The field test, and what it changed
+
+Before this version, batten was run against a replica of a real four-domain project. That produced
+**80 findings**; the 63 that had not been fixed on the spot went through an adversarial verifier
+that tried to refute each one, leaving **52 confirmed and 11 refuted**. Those 52 were then worked
+in four blocks. **37 are fixed and verified at this tag; 15 remain open** and are listed under
+*Known gaps* rather than quietly carried.
+
+That ratio is the honest headline of this release. The findings, with their reproductions and
+evidence, are in [`docs/field-test/`](docs/field-test/).
+
+The single most useful thing the field test taught was structural: a third of the findings were
+**one failure repeated nine times** — batten declaring a governance capability it did not impose.
+That is precisely the failure batten exists to remove from other people's workflows, so the fix
+was a mechanism rather than nine patches. Four guard tests now hold the line:
+
+| guard | what it imposes |
+|---|---|
+| `TestEveryDeclaredFieldHasAConsumerOrIsDeclaredFuture` | every `batten.yaml` field has a production consumer, or an explicit entry with a reason |
+| `TestDeclaredAsFutureHasNoStaleEntries` | that list cannot document promises that no longer exist |
+| `TestEveryUnattendedRuleIsMechanicalOrRegisteredAsProse` | every absolute rule of `/batten-night` has a mechanism whose identifier is *used*, not merely declared |
+| `TestEveryEdgeRelationReadHasAProducer` | every `edges.rel` a surface reads has something that writes it |
+
+Adding a field and forgetting it is no longer possible. The list of declared-but-unimplemented
+fields went from 16 to **7** — four wired up, three deleted from the spec entirely.
+
+### Added
+
+- **Five process rules became mechanical denials**, joining the two that already were (the commit
+  gate and the write-set guard). Merging a worktree without both verdicts, deleting anything during
+  an unattended run, `batten override` while nobody is watching, committing during an unattended run
+  *with* the verdicts in place, and exceeding the iteration ceiling — all of them used to be prose
+  asking the model to behave, in the most dangerous command the plugin ships.
+- **`batten worktree`** — one tree per work item, created, registered and anchored, with the merge
+  back gated by the same condition as a commit. batten had recommended this in three separate
+  messages and then *punished* it: two units in two trees editing the same relative path looked like
+  two sessions fighting over one file, and the guard denied both. The lock lives in the
+  **git-common-dir**, because a linked worktree's `.git` is a *file* and a lock relative to it is
+  per-worktree — every process takes its own and the mutual exclusion is imaginary.
+- **`batten unattended` / `batten iterate`** — the unsupervised loop's iteration ceiling is counted
+  and enforced. It was declared in the spec, returned over MCP, *drawn in the TUI* as `iters %d/%d`,
+  and never incremented by anything: `runs.iterations` was 0 forever. None of the four unattended
+  denials carries a `fix` field, deliberately — the way out is `--off`, and printing that to a loop
+  nobody is watching hands it the key to its own fence.
+- **`batten status`** — the backlog against the record: every work item the plan document defines,
+  with its run state and its acceptance-criteria coverage, *including the ones nobody has started*.
+  That is the half `batten runs` cannot show. Ad-hoc work is listed separately so the view never
+  implies the backlog is the whole world.
+- **Acceptance criteria as data.** "Criteria" appeared ten times in the codebase's prose and zero
+  times as data. A new `internal/plan` reads `unit.plan` + `unit.locator` — which `batten init` had
+  written from day one and nothing read back — into work-item blocks; `batten phase` seeds a
+  `criteria` table from the item's block; and an **approving** verdict covers exactly the criteria
+  its evidence cites as `AC-<n>:`. A `blocked` verdict naming `AC-2` is describing what failed and
+  covers nothing. `batten pr` now says *"AC-1 covered by X"* with the uncovered ones named out loud,
+  and the gate-phase briefing lists the numbering so a reviewer can use it without asking.
+- **`batten scan-diff`** — asks git what changed and the ledger who claimed what, and contrasts
+  them. Deterministic, no shell parsing, no false positives, so a code generator, a Makefile target
+  or a `python` script is as visible as a `sed`. It refuses to conclude two things it cannot know:
+  *who* touched an unclaimed file, and that a run with zero claims is clean.
+- **`batten report`** — what batten saw and what it *stopped*, with a `--share` markdown form. Every
+  count states the date it started counting: "2 commits denied" reads as an all-time total when
+  batten may have been counting since Tuesday.
+- **`batten pr`** — the pull-request body from the record: a Mermaid DAG that GitHub renders
+  natively, the verification table with cited evidence, the criteria coverage, and the cost. If
+  usage was not measured it says `NOT MEASURED`, never `$0.00`.
+- **`batten canvas --html`** — the run graph as one self-contained ~10 KB page, no network request
+  at all. And the JSON Canvas export for Obsidian.
+- **`batten demo`** — the whole flow on a throwaway git repo in about 30 seconds, touching nothing
+  of yours. Adoption used to take ~8 steps to reach a denied commit.
+- **`batten recover`** — re-anchors a run whose base moved, and says *what* happened to the old
+  anchor. "Someone edited your file" and "the history moved under you" need opposite advice, so the
+  tree fingerprint stores the commit and the tree separately.
+- **`batten doctor` diagnoses everything in one pass**, with the correction beside each problem. It
+  used to stop at the first fatal, which is how people give up on the third iteration.
+- **A typed failure envelope on every denial and every warning** — `batten.code` (a stable string
+  identifier), `batten.fix` (the exact command), `batten.retry` (whether re-running the same call
+  could work). 17 codes. `retry` is the expensive one to get wrong: a missing verdict is *not*
+  retryable, and a loop that retries it burns the window on an identical denial.
+- **The run graph got typed edges with actual producers**: `retry_of` had five readers and zero
+  writers — `batten pr` counted retries for its badge, the canvas painted the edge orange, the vault
+  note listed it, MCP answered `retries: N`, the TUI hung it off the node — and the row had only
+  ever been inserted by hand. `depends_on` had colour in the canvas and no producer: the graph
+  called itself a DAG and had not one edge between two phases.
+- **A Bash write guard**, advisory for one measurement cycle. `Edit` on a claimed file was denied
+  and the byte-equivalent `sed -i` passed in silence, so the guard the whole fan-out safety argument
+  rests on was one `sed` from optional.
+- **The three-memory orientation chain reaches the subagent that writes code.** It consulted
+  nothing and started by reading files, the most expensive of the three options. The instruction is
+  injected by the binary into the phase briefing, and it *requires* saying so when neither memory
+  answered — an agent asked to consult two tools will report having consulted them either way.
+
+### Fixed
+
+- **`batten measure` under-reported token spend by a factor that depended on the traffic** — 21.9×
+  in the field test, 107.7× in the re-verification. It summed input+output while
+  `runs.tokens_spent`, recomputed from the *same rows*, summed all five buckets. The invariant is
+  now a test: `SUM(measure) == SUM(runs.tokens_spent)` over the same rows.
+- **A model with no published rate printed `$0.00`** under a heading reading "spend by model",
+  byte-identical to a measured row that genuinely rounds to zero. Those are opposite facts and no
+  longer share a rendering.
+- **A partially priced run presented its dollar figure as a total.** With 38 % of a run's tokens on
+  an unpriced model, `$0.39` is a floor. The unpriced share now travels *on the run record*, so no
+  surface can fail to see it — `budget`, `runs`, `show`, the TUI, MCP, the PR, the canvas and the
+  vault note all render `≥$0.39` and name the gap. Four surfaces had each been formatting that
+  number on their own, which is exactly how they came to disagree.
+- **An override was invisible across the entire CLI.** After `batten override`, the commit gate
+  flips to allow — and `batten show` kept printing *"the close gate will deny a commit"*, the
+  literal opposite of the truth, in the text an agent plans against. `store.OverrideFor` returns the
+  reason and the timestamp, and the four surfaces that were not asking now ask, in the order the
+  hook decides in: the override first, because it makes every other answer moot.
+- **A commit batten could not attribute passed in silence.** Failing open is the right call — a tool
+  that denies what it cannot verify gets uninstalled on day one — but failing open *silently* is
+  worse than having no gate, because the gate is believed. It now says what is not being gated, and
+  names the fix.
+- **A node id that did not carry its run was not an identifier.** Phase ids were the global string
+  `"p-" + phase`, one row for the whole database: the second work item to enter `build` took the
+  first one's row, and the first one's canvas collapsed to a bare heading.
+- **`batten check` alone could close a unit.** The gate needs two verdicts from two different
+  producers — batten's, proving the declared checks *ran*, and a reviewer's, judging the work
+  against its criteria — and three surfaces were reading "the latest row", which is always
+  `batten check`'s. Its output was painted over the reviewer's evidence, and a run nobody had
+  reviewed was filed as approved.
+- **"Verified" now means verified against *this* tree.** `batten check` proved the checks passed and
+  recorded no trace of *what* they passed against, so a formatter between the check and the commit
+  left the verdict claiming `batten-verified` about a state that no longer existed.
+- **batten could invalidate its own verdicts by writing its own ledger.** The first tree fingerprint
+  hashed everything git reported, so *recording* the verdict changed the tree the verdict was about.
+- **The write-set fence compares files, not filenames** (path + `os.SameFile`), and case-folds where
+  the filesystem does — otherwise an agent crosses the fence by changing a letter's case.
+- **A directory or glob claim is refused** instead of being accepted, reported as protection, and
+  fencing nothing. The guard matches exact paths, so `src/**` was a false fence — and a false fence
+  is worse than none, because the plan trusts it.
+- **Opening a run is `batten phase`'s job and nobody else's.** `batten check` on a closed unit
+  silently forked a second run with no anchor and no phase, exit 0, and `batten show` then displayed
+  only that empty fork.
+- **Work-item ids are validated.** `batten phase FOO-9 build` opened a phantom run with exit 0 while
+  the same command hard-rejects a phase that does not exist. The pattern is anchored whole-string:
+  with `US-\d{3}`, `US-0001` used to slide through on its `US-000` prefix.
+- **`batten show <unit> --run <id>`** resolves that run. It used to discard the flag and its value,
+  print the latest run and exit 0 — even for an id that does not exist.
+- **Token counts render at their own scale.** The session brief showed 42,600 measured tokens as
+  `0.0M`, an apparent zero, in the one line an agent reads before deciding whether there is budget
+  to work with. Five packages carried a private copy of that formatter and a sixth hand-rolled
+  `%.1fM`; there is now one.
+- **Windows exit codes stopped being garbage.** A process that dies abnormally reports a negative
+  NTSTATUS, and the raw value rendered as its unsigned 32-bit wraparound: `exit 4294963238` instead
+  of `-4058` — and that value was *persisted* into the verdict evidence, which `batten show` replays
+  forever.
+- **`batten tui` refuses a non-terminal stdout** instead of emitting 96 bytes of terminal setup,
+  rendering nothing, and never exiting.
+- **`batten init --help` prints usage** instead of writing `batten.yaml` and exiting 0 — it was the
+  only command that both writes a file and had no default arm in its flag switch. `--from` now
+  requires the document to exist and *records* it as `unit.plan`; it used to be a pure stdout echo,
+  producing a byte-identical file whether you passed it or not.
+- **The stale-run warning can be cleared.** Its predicate reads `events.run_id`, and the journal
+  wrote NULL into that column on every row, so the "no activity" half was dead code and a run being
+  worked right now was reported stale on age alone.
+- **Cards no longer overlap in the canvas.** A phase card spans 120 px and its first subagent
+  started at 60 — half a card of overlap, on the surface that exists to be looked at.
+- **`enforcement: report` is recorded on every decision.** Without that, "we ran in report mode for
+  three weeks" has no record of what it cost — which is the other half of a kill switch worth having.
+- **SQLite contention is classified.** A `SQLITE_BUSY` is transient and says so in the envelope;
+  treating it as fatal would brick a session, and treating a missing verdict as retryable burns the
+  window. Identity is device+inode based, not name based.
+- **A tag can no longer publish over a red suite.** `release.yml` went straight to building
+  binaries; a `verify` job now runs the full suite on all three platforms first, and checks that the
+  plugin manifests agree with the tag.
+
+### Removed
+
+- **`models.tiers`, `models.phases` and `provenance.format` are gone from the spec.** The schema
+  claimed *"batten routes subagents and verifies it from the ledger"* and batten deliberately does
+  not orchestrate, so that promise could never be kept; `provenance.format` had neither a writer nor
+  a reader. Per-domain routing survives as `domains.<name>.model`, which batten *does* verify
+  against the usage ledger — `batten show` flags "declared haiku, ran opus" as a deviation instead of
+  a silent overspend. A field a user writes believing it governs, and that does not govern, is worse
+  than its absence.
+
+### Known gaps
+
+**15 of the 52 confirmed findings are still open at this tag.** They are listed here rather than
+carried quietly, because a release that hides its own defect list is the artefact this project
+exists to argue against. Reproductions for all of them are in
+[`docs/field-test/verified.json`](docs/field-test/verified.json).
+
+The two that matter most, both instances of the pattern above:
+
+- **A typo in a top-level `batten.yaml` key is silently ignored** (#1). `enforcment: report` makes
+  `batten doctor` print a green `enforcement: enforce — gates block`, exit 0, no warning. The parser
+  is a non-strict `yaml.Unmarshal`, so it never sees a key it did not bind, and
+  `batten.schema.json`'s root `additionalProperties: false` has zero Go readers — it is documentation
+  the binary never enforces. This one was never triaged into any block, which is its own lesson.
+- **`batten claim` only looks for collisions inside its own run** (#4), so a second run can claim a
+  file another run's agent already owns, be told *"any other agent writing them is now denied"*, and
+  then the hook denies **both** declared owners. The worktree work resolved this structurally for
+  the worktree-per-unit arrangement, but nothing requires, creates or even warns toward a worktree,
+  so in a single checkout it reproduces exactly as filed.
+
+The rest, in one line each: a write-set claim outside the repo root is still accepted with the same
+false assurance (#7) · the write-set stores and reports the case-folded path, so
+`useTrace.ts` comes back as `usetrace.ts` (#43) · unit attribution reads the commit message but the
+documented happy path still omits the `batten check` step a gate with `checks:` requires (#16, #50)
+· a phase that diffs from a missing anchor now warns at runtime but `doctor` does not (#24) ·
+`batten runs` prints no run id, start time or age (#23) and drops the "checks ran" mark (#28) ·
+`measure` still prints a headroom heading in a repo that never declared compression (#34) · the TUI
+run list labels 113 % as "quota" while the detail pane says 17.0 % for the same quantity (#47) ·
+`batten init` writes no `.gitignore` entry for `.batten/` (#59) · a verdict whose evidence items are
+objects instead of strings fails with a raw Go decoder error (#27) · a cross-fence write through a
+`python` heredoc or a Makefile target is still invisible to the Bash guard, which is a stated
+boundary rather than an oversight — `batten scan-diff` is the after-the-fact complement (#6, #60).
+
+Beyond the field test:
+
+- **The plugin has never been installed from a release.** The install path is verified by reading it,
+  not by executing it, and an audit of that path found real breakage in it: the bootstrap downloads
+  the binary to a directory the hooks do not invoke, `bootstrap.sh` is committed without an exec bit,
+  and there is no PowerShell fallback for Windows without Git Bash. **Until that is fixed, install
+  from source**: `go build -o plugin/claude-code/bin/batten ./cmd/batten`.
+- **`bootstrap.sh` verifies no signature** on the binary it downloads. That is a real supply-chain
+  gap and the best argument for a signed release; minisign verification is the next release's work.
+- **The transcript format batten parses is not a public API.** When it breaks, batten reports the
+  count as unavailable rather than guessing — correct, but the ledger can go blind without notice.
+- **No GIF in the README.** The `.tape` scripts are written and verified in content; recording them
+  needs vhs + ttyd + ffmpeg.
+
+---
+
+## Earlier in 0.1.0-beta.1 — the hardening that preceded the field test
+
+Everything below also ships in this tag. It is kept as its own run of sections because it was
+written as it landed, before the field test reframed what mattered; folding it into the lists above
+would have meant rewriting entries that were accurate when they were made.
 
 ### Added
 - **The vault folder explains itself.** A `<project>.md` index note now sits beside the dashboards,
@@ -138,7 +379,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
   machine-local sidecars were removed from the index, which the previous cleanup had added to
   `.gitignore` without untracking.
 
-### Known gaps
-See [ROADMAP.md](ROADMAP.md). The short list: no release has been tagged, batten has never been
-installed on a repo other than this one, and the graph's documentation layer has no edges into the
-code layer.
+(The *Known gaps* list that used to close this section has been superseded by the one in
+[0.1.0-beta.1](#0.1.0-beta.1--2026-07-29) above, which is measured rather than summarized.)

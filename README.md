@@ -47,6 +47,14 @@ it with Claude Code hooks.** The rules stop being advice and start being denials
 
 Everything else in this repo exists to serve these.
 
+**Five more have joined them since**, and they are listed here rather than buried because each one
+used to be prose asking a model to behave: merging a worktree without both verdicts, deleting
+anything during an unattended run, `batten override` while nobody is watching, committing during an
+unattended run *even with* the verdicts in place, and exceeding the declared iteration ceiling. The
+last four are the absolute rules of `/batten-night` — 112 lines of markdown, in the most dangerous
+command this plugin ships, in the one place where a mistake is irreversible and nobody is awake to
+catch it. That was the single loudest instance of batten not taking its own medicine.
+
 ### 1. The verdict gate
 
 An agent finishes a work item, feels good about it, and reaches for the commit:
@@ -104,6 +112,44 @@ $ git commit -m "feat: add order rate limiting"
 **Two verdicts, from two different producers.** `batten check` proves the declared checks ran;
 the envelope proves somebody judged the work against its acceptance criteria. Neither one
 substitutes for the other, and `batten check` on its own does not close a unit.
+
+**And the criteria are data, not prose.** "Acceptance criteria" is the phrase every review gate is
+written around, and for most of this project's life it existed only in sentences: `evidence` was a
+flat list of strings, and nothing could say *which* criterion a given piece of evidence covered — so
+"3 evidence" told you a number and not whether the work was done.
+
+batten reads the criteria out of the document you already keep them in. `unit.plan` names your
+backlog and `unit.locator` says what a work item's heading looks like (`### {id}`); entering a phase
+seeds the item's criteria as rows. A verdict covers a criterion by **citing it**:
+
+```json
+{ "check_id": "US-034-qa", "result": "ok",
+  "evidence": ["AC-1: curl -i shows 429 on request 11",
+               "AC-2: the Retry-After header names the window",
+               "go test ./...: PASS (exit 0)"] }
+```
+
+A string prefix on the format that already existed — not a new nested object, deliberately, because
+handing objects to a field that expects strings is one of the findings in this repo's own defect
+list. Uncited evidence is still evidence; it just does not claim to cover anything.
+
+What that buys is a PR body that makes a much stronger claim than a list of citations:
+
+```markdown
+### Acceptance criteria — 2 of 3 covered
+
+| # | criterion | covered by |
+|---|---|---|
+| AC-1 | returns 429 over the limit | ✅ `curl -i shows 429 on request 11` |
+| AC-2 | the header names the window | ✅ `the Retry-After header names the window` |
+| AC-3 | the limit is per API key | — **not covered**: no approving evidence cites it |
+```
+
+The uncovered row is the point. A scoreboard that shows only the green ones flatters the run, and a
+reviewer reading it cannot tell the difference between finished and unexamined. Only an **approving**
+verdict covers anything — a `blocked` verdict citing `AC-3` is describing what failed, and marking
+it covered would invert its meaning. A work item with no criteria in the plan reports *"no criteria
+seeded"*, never `0/0`: an empty list is not a satisfied list.
 
 ### 2. The write-set guard — what makes parallel fan-out safe
 
@@ -260,17 +306,30 @@ dashboard cannot.
 
 ## Install
 
+> **At `0.1.0-beta.1`, install from source.** An audit of the install path — the one thing this
+> project had verified by *reading* rather than by executing — found that the download path does not
+> yet deliver a working binary: `bootstrap.sh` fetches into `${CLAUDE_PLUGIN_DATA}/bin` while every
+> hook and the MCP server invoke `${CLAUDE_PLUGIN_ROOT}/bin/batten`, so a marketplace install
+> announces success and then gates nothing. That is a worse failure than the one described two
+> paragraphs below, and fixing it is the next release's first item. Until then:
+>
+> ```console
+> $ git clone https://github.com/ArthurZizumbo/batten && cd batten
+> $ go build -o plugin/claude-code/bin/batten ./cmd/batten   # .exe on Windows
+> ```
+>
+> A binary in the plugin's own `bin/` is what the hooks resolve, so this path works today — it is
+> what this repo runs on.
+
 ```
 /plugin marketplace add ArthurZizumbo/batten
 /plugin install batten
 ```
 
-**The binary arrives on its own.** A `SessionStart` hook runs `bootstrap.sh`, which fetches the
-static binary for your platform from the GitHub Release into `${CLAUDE_PLUGIN_DATA}/bin` — a
-location that survives plugin updates. A dev build (`scripts/build-plugin.sh`) puts it in the
-plugin's own `bin/` instead, and bootstrap sees it and exits. Either way the hooks and the MCP
-server resolve it with no out-of-band install step. The repo itself ships `bin/` **empty**;
-committed binaries bloat a repo and go stale.
+**The binary is meant to arrive on its own.** A `SessionStart` hook runs `bootstrap.sh`, which
+fetches the static binary for your platform from the GitHub Release. A dev build
+(`scripts/build-plugin.sh`) puts it in the plugin's own `bin/` instead, and bootstrap sees it and
+exits. The repo itself ships `bin/` **empty**; committed binaries bloat a repo and go stale.
 
 This is worth explaining, because the alternative is a real and common bug: a plugin whose
 `.mcp.json` invokes a **bare command name**, expecting you to have installed the binary separately
@@ -332,6 +391,37 @@ Read in that order — the gate is the last thing you turn on, not the first:
 | `batten close <unit>` | close through the gate and release the write-set claims |
 | `batten pr <unit>` | a PR body from the run record: the real DAG as Mermaid, evidence, cost |
 | `batten recover <unit>` | re-anchor a run whose base moved under it (rebase, amend, pull) |
+| `batten status` | the backlog against the record: every work item, its run state, its criteria coverage |
+| `batten scan-diff <unit>` | the real git diff against the declared write-sets. No shell parsing, no false positives |
+| `batten worktree <unit>` | one tree per work item; the merge back is gated like a commit |
+| `batten unattended <unit>` | nobody is watching: four rules become denials |
+| `batten iterate <unit>` | count one fix→re-verify round; refuses at the ceiling |
+| `batten budget [<unit>]` | the governor: tokens, imputed $, share of the rolling quota |
+| `batten measure` | spend by model, and whether the optional capabilities paid for themselves |
+
+Two of those are worth a sentence each, because they close gaps the other commands could not.
+
+**`batten scan-diff`** is the check that reads no shell. The Bash write guard has a boundary it
+states out loud: it cannot see a write made by a `python` script, a Makefile target or a `go run`,
+because no parser of commands reaches inside one. `scan-diff` asks git what changed and the ledger
+who claimed what, and contrasts them — so a code generator is as visible as a `sed`. It refuses to
+conclude two things it cannot know: *who* touched an unclaimed file (from a diff, the orchestrator
+integrating and an agent crossing the fence look identical), and that a run with zero claims is
+clean. Zero claims is a planning hole, and calling it clean would be the emptiest green tick there is.
+
+**`batten status`** is the view `batten runs` cannot be. A work item nobody has started has no run
+to list, and those are exactly the ones you want to see:
+
+```console
+$ batten status
+backlog docs/backlog.md — 3 unit(s)
+
+US-001  rate limit          ✓ closed ok        AC 2/2 covered
+US-002  retry budget        ◐ running (verify)  AC 1/3 covered
+US-003  audit log           · not started
+
+not in the backlog: US-099 (running)
+```
 
 `/batten-night` is the one to read before trusting. It never deletes anything (if it *wanted* to, it
 tells you in the morning report instead), it never overrides the gate, and it stops before the
@@ -439,11 +529,31 @@ installing batten used to get no output at all**, which is indistinguishable fro
 is fixed, and the matrix that found it is in
 [docs/field-test/REPLICA-UI.md](docs/field-test/REPLICA-UI.md).
 
-What has **not** happened yet, stated plainly: no release has been tagged, and batten has not yet
-been adopted by a project it does not belong to, with people who did not write it. There is no GIF
-in this README — the `.tape` scripts that generate one are written and verified
-([`docs/tape/`](docs/tape/)), but the machine this was built on has no `vhs` installed, and
-`batten demo` is the live version anyway.
+### Where the 52 findings stand
+
+Those 52 confirmed findings were then worked in four blocks. At `0.1.0-beta.1`, **37 are fixed and
+verified; 15 remain open.** They are enumerated, with reproductions, under *Known gaps* in
+[CHANGELOG.md](CHANGELOG.md) — because a project whose whole argument is *"never report a number you
+do not have"* does not get to summarize its own defect list as "mostly done".
+
+Two of the open ones are worth naming here, since both are instances of the pattern batten exists to
+eliminate:
+
+- **A typo in a top-level `batten.yaml` key is silently ignored.** Write `enforcment: report` and
+  `doctor` prints a green `enforcement: enforce — gates block`, exit 0. The parser is a non-strict
+  unmarshal, so it never sees a key it did not bind, and the `additionalProperties: false` in
+  `batten.schema.json` has zero readers in the binary — it is documentation the code never enforces.
+- **`batten claim` only checks collisions inside its own run**, so two concurrent runs in one
+  checkout can each be told they own the same file, after which the guard denies both. A worktree per
+  work item resolves it structurally, and nothing requires or even suggests one.
+
+What has **not** happened yet, stated plainly: **the plugin has never been installed from a
+release** — see the note at the top of *Install*, and the audit that found the download path does not
+deliver a working binary. batten has not been adopted by a project it does not belong to, with people
+who did not write it. `bootstrap.sh` verifies no signature on what it downloads, which is a real
+supply-chain gap. And there is no GIF in this README — the `.tape` scripts that generate one are
+written and verified ([`docs/tape/`](docs/tape/)), but the machine this was built on has no `vhs`
+installed, and `batten demo` is the live version anyway.
 
 The transcript format batten reads for token accounting is **not a public API** and can change
 without notice; if parsing breaks, batten reports the count as unavailable rather than guessing.
