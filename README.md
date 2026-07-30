@@ -321,6 +321,18 @@ dashboard cannot.
 /plugin install batten
 ```
 
+> **On Windows, expect your antivirus to complain at least once.** Defender classifies freshly
+> built, unsigned Go binaries as `Trojan:Win32/*!ml` — a machine-learning verdict, not a signature.
+> It happened to this project's own binary: byte-identical builds got different answers and an
+> explicit rescan of the same bytes came back clean, which is what a false positive looks like.
+> batten is not signed with an Authenticode certificate yet, so this can happen to you.
+>
+> It matters more than a scary dialog. If the binary is quarantined **after** it installs, every
+> hook is pointed at a file that no longer exists, they die in silence, and `batten doctor` cannot
+> tell you because doctor *is* the missing binary. The bootstrap now notices the pattern — a second
+> restore from cache inside a day — and says so on `SessionStart`. If you see that message, check
+> your antivirus quarantine.
+
 **The binary is meant to arrive on its own.** A `SessionStart` hook runs `bootstrap.sh`, which
 fetches the static binary for your platform from the GitHub Release. A dev build
 (`scripts/build-plugin.sh`) puts it in the plugin's own `bin/` instead, and bootstrap sees it and

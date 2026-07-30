@@ -379,6 +379,38 @@ contesta encantado.
   con la matriz de manipulación extendida (firma inválida ⇒ mismo trato que hash inválido).
 - **costo** — M. **depende de** — 3.1 (la maquinaria de fail-closed es la misma).
 
+### 3.4 — Firmar para Windows (Authenticode) — **decisión tuya, y no es la misma que minisign**
+
+Windows Defender puso en cuarentena un `batten.exe` recién compilado como
+`Trojan:Win32/Bearfoos.A!ml`, en la máquina de este proyecto, el 2026-07-30. Diagnosticado antes de
+concluir: el sufijo `!ml` es un veredicto de machine learning y no una firma, y se comportó como
+tal — dos builds del **mismo** código dieron respuestas distintas, tres binarios idénticos
+sobrevivieron, y el re-escaneo explícito de esos bytes (dentro y fuera de `%TEMP%`) volvió limpio,
+igual que el asset ya publicado. Falso positivo, de la clase documentada hasta el cansancio en
+binarios de Go **sin firmar**.
+
+- **por qué importa más de lo que parece** — el estado que deja una cuarentena es exactamente el que
+  batten existe para eliminar: los siete hooks son exec-form sobre un archivo que ya no existe y
+  mueren en silencio, el MCP no arranca, y `doctor` no puede reportarlo porque doctor **es** el
+  binario que falta. Y batten declara Windows como target primario.
+- **lo que ya está hecho** — el bootstrap dejó de restaurar del caché en silencio afirmando "plugin
+  update". La reincidencia (dos restauraciones en un día) es la única señal disponible, y ahora
+  dispara un aviso que nombra la cuarentena y dice qué cuesta. Dos tests, uno por script.
+- **lo que NO arregla eso** — nada de lo anterior evita la cuarentena. Lo que la baja de verdad es
+  **firmar el binario con Authenticode**, y eso cuesta un certificado (OV o EV) y es una decisión de
+  plata, no de código. **No es lo mismo que minisign de §3.3**: minisign cubre "estos bytes son los
+  que publicó el autor" para quien verifica a mano; Authenticode cubre "Windows y su antivirus
+  confían en este ejecutable". Públicos distintos, mecanismos distintos, y ninguno reemplaza al
+  otro.
+- **lo gratis, mientras tanto** — reportar el falso positivo a Microsoft
+  (<https://www.microsoft.com/en-us/wdsi/filesubmission>) hace que el modelo deje de marcar **ese**
+  binario. Cada release es un binario nuevo, así que es alivio por versión, no solución.
+- **criterio** — o el release lleva firma Authenticode, o el README dice, donde el usuario de
+  Windows lo vea, que un aviso del antivirus es esperable y qué hacer. Lo que no puede pasar es que
+  la primera vez que alguien lo vea sea sin ninguna advertencia.
+- **costo** — S (la nota en el README) · M + dinero (el certificado).
+- **depende de** — nada. **NO bloquea la beta**; sí bloquea llamarlo listo para Windows sin decirlo.
+
 ---
 
 ## 4. BLOQUE 3 — lo rescatado de `adopcion_y_esencia.md`
@@ -718,6 +750,7 @@ adjetivo indefinido.
 | **C6** | ✅ `declaredAsFuture` con **cero entradas** y `on_exceed` sin valores muertos | §7 |
 | **C7** | ✅ **cero documentos mintiendo a HEAD** — la lista al pie | abajo |
 | **C8** | minisign publicado con custodia LOCAL decidida y verificación en los bootstraps | §3.3 |
+| **C9** | Windows: o firma Authenticode, o el README avisa del falso positivo de Defender donde se vea | §3.4 |
 
 **C7, enumerado — HECHO** (cada uno S, y juntos son la credibilidad del release):
 
