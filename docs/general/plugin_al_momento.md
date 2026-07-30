@@ -5,7 +5,8 @@
 > Todo lo que sigue está verificado contra el código o contra salida capturada de una corrida real.
 > Donde algo se declara y nadie lo lee, lo digo y lo cuento.
 >
-> Los cuatro bloques de [`plan_mejora.md`](plan_mejora.md) están cerrados. Lo que queda por hacer
+> Los cuatro bloques de `plan_mejora.md` están cerrados — el registro se retiró del árbol y vive en
+> el historial de git. Lo que queda por hacer
 > está en [`plan_publicacion.md`](plan_publicacion.md); este documento describe lo que **hay**.
 
 ---
@@ -33,7 +34,7 @@ pidiéndole al agente que tenga cuidado.
 | primer valor | `batten demo` corre el flujo entero en un repo desechable y lo borra; no toca nada tuyo |
 | superficie | 27 subcomandos, 7 hooks, 6 slash-commands, 2 skills, 1 servidor MCP |
 | estado | 17 paquetes en verde en Linux/macOS/Windows · matrices de aceptación 41/41 y 26/26 |
-| honestidad | 14 hallazgos del field test siguen abiertos y están listados, no escondidos |
+| honestidad | 13 hallazgos del field test siguen abiertos y están listados, no escondidos |
 
 **Dónde vive el estado.** `~/.batten/batten.db`, siempre; `BATTEN_DB` lo sobreescribe. SQLite es
 canónico y todo lo demás —canvas, PR, TUI, vault— es proyección con pérdida.
@@ -1094,9 +1095,11 @@ el modelo como un hecho sobre los datos.
   real de Windows servido por HTTP local y bajado por el bootstrap de verdad → `batten version`
   responde `0.1.0-beta.1`. Lo que falta es publicarlo.
 - **Sin release taggeado.** Nunca adoptado por un proyecto ajeno, con gente que no lo escribió.
-- **14 hallazgos confirmados del field test siguen abiertos**, listados uno por uno en el
-  [CHANGELOG](../../CHANGELOG.md) y en [`plan_publicacion.md`](plan_publicacion.md) §5. Eran 15: el
-  #1 —un typo en una clave top-level ignorado en silencio— se cerró con `spec.UnknownKeys`.
+- **13 hallazgos confirmados del field test siguen abiertos**, triados uno por uno en
+  [`plan_publicacion.md`](plan_publicacion.md) §5. Eran 15: el #1 —un typo en una clave top-level
+  ignorado en silencio— se cerró con `spec.UnknownKeys`, y el #60 de la lista vieja resultó ser un
+  error de numeración sobre un hallazgo ya cerrado con test — la historia está en ese §5. (El
+  CHANGELOG todavía dice 14; corregirlo es parte del criterio C7 del plan.)
 
 ### La lección técnica que se repitió en cada bloque
 
