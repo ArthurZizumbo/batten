@@ -108,3 +108,54 @@ func TestChangedFilesSeesUncommittedWork(t *testing.T) {
 		t.Errorf("a staged new file dropped out of the diff: %v", got)
 	}
 }
+
+// TestCanonicalAgreesWhetherOrNotThePathExists is the invariant the write-set guard rests on.
+//
+// Canonical resolved symlinks only for paths that EXIST. That looked harmless and was not: a repo
+// root exists and resolves (on macOS `/var` is a symlink to `/private/var`), while a file an agent
+// is about to CREATE does not and came back unresolved. The two sides of every comparison then sat
+// in different spellings exactly when one existed and the other did not — filepath.Rel reported a
+// file inside the repo as outside it, and the write-set guard allowed every write it exists to
+// deny. Seven tests went "silent-allow" on the two platforms that have path aliases, and none on
+// the one it was written on.
+//
+// So the property is not "resolves symlinks", it is "answers the same way for a directory and for
+// a path under it, whether or not that path exists yet".
+func TestCanonicalAgreesWhetherOrNotThePathExists(t *testing.T) {
+	real := filepath.Join(t.TempDir(), "real")
+	if err := os.MkdirAll(filepath.Join(real, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable here (%v); the aliasing this guards against is macOS /var "+
+			"and Windows 8.3, and CI covers both", err)
+	}
+
+	root := Canonical(link)
+	if root == link {
+		t.Skip("this filesystem did not alias the link; nothing to prove here")
+	}
+
+	// A file that exists, and one that does not. Both must land under the same canonical root, or
+	// the guard's containment check is deciding on a spelling rather than on a location.
+	existing := filepath.Join(link, "sub")
+	future := filepath.Join(link, "sub", "not-created-yet.go")
+	for _, c := range []struct{ name, path, want string }{
+		{"existing", existing, filepath.Join(root, "sub")},
+		{"not created yet", future, filepath.Join(root, "sub", "not-created-yet.go")},
+	} {
+		if got := Canonical(c.path); got != c.want {
+			t.Errorf("Canonical(%s) = %q, want %q", c.name, got, c.want)
+		}
+	}
+
+	// And the consequence, stated as the thing that actually broke: a file under the root must be
+	// INSIDE it, created or not.
+	for _, p := range []string{existing, future} {
+		if rel, inside := RelTo(link, p); !inside {
+			t.Errorf("RelTo(root, %q) says outside the repo (rel=%q). That is the answer that "+
+				"makes the write-set guard wave a trespass through", p, rel)
+		}
+	}
+}

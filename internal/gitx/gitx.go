@@ -129,7 +129,30 @@ func Canonical(p string) string {
 	if resolved, err := filepath.EvalSymlinks(p); err == nil {
 		return resolved
 	}
-	return p
+	// The path does not exist YET, which is not an edge case here — the write-set guard resolves
+	// files an agent is about to create, and `batten claim` accepts paths for files that do not
+	// exist. Resolve the deepest ancestor that DOES exist and re-attach the rest.
+	//
+	// Returning p unresolved instead is what the first version did, and it was worse than doing
+	// nothing: a repo root that exists resolves (/var -> /private/var) while a not-yet-created
+	// file under it does not, so the two sides of every comparison ended up in DIFFERENT
+	// spellings — precisely when one existed and the other did not. filepath.Rel then reported a
+	// file inside the repo as outside it, repoRel answered "not this repository's business", and
+	// the write-set guard allowed every write it exists to deny. Seven tests, on the two
+	// platforms that have path aliases and not on the one this was written on.
+	rest := ""
+	dir := p
+	for {
+		parent := filepath.Dir(dir)
+		if parent == dir { // reached the volume root; nothing above resolved
+			return p
+		}
+		rest = filepath.Join(filepath.Base(dir), rest)
+		dir = parent
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+	}
 }
 
 // Worktree is one checkout of a repository: the main one plus every linked worktree.
