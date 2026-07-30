@@ -1167,8 +1167,8 @@ func printWriteSets(st *store.Store, project string) {
 	}
 	// The pre-registered reading, printed with the number so the threshold cannot be chosen
 	// after seeing it. The bands: ≥32% (the S-Bus floor) means over-declaration is real and advise()
-// should extend to low-severity collisions, with the severity decided BY A RULE; ≤15% with ≥5 runs
-// in enforce and zero write_set denials means the problem was invented and the line closes.
+	// should extend to low-severity collisions, with the severity decided BY A RULE; ≤15% with ≥5 runs
+	// in enforce and zero write_set denials means the problem was invented and the line closes.
 	switch {
 	case ws.Runs < 10:
 		fmt.Printf("  (below the pre-registered N: the threshold needs ≥10 scanned runs.\n")
