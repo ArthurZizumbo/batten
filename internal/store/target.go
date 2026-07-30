@@ -46,7 +46,20 @@ func TargetDigest(root string) string {
 		// a comparison to.
 		return ""
 	}
-	status, err := gitOutput(root, "status", "--porcelain", "-uall")
+	// NOT gitOutput: in porcelain v1 the two leading characters are the STATUS COLUMNS, and for
+	// the commonest state of all — modified in the worktree, not staged — the first of them is a
+	// space. TrimSpace eats it, but only on the FIRST line, so the shape of every kept line
+	// depended on which line happened to come first.
+	//
+	// That is not cosmetic. batten's own `.batten/batten.db-wal` sorts BEFORE `app.go`, so the
+	// moment batten wrote to its ledger the first line changed, the trim moved to a different
+	// line, and the filtered result went from "M app.go" to " M app.go" — a different string, a
+	// different hash. batten invalidated its own verdict by writing its own ledger, which is the
+	// exact failure this file exists to prevent, reintroduced by a whitespace trim.
+	//
+	// It survived on Windows because SQLite churns -wal/-shm differently there and the first line
+	// never changed. Three of the four CI runners caught it the first time they ever ran.
+	status, err := gitStatusPorcelain(root)
 	if err != nil {
 		return ""
 	}
@@ -103,15 +116,11 @@ func min(a, b int) int {
 func withoutBattensOwnState(status string) string {
 	var kept []string
 	for _, line := range strings.Split(status, "\n") {
-		if line == "" {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		// Porcelain v1: two status columns, a space, then the path.
-		p := line
-		if len(p) > 3 {
-			p = p[3:]
-		}
-		p = strings.Trim(p, `"`)
+		p := strings.Trim(porcelainPath(line), `"`)
 		p = strings.ReplaceAll(p, `\`, "/")
 		base := p
 		if i := strings.LastIndex(p, "/"); i >= 0 {
@@ -123,6 +132,44 @@ func withoutBattensOwnState(status string) string {
 		kept = append(kept, line)
 	}
 	return strings.Join(kept, "\n")
+}
+
+// porcelainPath pulls the path out of a `git status --porcelain` line.
+//
+// Deliberately tolerant of a line that has ALREADY lost leading whitespace, which is how this was
+// found: it consumes at most two leading status characters and then one separating space, so
+// " M app.go" and "M app.go" both yield "app.go". gitStatusPorcelain now keeps the columns intact,
+// and this makes the parse independent of that anyway — the bug cost a day of green CI on one
+// platform, and defence in depth is cheaper than finding it twice.
+func porcelainPath(line string) string {
+	const statusChars = " MADRCU?!"
+	i := 0
+	for i < len(line) && i < 2 && strings.IndexByte(statusChars, line[i]) >= 0 {
+		i++
+	}
+	if i < len(line) && line[i] == ' ' {
+		i++
+	}
+	// A rename reads `XY ORIG -> PATH`; the destination is what exists on disk now.
+	rest := line[i:]
+	if j := strings.Index(rest, " -> "); j >= 0 {
+		rest = rest[j+4:]
+	}
+	return rest
+}
+
+// gitStatusPorcelain returns `git status --porcelain -uall` with its STATUS COLUMNS INTACT.
+//
+// gitOutput's TrimSpace is right for every other caller and wrong for exactly this one: it strips
+// the leading space that IS the first status column, and only from the first line. See the comment
+// at the call site in TargetDigest for what that cost.
+func gitStatusPorcelain(root string) (string, error) {
+	cmd := exec.Command("git", "-C", root, "status", "--porcelain", "-uall")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimRight(string(out), "\r\n"), nil
 }
 
 func gitOutput(root string, args ...string) (string, error) {

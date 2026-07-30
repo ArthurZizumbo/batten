@@ -73,7 +73,38 @@ func CommonDir(dir string) (string, error) {
 		}
 		p = abs
 	}
-	return p, nil
+	// Canonical, because this string IS the lock's identity. Two worktrees of one repository must
+	// arrive at the same bytes here or the lock excludes nobody — every process takes its own file,
+	// every process succeeds, and the mutual exclusion the whole file is about silently does not
+	// exist.
+	//
+	// Two aliases do this, and both are the norm on a CI runner rather than an oddity:
+	//
+	//   - macOS: `/var` is a symlink to `/private/var`, so the main worktree answers relatively
+	//     (joined against a `/var/...` cwd) and a linked one answers absolutely (`/private/var/...`).
+	//   - Windows: a path reached through `%TEMP%` can carry an 8.3 short name (`RUNNER~1`) while
+	//     git answers with the long one (`runneradmin`).
+	//
+	// Both were caught by the same test on the first CI run this code ever had.
+	return Canonical(p), nil
+}
+
+// Canonical resolves a path to the form two different processes will agree on: symlinks followed
+// on Unix, 8.3 short names expanded on Windows.
+//
+// It falls back to the input when the path cannot be resolved — a path that does not exist yet is
+// a normal argument here, and refusing to answer would be worse than answering approximately.
+func Canonical(p string) string {
+	if p == "" {
+		return p
+	}
+	if abs, err := filepath.Abs(p); err == nil {
+		p = abs
+	}
+	if resolved, err := filepath.EvalSymlinks(p); err == nil {
+		return resolved
+	}
+	return p
 }
 
 // Worktree is one checkout of a repository: the main one plus every linked worktree.
@@ -114,7 +145,17 @@ func SameTree(a, b string) bool {
 	if a == "" || b == "" {
 		return false
 	}
-	a, b = filepath.Clean(a), filepath.Clean(b)
+	// Canonical first, because the two sides reach here from different places and routinely spell
+	// the same directory differently: one from a tool's own idea of the path (a `t.TempDir()`, a
+	// `cwd`) and the other from git, which answers with what it resolved. On Windows that is an
+	// 8.3 short name against its long form (`RUNNER~1` vs `runneradmin`); on macOS it is `/var`
+	// against `/private/var`.
+	//
+	// Getting this wrong is not a near miss. Two worktrees of one repo that fail to compare equal
+	// make the merge guard think you are standing in the tree you are merging FROM, and make the
+	// cross-run write-set guard treat one checkout as two. Both were caught by CI on Windows the
+	// first time this code ever ran there.
+	a, b = filepath.Clean(Canonical(a)), filepath.Clean(Canonical(b))
 	if runtime.GOOS == "windows" {
 		return strings.EqualFold(a, b)
 	}
@@ -180,12 +221,20 @@ func ChangedFiles(root, base string, exclude ...string) ([]string, error) {
 	if base == "" {
 		return nil, errors.New("no base commit to diff from")
 	}
+	// Both sides canonical before the comparison, for the reason spelled out on Canonical: on
+	// macOS the caller's root arrives as `/var/...` and the database path as `/private/var/...`,
+	// so filepath.Rel succeeds and returns a `../../..` walk that matches nothing. The exclusion
+	// then silently does not apply, and batten reports its OWN ledger as the unit's work — which
+	// is what `TestEnteringAPhaseSaysWhatItsDiffScopeIs` caught the first time it ran on macOS.
+	canonRoot := Canonical(root)
 	drop := map[string]bool{}
 	for _, e := range exclude {
 		if e == "" {
 			continue
 		}
-		if rel, err := filepath.Rel(root, e); err == nil {
+		if rel, err := filepath.Rel(canonRoot, Canonical(e)); err == nil && !strings.HasPrefix(rel, "..") {
+			e = rel
+		} else if rel, err := filepath.Rel(root, e); err == nil {
 			e = rel
 		}
 		e = strings.ReplaceAll(e, `\`, "/")
