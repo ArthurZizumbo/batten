@@ -103,6 +103,26 @@ jobs:
             bash -n "$f" || exit 1
           done
 
+      # This repo is authored on Windows, where git does not track the execute bit and nothing
+      # local ever notices its absence. Both bootstrap.sh copies were committed 100644, so
+      # `${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.sh` was Permission denied on macOS and Linux —
+      # the two platforms this machine cannot reproduce. Same class as the CRLF problem
+      # .gitattributes solves, and it needed the same treatment: the repo decides, not the
+      # developer's filesystem.
+      #
+      # `grep -v` exits 1 when everything is 100755, so the obvious `... | grep -v '^100755' &&
+      # exit 1` fails the step on a HEALTHY tree under `bash -e`. Capture, then decide.
+      # internal/install checks this too, on all three runners; this is the fast reading.
+      - name: every tracked shell script has the execute bit
+        run: |
+          bad="$(git ls-files -s '*.sh' | grep -v '^100755' || true)"
+          if [ -n "$bad" ]; then
+            echo "$bad"
+            echo "^ tracked without +x: Permission denied on macOS and Linux."
+            echo "  Fix: git update-index --chmod=+x <file>"
+            exit 1
+          fi
+
       # This repo is public and was authored on one machine. Absolute home paths and private
       # working files have both reached git here before; four private files had to be purged
       # from the whole history once. Catch the next one at the pull request instead.
