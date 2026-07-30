@@ -93,7 +93,6 @@ domains:
     # muestran ESTE nombre, no "general-purpose" siete veces.
     agent: agrosat-ml-engineer
     skills: [agrosat-ml-segmentation, agrosat-ml-features, agrosat-ml-ensemble, agrosat-ml-evaluation]
-    resources: [gpu] # declara contención -> el motor serializa contra el probe
     invariants:
       - Polars, no pandas en pipelines
       - Spatial CV (build_spatial_kfold), nunca random split
@@ -101,6 +100,10 @@ domains:
       - MLflow @track_experiment con data_version + code_version (server :5010, NO ./mlruns)
       - FarSLIP usa prototipos fenológicos reales, NO torch.randn
       - checkpoints por época en checkpoints/<modelo>/<run>/ (el repo ya vive en F:)
+      # La contención de la H100 vive acá y no en un bloque `resources:`, porque un invariante SÍ
+      # tiene lector — viaja verbatim al prompt de cada agente de este dominio — y `resources:`
+      # no tenía ninguno. Ver la nota al pie de este archivo.
+      - 'nvidia-smi antes de entrenar: la H100 es exclusiva y la comparten 3 personas'
 
   agent:
     path: ml/agent/
@@ -150,14 +153,12 @@ domains:
       - MaterializeResult + MetadataValue
       - graceful skip on is_gcs_auth_error -> "skipped_no_gcs"
 
-# La H100: un recurso escaso, compartido entre 3 personas. Hoy la coordinación es prosa
-# ("revisa nvidia-smi antes"). Aquí es un recurso declarado: el motor lo consulta.
-resources:
-  gpu:
-    kind: exclusive_pool
-    probe: 'nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits'
-    unit: MiB
-    priority: [farslip, tsvit, ensembles, qwen] # el orden cuando no caben en paralelo
+# La H100 es un recurso escaso compartido entre 3 personas, y la coordinación sigue siendo prosa
+# ("revisá nvidia-smi antes"). El spec tenía un bloque `resources:` que la declaraba y batten NO
+# la arbitraba: no hay orquestador que corra el probe ni que encole por prioridad. Cuatro campos
+# prometiendo serialización que nada serializa. Se sacó del spec en vez de dejarlo prometido, y la
+# contención bajó a `domains.ml.invariants` — que sí tiene lector: viaja verbatim al prompt de cada
+# agente del dominio. Una regla que un agente lee vale más que un campo que nadie ejecuta.
 
 gates:
   qa:

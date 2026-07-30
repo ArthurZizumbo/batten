@@ -65,9 +65,10 @@ conflict at 3am — it becomes a denied Edit five seconds in. Plan accordingly.
 - **If two sub-tasks share a file, they are ONE sub-task.** Merge them.
 - **If sub-task C consumes the output of A and B, it is SEQUENTIAL, not parallel.** Say so
   explicitly, and say what it waits for. Parallelism is for disjoint work, not for hopeful work.
-- **If a domain declares `resources:`, say what it needs from that resource** (how much VRAM, how
-  long the lock). The build phase probes capacity before launching, and it can only queue sensibly
-  if you wrote down the budget.
+- **If a domain's `invariants:` name something scarce and exclusive** (a GPU, a staging database,
+  a rate-limited API), say what this unit needs from it and for how long. batten does not arbitrate
+  contention — it deliberately does not orchestrate — so the sequencing you write here IS the
+  arbitration.
 
 Express it so the build phase can execute it without re-deciding anything:
 

@@ -609,7 +609,7 @@ es la trampa:
 
 ---
 
-## 7. Los 7 campos en `declaredAsFuture` — y la fisura que el guard no ve (nueva)
+## 7. Los 7 campos en `declaredAsFuture` — **CERRADO: la lista quedó VACÍA**
 
 La lista vive en `internal/spec/declared_test.go:50-67` con su razón por entrada, y el guard
 `TestEveryDeclaredFieldHasAConsumerOrIsDeclaredFuture` la sostiene. Bajó de 16 a 7. **Cada campo
@@ -636,14 +636,29 @@ nada — la misma fisura que el propio guard documenta para el viejo `MaxIterati
 | `downgrade_effort` | **sacar** | bajar el esfuerzo del modelo es orquestación; batten no orquesta | S |
 
 - **criterio de cierre de la sección** — **`declaredAsFuture` queda con CERO entradas**, y los tres
-  valores de `on_exceed` o hacen algo o no existen. El verificador ya está escrito: son los guards
-  de `declared_test.go` (para las salidas "sacar", `TestDeclaredAsFutureHasNoStaleEntries` obliga a
-  limpiar la lista; para "cablear", el guard de consumidores exige el lector).
-- **verificación** — suite; más un test por cableado (briefing contiene `when`/`coverage`;
-  `on_exceed: warn` produce advise con el sobre tipado) — cada uno **falla contra HEAD**.
-- **costo total** — M. **depende de** — nada; paralelo. Tocará `batten.schema.json` + examples
-  (la lección del CI rojo: `TestTheSpecsThisRepoShipsHaveNoDeadKeys` es el guard que lo fuerza a
-  hacerse completo).
+  valores de `on_exceed` o hacen algo o no existen. ✅ las dos. El verificador ya estaba escrito:
+  son los guards de `declared_test.go` (para las salidas "sacar",
+  `TestDeclaredAsFutureHasNoStaleEntries` obliga a limpiar la lista; para "cablear", el guard de
+  consumidores exige el lector).
+- **verificación** — suite; más un test por cableado, y los tres **fallan contra `235426d`**:
+  `TestThePhaseBriefingCarriesTheWhenCondition`, `TestTheGateBriefingCarriesTheCoverageFloors` y
+  `TestOnExceedWarnSaysSoInsteadOfPassingInSilence`. Cada uno lleva su control: `when` y `coverage`
+  tienen que decir **advisory** (imprimirlos sin eso los hace parecer un chequeo que batten corrió,
+  que es la promesa que esta sección existe para dejar de hacer), un dominio sin piso declarado no
+  puede aparecer con `0%`, y `TestOnExceedBlockStillDenies` fija que ablandar `warn` no ablandó
+  también `block`.
+- **la migración, que no es opcional** — un spec que todavía traiga `resources:` **sigue cargando**
+  (batten no ladrillea un repo por una clave que dejó de leer) y `UnknownKeys` lo reporta, con su
+  test. `on_exceed: downgrade_effort` no carga, y el error **nombra la remoción** en vez de tratarla
+  como typo — un "valor inválido" a secas mandaría al usuario a buscar el error de tipeo que no
+  cometió.
+- **la contención de recursos no desapareció, bajó de nivel** — donde un dominio disputa algo
+  escaso, va en sus `invariants:`, que viajan verbatim al prompt del agente. Una regla que un agente
+  lee vale más que un campo que nadie ejecuta; el ejemplo `agrosat` quedó reescrito así, con la nota
+  al pie que dice por qué.
+- **costo total** — M. **depende de** — nada; paralelo. Tocó `batten.schema.json` + los 3 examples +
+  5 documentos de comandos en el mismo commit (la lección del CI rojo:
+  `TestTheSpecsThisRepoShipsHaveNoDeadKeys` es el guard que lo fuerza a hacerse completo).
 
 ---
 
@@ -659,7 +674,7 @@ adjetivo indefinido.
 | **C3** | ✅ verificación sha256 en los dos bootstraps con la matriz de manipulación en verde | §3.1 |
 | **C4** | la reversa §2.2 escrita **y el drill R2 ensayado una vez** con evidencia | §2.2 |
 | **C5** | la métrica §4.2 respondida: ≥10 runs, el número, y la decisión del umbral **anotada en este documento** | §4.2 |
-| **C6** | `declaredAsFuture` con **cero entradas** y `on_exceed` sin valores muertos | §7 |
+| **C6** | ✅ `declaredAsFuture` con **cero entradas** y `on_exceed` sin valores muertos | §7 |
 | **C7** | **cero documentos mintiendo a HEAD** — la lista al pie | abajo |
 | **C8** | minisign publicado con custodia LOCAL decidida y verificación en los bootstraps | §3.3 |
 

@@ -742,24 +742,42 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	// Budget is also a closing condition: a run that blew its ceiling should not quietly land.
 	// This is reached whether or not the gate declares checks — an undeclared gate is a reason
 	// to warn, never a reason to stop counting tokens.
-	if h.Spec.Budget.OnExceed == "block" && h.Spec.Budget.Set() {
+	//
+	// `warn` was accepted by the loader and did nothing (plan §7). Only `block` was wired, so a
+	// spec that chose the softer setting got the SAME behaviour as one that declared no ceiling
+	// at all — and `batten init` writes `on_exceed: warn` by default, which means every freshly
+	// adopted repo was in the dead branch. The mechanism was already here in full: it is
+	// advise() instead of deny() on the same condition, the same envelope, the same rule tag.
+	//
+	// The severity is decided by the SPEC, not by the model and not by the size of the overrun —
+	// the user declared which one they wanted and that declaration is the whole answer. (Plan
+	// §4.1: wherever batten softens an enforcement, a rule decides, never a judgement.)
+	switch onExceed := h.Spec.Budget.OnExceed; {
+	case (onExceed == "block" || onExceed == "warn") && h.Spec.Budget.Set():
 		b := h.Spec.Budget
 		over, cs, err := h.Store.OverBudget(run.RunID, b.TokensPerRun, b.ImputedUSDPerRun, b.QuotaPctPerRun)
 		if err == nil && over {
 			// Its own rule, not the verdict gate's: "stopped for spending too much" and
 			// "stopped for having no evidence" are different facts, and a report that merges
 			// them tells the user nothing they can act on.
-			return withRule(h.gateWith("PreToolUse", envelope{
+			e := envelope{
 				Code: CodeOverBudget,
 				// The only honest "fix" is a decision a human takes: raise the ceiling, or
 				// override on the record. Neither is something a loop should do on its own at
 				// 3am, which is exactly why the ceiling exists.
 				Fix: "batten override " + unit + " --reason \"...\"",
 				Message: fmt.Sprintf(
-					"batten: %s is over budget. budget.on_exceed=block.\n%s\n"+
+					"batten: %s is over budget. budget.on_exceed=%s.\n%s\n"+
 						"To proceed anyway (recorded): batten override %s --reason \"...\"",
-					unit, formatCeilings(cs), unit),
-			}), store.RuleBudget), nil
+					unit, onExceed, formatCeilings(cs), unit),
+			}
+			if onExceed == "warn" {
+				// Loud, and it does not block. It also must not outrank `pending`, which is a
+				// different advisory about the same commit — but there is only one output, so
+				// the budget one wins: an over-budget run is the more specific fact.
+				return withRule(adviseWith("PreToolUse", e), store.RuleBudget), nil
+			}
+			return withRule(h.gateWith("PreToolUse", e), store.RuleBudget), nil
 		}
 	}
 	return pending, nil
@@ -1096,6 +1114,15 @@ func phaseBriefing(sp *spec.Spec, st *store.Store, run *store.Run) string {
 	if len(p.Reads) > 0 {
 		fmt.Fprintf(&b, "- reads: %s\n", strings.Join(p.Reads, ", "))
 	}
+	// `phases[].when` (plan §7). Its whole declared contract is "free-form, advisory", and for
+	// once that makes it honest rather than hollow — batten cannot evaluate an arbitrary English
+	// condition and never claimed it would. What it CAN do is put the condition in front of the
+	// agent standing in the phase, which is the only reader such a field could ever have. Until
+	// now it had none at all, which is a different thing from advisory: it was invisible.
+	if p.When != "" {
+		fmt.Fprintf(&b, "- when: %s\n  (advisory — batten does not evaluate this; you do, and you "+
+			"say so if it does not hold.)\n", p.When)
+	}
 	b.WriteString(DiffScope(sp, st, p, run))
 	b.WriteString(OrientBeforeReading(sp, p))
 	if p.Fanout {
@@ -1124,6 +1151,7 @@ func phaseBriefing(sp *spec.Spec, st *store.Store, run *store.Run) string {
 		fmt.Fprintf(&b, "- this is the CLOSING phase: a commit is denied without a verdict `%s` "+
 			"citing evidence.\n", p.RequiresVerdict)
 	}
+	b.WriteString(coverageFloors(sp, p))
 	// The acceptance criteria, numbered, on every gate-bearing phase — so the reviewer can
 	// cite `AC-n:` in its evidence and the scoreboard fills itself (ítem 21). Only shown when
 	// they were actually seeded from unit.plan: inventing a list here would be worse than
@@ -1142,6 +1170,36 @@ func phaseBriefing(sp *spec.Spec, st *store.Store, run *store.Run) string {
 		}
 	}
 	return b.String()
+}
+
+// coverageFloors puts `domains[].coverage` in front of the only agent that could act on it: the
+// one standing in a gate-bearing phase (plan §7).
+//
+// It is advisory and says so. batten does not run coverage tools, does not parse their output, and
+// cannot tell a line-coverage percentage from a branch one — pretending otherwise would be a new
+// instance of exactly the failure this whole section exists to close. What it can do is stop the
+// number from being invisible: a floor declared in batten.yaml that nothing ever mentions is a
+// promise to the reader of the spec that nobody downstream ever hears.
+//
+// The exit condition is written down rather than left to habit: if two review cycles pass and no
+// verdict has cited a coverage floor, the field comes OUT of the spec. A reader nobody reads is
+// the next entry on this same list.
+func coverageFloors(sp *spec.Spec, ph *spec.Phase) string {
+	if ph == nil || (ph.Gate == "" && ph.RequiresVerdict == "") {
+		return ""
+	}
+	var lines []string
+	for _, name := range sortedDomains(sp) {
+		if d := sp.Domains[name]; d.Coverage > 0 {
+			lines = append(lines, fmt.Sprintf("  · %s: %d%%", name, d.Coverage))
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "- coverage floors declared for this repo — cite one as evidence (`AC-n:` or plain) if " +
+		"the gate's checks report it:\n" + strings.Join(lines, "\n") +
+		"\n  (advisory: batten does not measure coverage. It declares the floor; you report the number.)\n"
 }
 
 // DiffScope renders what `diff_from: anchor` MEANS for a run — which, until this, was nothing.

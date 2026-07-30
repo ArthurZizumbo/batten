@@ -229,12 +229,6 @@ domains:                               # the fan-out axes
       - session_id in every query
       - logic in the service, never in the router
 
-resources:                             # scarce things that force serialization
-  gpu:
-    kind: exclusive_pool
-    probe: 'nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits'
-    priority: [train, distill, eval]   # the order when they don't all fit
-
 gates:
   qa:
     checks: ['make check', 'make test']

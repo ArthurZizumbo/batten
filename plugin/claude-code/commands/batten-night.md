@@ -7,7 +7,7 @@ for confirmation; decide, act, and write down what you decided.
 
 That freedom is exactly why this command is the most dangerous one in the plugin, and why it is
 fenced harder than the others. Read `batten.yaml` first — it holds the phases, the domains, the
-invariants, the resources, and the ceilings.
+invariants and the ceilings.
 
 ## Turn the mode on — first, before anything
 
@@ -78,14 +78,13 @@ verdicts**. The point is not that the work is unverified; it is that a human clo
   unsupervised — the plan phase is where a human's judgment enters, and it has not entered.
 - `batten budget` — how much of the ceiling is already spent? If the run is close to a ceiling
   before it starts, say so and stop.
-- If a domain declares `resources:`, probe them now. A probe that fails means capacity is
-  **unknown** — do not launch anything that assumes it.
 
 ## The loop
 
 **Build.** Run the `fanout: true` phase exactly as `/batten-build` describes it: anchor the SHA,
-probe the resources, launch one agent per domain and per disjoint sub-task, `batten claim` each
-write-set, sequence the dependent ones, integrate.
+launch one agent per domain and per disjoint sub-task, `batten claim` each write-set, sequence the
+dependent ones, integrate. Where a domain's `invariants:` name something scarce and exclusive, that
+rule holds harder at 3am than at noon: unattended is when nobody is there to notice the collision.
 
 A write-set collision means **the plan is wrong**. Unattended, you cannot fix a plan a human wrote.
 So: stop that sub-task, leave the rest running, and report the collision. Do not work around the

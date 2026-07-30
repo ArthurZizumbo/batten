@@ -88,8 +88,6 @@ Follow `batten.schema.json`. The parts, and how to fill them:
   a distracted agent would break. Mine them from the `AGENTS.md` files and the prose doc's
   per-layer rules. Keep the author's wording where you can — they ride character-for-character
   into every fanned-out agent's prompt.
-- **`resources`** — anything scarce that forces serialization. If the prose says "coordinate
-  before doing X", X is a resource.
 - **`gates`** — `evidence: required` unless the user overrides. A gate that permits an approval
   with no evidence is not a gate.
 - **`capabilities`** — only what is actually installed. Check PATH. A declared-and-absent

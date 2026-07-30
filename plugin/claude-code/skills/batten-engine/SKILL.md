@@ -80,9 +80,11 @@ This is where the workflow earns its keep, and where it is easiest to get wrong.
 4. **Sequence what actually depends.** If sub-task C needs the output of A and B, it runs *after*
    them, not in parallel. Parallelism is for disjoint work, not for hopeful work.
 
-5. **Respect declared resources.** A domain with `resources: [gpu]` contends for something scarce.
-   Probe it first (`resources.gpu.probe`), and when capacity is short, queue by
-   `resources.gpu.priority`. Do not launch two jobs that do not fit.
+5. **Respect the domains' invariants about scarce things.** batten has no `resources:` block: it
+   promised that an orchestrator would probe capacity and queue, and batten does not orchestrate,
+   so it was removed rather than left promising. Contention now lives in `domains[].invariants`,
+   which ride verbatim into the agent's prompt — a rule an agent reads beats a field nobody ran.
+   Sequence around them yourself; do not launch two jobs that do not fit.
 
 ## Closing
 

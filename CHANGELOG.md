@@ -30,6 +30,36 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
   alternative is remote code execution by download, and it only ever applies to a first install —
   from the first good one, the cache restores the last *verified* binary without network.
 
+### Changed
+
+- **`declaredAsFuture` is empty: every field `batten.yaml` accepts now has a reader.** Sixteen
+  entries, then seven, now none. The list is the mechanism that does to batten what batten does to
+  its users — declare a field and you must wire it up or write down, in a review, that you are
+  shipping a promise you do not keep.
+
+  The last seven left by **both** exits, which is the point:
+
+  - `phases[].when` and `domains[].coverage` were **wired**. Both are advisory by contract, and
+    advisory is not the same as unread: the phase briefing at SessionStart now prints the condition
+    and the declared coverage floors to the agent standing in the phase, which is the only reader
+    such a field could have. Both say *advisory* where they print, because a floor rendered without
+    that reads like a check batten performed.
+  - `resources` and `domains[].resources` were **removed**. The schema said in as many words that
+    *"the orchestrator runs it BEFORE launching and queues"*, and batten does not orchestrate —
+    the same argument that removed `models.tiers`. Four fields promising serialization that nothing
+    serialized. Contention now belongs in `domains[].invariants`, which ride verbatim into the
+    agent's prompt: a rule an agent reads beats a field nobody ran.
+  - `budget.on_exceed: warn` was **wired** and `downgrade_effort` **removed**. Only `block` had ever
+    been implemented, so a spec choosing the softer setting behaved exactly like one with no ceiling
+    — and `on_exceed: warn` is what `batten init` writes by default, which put every freshly adopted
+    repo in the dead branch. Which severity applies is decided by the **spec**, never by the model
+    and never by the size of the overrun.
+
+  **Migrating:** a spec still carrying `resources:` keeps loading — batten does not brick a repo
+  over a key it stopped reading — and `batten doctor` reports it as an unknown key.
+  `on_exceed: downgrade_effort` does not load, and the error names the removal rather than treating
+  it as a typo.
+
 ### Added
 
 - **`batten scan-diff` now keeps its contrast, and `batten measure` reports it.** The command

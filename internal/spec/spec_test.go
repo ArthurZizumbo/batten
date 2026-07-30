@@ -35,10 +35,7 @@ gates:
 domains:
   api:
     path: server/
-    resources: [gpu]
-resources:
-  gpu:
-    kind: exclusive_pool
+    coverage: 70
 budget:
   tokens_per_run: 1000
   on_exceed: warn
@@ -151,9 +148,14 @@ func TestReferentialIntegrity(t *testing.T) {
 			`unknown gate "typo"`,
 		},
 		{
-			"domain contends for a resource that does not exist",
-			strings.Replace(valid, "    resources: [gpu]", "    resources: [tpu]", 1),
-			`unknown resource "tpu"`,
+			// `resources:` and `domains[].resources` were REMOVED (plan §7), so the referential
+			// check that used to live here went with them. What replaced it is the unknown-key
+			// report: a spec still carrying the block is told the key is not read, rather than
+			// being validated against a promise batten never kept. See
+			// TestUnknownKeysLoadAndAreReported, which lists `resources` for exactly that reason.
+			"budget.on_exceed no longer accepts downgrade_effort",
+			strings.Replace(valid, "  on_exceed: warn", "  on_exceed: downgrade_effort", 1),
+			"was removed",
 		},
 		{
 			"duplicate phase id",
@@ -177,7 +179,7 @@ func TestReferentialIntegrity(t *testing.T) {
 		},
 		{
 			"a domain without a path owns nothing",
-			strings.Replace(valid, "    path: server/", "    coverage: 70", 1),
+			strings.Replace(valid, "    path: server/\n", "", 1),
 			"path is required",
 		},
 	}
@@ -406,6 +408,23 @@ func TestUnknownKeysLoadAndAreReported(t *testing.T) {
 	want := []string{"models", "provenance"}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Errorf("UnknownKeys = %v, want %v (sorted, so doctor's output is diffable)", got, want)
+	}
+
+	// The migration path for `resources:`, removed in plan §7. A spec that still carries it must
+	// keep LOADING — batten does not brick a repo over a key it stopped reading — and must be told
+	// the key is dead. Silence here would be the removal's own version of the failure the removal
+	// was for: the user goes on believing the block does something.
+	withResources := filepath.Join(dir, "resources.yaml")
+	if err := os.WriteFile(withResources, []byte(valid+
+		"\nresources:\n  gpu:\n    kind: exclusive_pool\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(withResources); err != nil {
+		t.Fatalf("a spec carrying the removed `resources:` block must still load: %v", err)
+	}
+	if got := UnknownKeys(withResources); len(got) != 1 || got[0] != "resources" {
+		t.Errorf("UnknownKeys = %v, want [resources]: the block was removed because nothing "+
+			"arbitrated it, and a user still declaring it has to be told", got)
 	}
 
 	clean := filepath.Join(dir, "clean.yaml")

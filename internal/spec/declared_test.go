@@ -47,24 +47,30 @@ import (
 //
 // This list is DEBT, not a parking lot. It should get shorter. A new entry is a decision to
 // publish a promise batten does not keep, and it should be made on purpose and in a review.
-var declaredAsFuture = map[string]string{
-	// models.{tiers,phases} and provenance.format were on this list and are GONE from the spec
-	// (ítem 23): the first promise batten deliberately cannot keep (it does not orchestrate),
-	// the second had no writer and no reader. Removal, not implementation, was the decision —
-	// the honest exit #2 of the guard's error message has a sibling: stop promising.
-	"Phase.When": "documented as a free-form, advisory condition. Advisory is its whole contract, " +
-		"so it is honest — but nothing reads it either (plan §8)",
-	"Resource.Kind":     "resource contention is declared and never arbitrated (plan §8)",
-	"Resource.Probe":    "the command that would report free capacity is never run (plan §8)",
-	"Resource.Unit":     "unit of the resource's capacity; unused with the rest of Resource (plan §8)",
-	"Resource.Priority": "ordering when capacity is short; nothing serializes on it (plan §8)",
-	"Domain.Coverage":   "a coverage floor per domain that no check enforces (plan §8)",
-	"Domain.Resources":  "which resources a domain contends for; see Resource.* (plan §8)",
-	// Unit.Locator left the list with ítem 21 (fase A): internal/plan resolves unit.plan +
-	// unit.locator into unit blocks, and doctor cross-checks that the locator finds anything.
-	// ObsidianCap.Export — THE TENTH INSTANCE, found by this guard on the first run it ever
-	// made — was here until ítem 23 wired it up: export.Run now honours the list.
-}
+// It is EMPTY, and that is the state it was built to reach. Sixteen entries, then seven, now none:
+// every field batten.yaml accepts has something in production that reads it.
+//
+// The seven went out by both exits, which is the point — "wire it up" was never the only honest
+// answer:
+//
+//   - Phase.When and Domain.Coverage were WIRED. Both are advisory by contract, and advisory is
+//     not the same as unread: the phase briefing at SessionStart now prints the condition and the
+//     floors to the agent standing in the phase, which is the only reader such a field could have.
+//     Domain.Coverage carries an exit condition rather than a promise — if two review cycles pass
+//     with no verdict citing a floor, it comes out of the spec.
+//   - Resource.{Kind,Probe,Unit,Priority} and Domain.Resources were REMOVED. The schema said in as
+//     many words that "the orchestrator runs it BEFORE launching and queues", and batten does not
+//     orchestrate — the same argument that removed models.{tiers,phases}. Four fields promising
+//     serialization that nothing serializes was the largest single lie the spec told. Note the
+//     honest wrinkle in Domain.Resources: it DID have a reader, the spec package's own referential
+//     check, and that is exactly what this guard means by "declaring is not consuming".
+//
+// Before them, models.{tiers,phases} and provenance.format left the same way, and Unit.Locator and
+// ObsidianCap.Export left by being implemented.
+//
+// Keep it empty. A new entry is a decision to publish a promise batten does not keep, and this list
+// is DEBT, not a parking lot — it should only ever get shorter, and it has nowhere shorter to go.
+var declaredAsFuture = map[string]string{}
 
 // enforcedBySpecValidation names the fields whose consumer IS the spec package: Load refuses a
 // batten.yaml that gets them wrong. That is real enforcement — the strongest kind, since it

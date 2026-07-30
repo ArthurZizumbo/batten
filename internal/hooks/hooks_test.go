@@ -1002,3 +1002,180 @@ func TestACommitWithNoUnitInItStillClosesTheSessionsRun(t *testing.T) {
 			"claims linger and deny edits forever", got.Status)
 	}
 }
+
+// ---------- plan §7: the fields that were declared and never read ----------
+
+// TestThePhaseBriefingCarriesTheWhenCondition — `phases[].when` (plan §7).
+//
+// Its whole declared contract is "free-form, advisory", and that is honest: batten cannot evaluate
+// an English condition and never claimed it would. But advisory and UNREAD are different things,
+// and it was unread — parsed into spec.Phase, documented in the schema, and printed to nobody. The
+// only reader such a field could ever have is the agent standing in the phase.
+func TestThePhaseBriefingCarriesTheWhenCondition(t *testing.T) {
+	dir := t.TempDir()
+	y := "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
+		"phases:\n  - id: build\n    when: the migration has been reviewed by a DBA\n" +
+		"  - id: close\n    gate: qa\n    requires_verdict: ok\n" +
+		"gates:\n  qa:\n    verdict: required\n    evidence: required\n"
+	if err := writeFile(filepath.Join(dir, "batten.yaml"), y); err != nil {
+		t.Fatal(err)
+	}
+	sp, err := spec.LoadFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "batten.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	run, err := st.EnsureRun("p", "TASK-1", "sess-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetPhase(run.RunID, "build"); err != nil {
+		t.Fatal(err)
+	}
+	run, err = st.Run(run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := phaseBriefing(sp, st, run)
+	if !strings.Contains(got, "the migration has been reviewed by a DBA") {
+		t.Errorf("the phase's `when` condition never reaches the agent standing in the phase:\n%s", got)
+	}
+	// And it must say who evaluates it. A condition printed without that reads like a check
+	// batten performed, which is the promise this whole section exists to stop making.
+	if !strings.Contains(got, "advisory") {
+		t.Errorf("`when` is printed as if batten evaluated it:\n%s", got)
+	}
+}
+
+// TestTheGateBriefingCarriesTheCoverageFloors — `domains[].coverage` (plan §7).
+//
+// A floor declared in batten.yaml that nothing downstream ever mentions is a promise to whoever
+// reads the spec and to nobody else. batten does not measure coverage and must not pretend to; it
+// can put the declared floor in front of the agent that reports the real number.
+func TestTheGateBriefingCarriesTheCoverageFloors(t *testing.T) {
+	dir := t.TempDir()
+	y := "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
+		"phases:\n  - id: build\n  - id: close\n    gate: qa\n    requires_verdict: ok\n" +
+		"gates:\n  qa:\n    verdict: required\n    evidence: required\n" +
+		"domains:\n  api:\n    path: server/\n    coverage: 80\n  ui:\n    path: web/\n"
+	if err := writeFile(filepath.Join(dir, "batten.yaml"), y); err != nil {
+		t.Fatal(err)
+	}
+	sp, err := spec.LoadFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := store.Open(filepath.Join(dir, "batten.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	run, err := st.EnsureRun("p", "TASK-1", "sess-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetPhase(run.RunID, "close"); err != nil {
+		t.Fatal(err)
+	}
+	run, err = st.Run(run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := phaseBriefing(sp, st, run)
+	if !strings.Contains(got, "80%") || !strings.Contains(got, "api") {
+		t.Errorf("the declared coverage floor never reaches the gate phase:\n%s", got)
+	}
+	// A domain that declared no floor must not appear with a zero. Reporting an undeclared floor
+	// as 0% is the same inversion as reporting an unmeasured token count as 0.
+	if strings.Contains(got, "ui: 0%") {
+		t.Errorf("a domain with no declared floor was reported as 0%%:\n%s", got)
+	}
+	if !strings.Contains(got, "advisory") {
+		t.Errorf("the floors are printed as if batten measured them:\n%s", got)
+	}
+}
+
+// TestOnExceedWarnSaysSoInsteadOfPassingInSilence — `budget.on_exceed: warn` (plan §7).
+//
+// The loader accepted three values and only `block` was wired, so a spec that chose the softer one
+// behaved exactly like a spec with no ceiling at all. `batten init` writes `on_exceed: warn` by
+// default, which put every freshly adopted repo in the dead branch — the ceiling they declared did
+// nothing and nothing said so.
+//
+// The severity is decided by the SPEC, not by the model and not by the size of the overrun: the
+// user declared which one they wanted (plan §4.1 — wherever batten softens an enforcement, a rule
+// decides).
+func TestOnExceedWarnSaysSoInsteadOfPassingInSilence(t *testing.T) {
+	h, run := budgetFixture(t, nil, 1000)
+	// Rewrite the fixture's `block` into `warn` by loading a second spec over the same store.
+	dir := t.TempDir()
+	y := "version: 1\nproject: p\nenforcement: enforce\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
+		"phases:\n  - id: verify\n    gate: qa\n  - id: close\n    gate: qa\n    requires_verdict: ok\n" +
+		"gates:\n  qa:\n    verdict: required\n    evidence: required\n" +
+		"budget:\n  tokens_per_run: 1000\n  on_exceed: warn\n"
+	if err := writeFile(filepath.Join(dir, "batten.yaml"), y); err != nil {
+		t.Fatal(err)
+	}
+	sp, err := spec.LoadFrom(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.Spec = sp
+
+	// A verdict good enough that the only thing left to object to is the budget.
+	if err := h.Store.SaveVerdict(store.Verdict{
+		RunID: run.RunID, Gate: "qa", CheckID: "qa", Result: "ok",
+		Evidence: []string{"go test ./... — ok"}, Source: "agent",
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	burn(t, h, run, 5000) // five times the ceiling
+
+	out, err := h.verdictGate(commitInput(), `git commit -m "feat: x"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got != "warn" {
+		t.Fatalf("`on_exceed: warn` produced %q. It is the DEFAULT `batten init` writes, so a "+
+			"silent branch there means every freshly adopted repo declared a ceiling that does "+
+			"nothing (output %+v)", got, out)
+	}
+	msg := out.SystemMessage + " " + out.HookSpecific.PermissionDecisionReason
+	for _, want := range []string{"over budget", "on_exceed=warn"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the warning must name the ceiling and the setting that softened it. Missing %q from:\n%s", want, msg)
+		}
+	}
+	if out.Rule != store.RuleBudget {
+		t.Errorf("rule = %q, want %q — \"stopped for spending too much\" and \"stopped for having "+
+			"no evidence\" are different facts and a report that merges them is useless",
+			out.Rule, store.RuleBudget)
+	}
+}
+
+// The control: `block` still denies. A change that softened both settings would have passed the
+// test above and destroyed the ceiling.
+func TestOnExceedBlockStillDenies(t *testing.T) {
+	h, run := budgetFixture(t, nil, 1000)
+	if err := h.Store.SaveVerdict(store.Verdict{
+		RunID: run.RunID, Gate: "qa", CheckID: "qa", Result: "ok",
+		Evidence: []string{"go test ./... — ok"}, Source: "agent",
+	}, true); err != nil {
+		t.Fatal(err)
+	}
+	burn(t, h, run, 5000)
+
+	out, err := h.verdictGate(commitInput(), `git commit -m "feat: x"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := decision(out); got != "deny" {
+		t.Fatalf("`on_exceed: block` produced %q; the ceiling is supposed to be real", got)
+	}
+}

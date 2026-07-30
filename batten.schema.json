@@ -90,13 +90,6 @@
         "$ref": "#/$defs/domain"
       }
     },
-    "resources": {
-      "description": "Scarce things that force agents to serialize: a shared GPU, a staging database, a rate-limited API. If your prose ever said \"coordinate with the team before doing X\", X is a resource. Declaring it turns that coordination from etiquette into a probe the orchestrator runs.",
-      "type": "object",
-      "additionalProperties": {
-        "$ref": "#/$defs/resource"
-      }
-    },
     "gates": {
       "description": "Verdict checkpoints, keyed by gate name. A phase references one via `gate:`. This is where the evidence rule lives.",
       "type": "object",
@@ -144,12 +137,11 @@
           "minimum": 1
         },
         "on_exceed": {
-          "description": "What happens when a declared ceiling is crossed. `block`: the close gate denies the commit (the ceiling is real). `warn`: record it and continue. `downgrade_effort`: keep going with less thinking.",
+          "description": "What happens when a declared ceiling is crossed. `block`: the close gate DENIES the commit (the ceiling is real). `warn`: the gate says so loudly on the commit and lets it through. `downgrade_effort` was removed — it was accepted and never honoured, because lowering the model's effort is orchestration and batten does not orchestrate.",
           "type": "string",
           "enum": [
             "block",
-            "warn",
-            "downgrade_effort"
+            "warn"
           ],
           "default": "block"
         }
@@ -322,7 +314,7 @@
           ]
         },
         "when": {
-          "description": "Free-form condition, advisory only — it is read by the agent, not evaluated by the engine. Example: 'fix.changed_logic' (skip re-verification when the fix phase only touched copy).",
+          "description": "A free-form condition for entering this phase. ADVISORY and deliberately so: batten does not evaluate English. It prints the condition in the phase briefing at SessionStart, so the agent standing in the phase reads it and says whether it holds.",
           "type": "string"
         }
       }
@@ -364,7 +356,7 @@
           ]
         },
         "coverage": {
-          "description": "Minimum test coverage percentage for this domain, cited as evidence at the gate.",
+          "description": "A coverage floor for this domain, as a percentage. ADVISORY: batten does not measure coverage and does not run your coverage tool. It puts the floor in the gate phase's briefing so the verify agent reports the real number against it and can cite it as evidence.",
           "type": "integer",
           "minimum": 0,
           "maximum": 100
@@ -380,13 +372,6 @@
           "description": "A custom subagent (.claude/agents/<name>.md) to run this domain, instead of a general-purpose one. The fan-out orchestrator uses it as the subagent type, so the DAG, the canvas and the hook matchers all show YOUR agent's name.",
           "type": "string"
         },
-        "resources": {
-          "description": "Shared resources this domain contends for (keys of `resources`). Declaring contention is what lets the orchestrator probe capacity and serialize instead of launching two jobs that do not fit. The loader rejects a reference to an undeclared resource.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        },
         "invariants": {
           "description": "The rules a reviewer would catch and a distracted agent would break. These ride VERBATIM into every fanned-out agent's prompt, which makes them the highest-value lines in the whole file. Write them as flat imperatives ('session_id in every query'), not as essays. Mine them from your AGENTS.md files.",
           "type": "array",
@@ -397,38 +382,6 @@
         "model": {
           "type": "string",
           "description": "pin this domain's agents to a model (wins over the plan's tier)"
-        }
-      }
-    },
-    "resource": {
-      "type": "object",
-      "additionalProperties": false,
-      "properties": {
-        "kind": {
-          "description": "`exclusive_pool`: has capacity, several agents may share it if their budgets fit (a 96GB GPU). `mutex`: one holder at a time, no sharing (a staging database).",
-          "type": "string",
-          "enum": [
-            "exclusive_pool",
-            "mutex"
-          ]
-        },
-        "probe": {
-          "description": "Command that reports the free capacity, printing a bare number in `unit`. The orchestrator runs it BEFORE launching and queues when capacity is short. If the probe cannot run, capacity is unknown — and unknown is not the same as zero, nor as infinite: say so and let the human decide.",
-          "type": "string",
-          "examples": [
-            "nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits"
-          ]
-        },
-        "unit": {
-          "description": "The unit the probe prints, for the human reading the queue decision. Example: MiB.",
-          "type": "string"
-        },
-        "priority": {
-          "description": "Ordering to queue by when capacity is short. Names here are yours — sub-task or job names your plan uses. This encodes the decision that would otherwise be made at 3am by whoever launched first.",
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
         }
       }
     },

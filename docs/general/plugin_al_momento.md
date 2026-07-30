@@ -1065,18 +1065,32 @@ manipulación, y sin decir cómo contaba.)*
 
 ## 18. Declarado y no leído — inventario
 
-**7 campos** siguen en `declaredAsFuture`. La lista es **deuda, no un estacionamiento**, y bajó de
-12 en este bloque por las tres salidas posibles: **cablear** (`unit.locator` — `internal/plan` lo
-lee y `doctor` lo cruza con la realidad; `capabilities.obsidian.export` — `export.Run` honra la
-lista), y **dejar de prometer** (`models.tiers`, `models.phases`, `provenance.format` salieron del
-spec entero: la primera promesa batten no puede cumplirla a propósito —no orquesta—, la segunda no
-tenía ni escritor ni lector). No entró ninguno.
+**`declaredAsFuture` está VACÍA.** 16 campos, después 7, ahora cero: todo campo que `batten.yaml`
+acepta tiene algo en producción que lo lee. La lista es **deuda, no un estacionamiento**, y llegó a
+donde fue construida para llegar.
 
-| campo | qué promete | por qué sigue |
+Los últimos 7 salieron por **las dos** salidas, que es el punto — "cablearlo" nunca fue la única
+respuesta honesta:
+
+| campo | salida | qué pasó |
 |---|---|---|
-| `phases[].when` | condición libre, advisory | advisory es todo su contrato, así que es honesto — pero nadie lo lee |
-| `resources.*` (kind, probe, unit, priority) | contención de recursos | declarada, nunca arbitrada |
-| `domains[].coverage` / `domains[].resources` | piso de cobertura, recursos por dominio | ningún check los impone |
+| `phases[].when` | **cableado** | advisory es todo su contrato, y advisory no es lo mismo que **no leído**: el briefing de fase de `SessionStart` imprime la condición al agente que está parado en la fase, que es el único lector que un campo así podía tener |
+| `domains[].coverage` | **cableado** | el piso declarado viaja al briefing de la fase con gate, para que el verify reporte el número real contra él y lo cite. Con condición de salida escrita: si pasan dos ciclos sin que ningún veredicto cite un piso, el campo sale del spec |
+| `resources.*` (kind, probe, unit, priority) | **sacados** | el schema decía, con todas las letras, que *"the orchestrator runs it BEFORE launching and queues"* — y batten **no orquesta**. Cuatro campos prometiendo serialización que nada serializa era la mentira más grande del spec |
+| `domains[].resources` | **sacado, en cascada** | con un matiz honesto: SÍ tenía un lector —la validación referencial del propio paquete `spec`— y eso es exactamente lo que este guard quiere decir con *"declarar no es consumir"* |
+
+Y una fila que la lista no podía ver, porque el guard es **por campo y no por valor**:
+`budget.on_exceed` validaba tres valores y solo `block` estaba cableado. `warn` se **cableó** (es
+`advise()` en vez de `deny()` sobre la misma condición — y es el valor que `batten init` escribe por
+default, o sea que todo repo recién adoptado estaba en la rama muerta); `downgrade_effort` se
+**sacó**, porque bajar el esfuerzo del modelo es orquestación.
+
+La severidad la decide el **spec**, no el modelo ni el tamaño del exceso: el usuario declaró cuál
+quería. Esa es la condición de §4.1 y viaja con cada ablandamiento de enforcement.
+
+Un spec que todavía traiga `resources:` **sigue cargando** —batten no ladrillea un repo por una
+clave que dejó de leer— y `doctor` lo reporta como clave desconocida. `on_exceed: downgrade_effort`
+no carga, y el error nombra la remoción en vez de tratarla como typo.
 
 `edges.rel = rollback` está en la lista equivalente del guard de aristas: el canvas le da color y
 batten **no tiene operación de rollback**. Registrado, no borrado, porque el renderer es correcto

@@ -793,8 +793,7 @@ type domainSpec struct {
 	Invariants []string `json:"invariants" jsonschema:"the rules a reviewer would catch and a distracted agent would break. Obey them verbatim."`
 	Agent      string   `json:"agent"`
 	Skills     []string `json:"skills"`
-	Coverage   int      `json:"coverage"`
-	Resources  []string `json:"resources" jsonschema:"scarce resources this domain contends for; they serialize the fan-out"`
+	Coverage   int      `json:"coverage" jsonschema:"the coverage floor this domain declares; advisory — batten does not measure it, the verify phase reports the number"`
 }
 
 type gateSpec struct {
@@ -860,7 +859,7 @@ func (q *queries) spec(_ context.Context, _ *sdk.CallToolRequest, in specInput) 
 		out.Domains = append(out.Domains, domainSpec{
 			Name: name, Path: d.Path, Exclude: orEmpty(d.Exclude), Rules: d.Rules,
 			Check: orEmpty(d.Check), Invariants: orEmpty(d.Invariants), Agent: d.Agent,
-			Skills: orEmpty(d.Skills), Coverage: d.Coverage, Resources: orEmpty(d.Resources),
+			Skills: orEmpty(d.Skills), Coverage: d.Coverage,
 		})
 	}
 	for _, name := range sortedKeys(s.Gates) {

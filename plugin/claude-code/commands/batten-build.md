@@ -7,7 +7,7 @@ the plan, launch the agents, keep them off each other's files, and integrate wha
 not write the code yourself.
 
 Everything project-specific comes from `batten.yaml`: the domains, their rules, their invariants,
-their check commands, their agents, and the scarce resources they contend for. Read it first.
+their check commands and their agents. Read it first.
 
 ## 1. Anchor the diff — before a single file changes
 
@@ -55,24 +55,16 @@ each agent's **exact write-set**, what is sequential, and each resource budget.
 write-sets is the failure this phase is built to prevent, and launching one "just this once" is how
 you find out at 3am.
 
-## 3. Probe the resources — before launching, not after
+## 3. Read the domains' invariants — they are the contention rules too
 
-For every `resources:` entry any marked domain contends for:
+`batten.yaml` had a `resources:` block that declared scarce things (a GPU, a staging database) and
+promised the orchestrator would probe capacity and queue. It was removed, because there is no
+orchestrator: four fields promising serialization that nothing serialized. Do not look for it.
 
-```bash
-# run resources.<name>.probe verbatim; it prints free capacity in resources.<name>.unit
-```
-
-Compare free capacity against the budgets the plan wrote down.
-
-- **Everything fits** → launch them in parallel.
-- **It does not fit** → queue by `resources.<name>.priority`, in that order. That list exists
-  precisely so this decision is not made ad hoc by whoever launched first.
-- **The probe fails or the resource is unreachable** → capacity is **unknown**. Unknown is not zero
-  and it is not infinite. Do not launch a job that assumes capacity; say the probe failed and let
-  the human decide.
-
-A `kind: mutex` resource takes one holder at a time — no sharing, no "it'll probably be fine".
+Where a domain really does contend for something scarce, it belongs in that domain's
+`invariants:` — those ride verbatim into the agent's prompt, so they have a reader, which is the
+whole difference. Read them before launching, and honour them: *"nvidia-smi before training; the
+GPU is exclusive"* is a rule the agent can obey, where a `probe:` nobody ran was not.
 
 ## 4. Launch the fan-out
 

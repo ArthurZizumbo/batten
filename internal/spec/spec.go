@@ -24,24 +24,31 @@ type Spec struct {
 	// Enforcement is the adoption ramp. "enforce" (default) denies; "report" turns every gate
 	// into a visible warning instead of a block, so a project mid-sprint can adopt batten without
 	// the gates getting in the way on day one. Flip to enforce when the team trusts it.
-	Enforcement  string              `yaml:"enforcement"`
-	Unit         Unit                `yaml:"unit"`
-	Artifacts    map[string]string   `yaml:"artifacts"`
-	Phases       []Phase             `yaml:"phases"`
-	Domains      map[string]Domain   `yaml:"domains"`
-	Resources    map[string]Resource `yaml:"resources"`
-	Gates        map[string]Gate     `yaml:"gates"`
-	Budget       Budget              `yaml:"budget"`
-	Capabilities Capabilities        `yaml:"capabilities"`
+	Enforcement  string            `yaml:"enforcement"`
+	Unit         Unit              `yaml:"unit"`
+	Artifacts    map[string]string `yaml:"artifacts"`
+	Phases       []Phase           `yaml:"phases"`
+	Domains      map[string]Domain `yaml:"domains"`
+	Gates        map[string]Gate   `yaml:"gates"`
+	Budget       Budget            `yaml:"budget"`
+	Capabilities Capabilities      `yaml:"capabilities"`
 
 	// Root is the directory batten.yaml was loaded from. Not serialized.
 	Root string `yaml:"-"`
 
 	// models.{tiers,phases} and provenance.format were REMOVED from the declared surface
-	// (plan §8, ítem 23). The schema promised "batten routes subagents and verifies it from
-	// the ledger" and batten deliberately does not orchestrate, so the promise could never be
-	// kept; provenance.format had no writer and no reader. Per-domain routing survives as
+	// (ítem 23). The schema promised "batten routes subagents and verifies it from the ledger"
+	// and batten deliberately does not orchestrate, so the promise could never be kept;
+	// provenance.format had no writer and no reader. Per-domain routing survives as
 	// Domain.Model, which `batten show` DOES verify against the ledger.
+	//
+	// `resources` and `domains[].resources` went the same way, for the same reason and with the
+	// same argument (plan §7). The schema said, in as many words, that "the orchestrator runs
+	// [the probe] BEFORE launching and queues" — and there is no orchestrator. The block had a
+	// `kind`, a `probe`, a `unit` and a `priority`, none of them ever read; the only thing that
+	// touched them was this file's own referential check, which is declaring, not consuming.
+	// Four fields promising serialization that nothing serializes is the largest single lie the
+	// spec was telling, and removal was the honest exit.
 }
 
 // ReportOnly reports whether gates should warn instead of deny.
@@ -74,27 +81,18 @@ type Phase struct {
 
 // Domain is a fan-out axis. This is the only genuinely project-specific part.
 type Domain struct {
-	Path      string   `yaml:"path"`
-	Exclude   []string `yaml:"exclude"`
-	Rules     string   `yaml:"rules"` // path to AGENTS.md/CLAUDE.md governing this domain
-	Check     []string `yaml:"check"` // commands that must pass before the domain agent finishes
-	Coverage  int      `yaml:"coverage"`
-	Skills    []string `yaml:"skills"`
-	Agent     string   `yaml:"agent"`     // a custom subagent (.claude/agents/<name>.md) to run this domain
-	Model     string   `yaml:"model"`     // pin this domain's agents to a model (wins over the plan's tier)
-	Resources []string `yaml:"resources"` // shared resources this domain contends for
+	Path     string   `yaml:"path"`
+	Exclude  []string `yaml:"exclude"`
+	Rules    string   `yaml:"rules"` // path to AGENTS.md/CLAUDE.md governing this domain
+	Check    []string `yaml:"check"` // commands that must pass before the domain agent finishes
+	Coverage int      `yaml:"coverage"`
+	Skills   []string `yaml:"skills"`
+	Agent    string   `yaml:"agent"` // a custom subagent (.claude/agents/<name>.md) to run this domain
+	Model    string   `yaml:"model"` // pin this domain's agents to a model (wins over the plan's tier)
 
 	// Invariants are the rules a reviewer would catch and a distracted agent would break.
 	// They ride verbatim into every fanned-out agent's prompt.
 	Invariants []string `yaml:"invariants"`
-}
-
-// Resource is something scarce that forces serialization across agents (a GPU, a staging DB).
-type Resource struct {
-	Kind     string   `yaml:"kind"`  // exclusive_pool | mutex
-	Probe    string   `yaml:"probe"` // command reporting free capacity
-	Unit     string   `yaml:"unit"`
-	Priority []string `yaml:"priority"` // ordering when capacity is short
 }
 
 // Gate is a verdict checkpoint.
@@ -124,7 +122,11 @@ type Budget struct {
 	ImputedUSDPerRun float64 `yaml:"imputed_usd_per_run"`
 	QuotaPctPerRun   float64 `yaml:"quota_pct_per_run"`
 	MaxIterations    int     `yaml:"max_iterations"`
-	OnExceed         string  `yaml:"on_exceed"` // block | warn | downgrade_effort
+	// OnExceed is block | warn, and both are wired: block denies the commit, warn says so on the
+	// commit and lets it through. `downgrade_effort` was a third value the loader accepted and
+	// nothing honoured; it is gone (plan §7), and Validate names the removal rather than calling
+	// it a typo.
+	OnExceed string `yaml:"on_exceed"`
 }
 
 // Set reports whether any ceiling at all was declared.
@@ -318,11 +320,6 @@ func (s *Spec) Validate() error {
 		if d.Path == "" {
 			add("domain %q: path is required", name)
 		}
-		for _, r := range d.Resources {
-			if _, ok := s.Resources[r]; !ok {
-				add("domain %q contends for unknown resource %q", name, r)
-			}
-		}
 	}
 
 	// The rule that gives the gate its teeth. Refuse to load a spec that quietly
@@ -340,11 +337,20 @@ func (s *Spec) Validate() error {
 		}
 	}
 
+	// `downgrade_effort` was accepted here and wired nowhere (plan §7). Lowering the model's
+	// effort is orchestration, and batten does not orchestrate — the same argument that removed
+	// `models.tiers`/`models.phases` from the spec. A value the loader blesses and no code
+	// honours is the failure this project exists to remove, so it is gone rather than deferred,
+	// and the error message names the removal so a spec carrying it gets told why.
 	if s.Budget.OnExceed != "" {
 		switch s.Budget.OnExceed {
-		case "block", "warn", "downgrade_effort":
+		case "block", "warn":
+		case "downgrade_effort":
+			add("budget.on_exceed: downgrade_effort was removed — it was accepted and never " +
+				"honoured, because lowering the model's effort is orchestration and batten does " +
+				"not orchestrate. Use block (deny the commit) or warn (say so, loudly, and let it through)")
 		default:
-			add("budget.on_exceed must be block|warn|downgrade_effort, got %q", s.Budget.OnExceed)
+			add("budget.on_exceed must be block|warn, got %q", s.Budget.OnExceed)
 		}
 	}
 
