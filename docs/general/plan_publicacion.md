@@ -1,10 +1,21 @@
 # Plan de publicación — lo que queda
 
-> Escrito **2026-07-30** contra HEAD `2c65f72`, rama `refinamiento-plugin`, árbol limpio, suite verde
-> en **17 paquetes**, matrices **41/41** y **26/26**, **68 commits adelante de `origin/main`, sin
-> divergencia, sin pushear**. El commit que introduce esta revisión no se cuenta en ese número — la
-> versión anterior de este encabezado nació mintiendo (decía `c47d57a`/67) porque el commit que la
-> creó la desactualizó al nacer. Está catalogado en §11 para que no se repita sin nombre.
+> Escrito **2026-07-30**, rama `refinamiento-plugin`, árbol limpio, sin divergencia, **sin pushear**.
+>
+> **Los números de estado no se congelan acá, y esa es la corrección.** Dos versiones seguidas de
+> este encabezado nacieron mintiendo — la primera decía `c47d57a`/67, la segunda `2c65f72`/68 — porque
+> el commit que las creaba las desactualizaba al nacer. Un número que se puede recalcular no se
+> publica: se dice cómo. Están catalogadas en §11 (corrección 4).
+>
+> ```bash
+> git rev-parse --short HEAD                    # contra qué HEAD estás leyendo esto
+> git rev-list --count origin/main..HEAD        # cuántos commits adelante
+> go test ./...                                 # la suite, en 17 paquetes
+> scripts/matrix-replica.sh <sandbox>           # 41/41
+> scripts/matrix-demo.sh <sandbox>              # 26/26
+> ```
+>
+> Al cierre de la vía paralela de §9: las cinco líneas de arriba, verdes.
 >
 > Sucede a `plan_mejora.md` — el registro cerrado de los cuatro bloques, **retirado del árbol en esta
 > misma revisión**; vive en el historial de git. Lo único que seguía vivo solo ahí quedó rescatado
@@ -717,9 +728,15 @@ Lo único serial es la cadena de publicación y lo que cuelga de ella. Todo lo d
 paralelo desde hoy**:
 
 **Vía paralela (sin dependencias entre sí, arrancables ya):**
-§1.0 sweep de tokens · §3.1 checksum fail-closed · §4.2 métrica (v12 + measure + dogfood) ·
-§5-BLOQUEA los 6 fixes · §7 campos declarados · C7 docs · §2.2 escribir la reversa + drill R2 en
-repo de prueba.
+~~§1.0 sweep de tokens~~ ✅ · ~~§3.1 checksum fail-closed~~ ✅ · ~~§4.2 métrica (v12 + measure +
+dogfood)~~ ✅ *(maquinaria; el número necesita ≥10 runs y los acumula el dogfood)* ·
+~~§5-BLOQUEA los 6 fixes~~ ✅ · ~~§7 campos declarados~~ ✅ · ~~C7 docs~~ ✅ ·
+**§2.2 escribir la reversa + drill R2 en repo de prueba — LO ÚNICO QUE QUEDA de esta vía.**
+
+La tabla de §2.2 ya está escrita; falta **ensayar el drill R2 una vez**, y eso necesita una decisión
+tuya que este plan no puede tomar: el drill solo prueba algo **en un repo de prueba PÚBLICO** con un
+release de assets dummy (§2.2, *verificación*), o sea que hay que crear ese repo. Es C4 de §8 y es lo
+único de la vía paralela que sigue en rojo.
 
 **Cadena serial:**
 
@@ -793,9 +810,12 @@ para que no vuelvan a citarse como estaban:
 La lección de todas es una: *el arreglo desactualiza la prosa que lo describía*, y un documento no
 se entera solo:
 
-4. **El encabezado de este plan mentía al nacer**: decía `c47d57a`/67 cuando el commit que lo creó
-   lo dejó en `2c65f72`/68. La forma nueva ("el commit que introduce esta revisión no se cuenta")
-   es el arreglo estructural, no cosmético.
+4. **El encabezado de este plan mintió al nacer DOS veces.** Decía `c47d57a`/67 cuando el commit que
+   lo creó lo dejó en `2c65f72`/68; la revisión siguiente escribió `2c65f72`/68 y volvió a
+   desactualizarse en el mismo acto. El primer arreglo ("el commit que introduce esta revisión no se
+   cuenta") era una corrección de aritmética, no del defecto: **el defecto es congelar un número que
+   se puede recalcular.** El arreglo estructural es el de ahora — el encabezado publica los
+   *comandos*, no sus resultados.
 5. **"47 comandos" — falso.** Son 29 brazos del switch = 28 subcomandos + `version`. El 47 vivió
    porque se publicó sin regla de conteo (el repo tiene además un 27, un 26 y un 25 para la misma
    pregunta, cada uno contando otra cosa). De acá la regla transversal de §0.
