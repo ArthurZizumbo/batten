@@ -49,8 +49,44 @@ function InstallFrom($src) {
 
 # 2. The post-update path: bin/ ships empty, so an update wiped the binary and the cache is the
 #    only copy left. Restore it instead of spending 14 MB of network again.
+#
+# This branch used to print "(plugin update)", asserting a cause it had not checked — and on THIS
+# platform the other cause is the likely one. Windows Defender classifies freshly built, unsigned
+# Go binaries as `Trojan:Win32/*!ml` often enough that this project hit it on its own machine: an
+# ML verdict rather than a signature, which is why byte-identical builds get different answers and
+# an explicit rescan comes back clean.
+#
+# batten cannot stop that; being quiet about it is the part it must not do. A quarantined binary
+# leaves exactly the state batten exists to eliminate — the seven hooks are exec-form on a file
+# that no longer exists and die in silence, the MCP server does not start, and `batten doctor`
+# cannot report it because doctor IS the missing binary.
+#
+# The tell is the REPEAT: an update explains this once, twice inside a day does not. See the same
+# block in bootstrap.sh; the two scripts are one contract in two files.
+$stamp = Join-Path $cacheDir '.last-restore'
 if ((Test-Path -LiteralPath $cache -PathType Leaf) -and (InstallFrom $cache)) {
-    Note "batten: restored from $cacheDir (plugin update)"
+    $prev = 0
+    if (Test-Path -LiteralPath $stamp -PathType Leaf) {
+        $raw = (Get-Content -LiteralPath $stamp -TotalCount 1 -ErrorAction SilentlyContinue)
+        [long]::TryParse($raw, [ref]$prev) | Out-Null
+    }
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    try {
+        New-Item -ItemType Directory -Force -Path $cacheDir -ErrorAction Stop | Out-Null
+        Set-Content -LiteralPath $stamp -Value $now -ErrorAction Stop
+    } catch { }
+
+    if ($prev -gt 0 -and ($now - $prev) -lt 86400) {
+        Note "batten: the binary was MISSING AGAIN and had to be restored from the cache."
+        Note "batten: a plugin update explains that once; twice in a day means something is"
+        Note "batten: deleting $target after a good install."
+        Note "batten: on Windows that is nearly always an antivirus quarantine - Defender reports"
+        Note "batten: unsigned Go binaries as Trojan:*!ml. Check its quarantine for batten."
+        Note "batten: until it stops, the hooks have no binary to run and NOTHING IS BEING GATED"
+        Note "batten: between the moment it is removed and the next session that restores it."
+    } else {
+        Note "batten: restored from $cacheDir - the plugin's bin/ was empty (usually a plugin update)"
+    }
     exit 0
 }
 

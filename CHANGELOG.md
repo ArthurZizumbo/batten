@@ -32,6 +32,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ### Changed
 
+- **A binary that disappears after a good install is no longer restored in silence.** The cache
+  branch of both bootstraps printed *"restored from … (plugin update)"* — asserting a cause it had
+  never checked. A plugin update is the usual reason `${CLAUDE_PLUGIN_ROOT}/bin` is empty. It is not
+  the only one, and the other is worse: **an antivirus quarantining the binary after it installed
+  cleanly.**
+
+  This is not hypothetical. Windows Defender classified a freshly built `batten.exe` as
+  `Trojan:Win32/Bearfoos.A!ml` on this project's own machine. The `!ml` suffix is a machine-learning
+  verdict rather than a signature, and it behaves like one: byte-identical builds got different
+  answers, and an explicit rescan of the same bytes came back clean — the textbook shape of a false
+  positive on an unsigned Go binary.
+
+  batten cannot stop an antivirus. Being quiet about it is the part it must not do, because the
+  state a quarantine leaves behind is the one this project exists to eliminate: the seven hooks are
+  exec-form on a file that no longer exists, so they die in silence; the MCP server does not start;
+  and `batten doctor` cannot report any of it, because doctor **is** the missing binary. Every
+  surface that could raise the alarm is the thing that was removed.
+
+  The only survivor is the bootstrap, and its only signal is the **repeat**. A plugin update
+  explains one restore; two inside a day means something is deleting the binary after a good
+  install — and restoring silently just hands the same bytes back for the same treatment while
+  printing a reassuring line every session. Both scripts now stamp the restore, and the second one
+  says what is happening, what it costs, and where to look.
+
 - **`declaredAsFuture` is empty: every field `batten.yaml` accepts now has a reader.** Sixteen
   entries, then seven, now none. The list is the mechanism that does to batten what batten does to
   its users — declare a field and you must wire it up or write down, in a review, that you are

@@ -784,3 +784,111 @@ func readJSON(t *testing.T, path string, v any) {
 		t.Fatalf("parse %s: %v", path, err)
 	}
 }
+
+// --- the antivirus case, which is not hypothetical ---
+
+// TestARepeATedCacheRestoreIsReportedAsSuspicious.
+//
+// Found on this project's own machine: Windows Defender quarantined a freshly built `batten.exe`
+// as `Trojan:Win32/Bearfoos.A!ml`. The `!ml` suffix is a machine-learning verdict rather than a
+// signature, which is why byte-identical builds got different answers and an explicit rescan of
+// the same bytes came back clean — the textbook shape of a false positive on an unsigned Go
+// binary.
+//
+// batten cannot stop an antivirus. What it must not do is be QUIET about it, because the state a
+// quarantine leaves behind is the one this whole project exists to eliminate: the seven hooks are
+// exec-form on a file that no longer exists, so they die in silence; the MCP server does not
+// start; and `batten doctor` cannot report any of it, because doctor IS the missing binary. Every
+// surface that could raise the alarm is the thing that was removed.
+//
+// The only survivor is this script, and the only signal it has is the REPEAT. A plugin update
+// empties ${CLAUDE_PLUGIN_ROOT}/bin and is the normal reason to restore from the cache — once.
+// Twice inside a day means something is deleting the binary after a good install, and restoring
+// silently just feeds the same bytes back for the same treatment while printing a reassuring line
+// every session.
+func TestARepeatedCacheRestoreIsReportedAsSuspicious(t *testing.T) {
+	root, data := t.TempDir(), t.TempDir()
+	cacheDir := filepath.Join(data, "bin")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	copyFile(t, realBinary(t), filepath.Join(cacheDir, BinName()))
+
+	// A dead base URL: reaching for the network here would mean the cache path was not taken.
+	const offline = "http://127.0.0.1:1/unreachable"
+
+	// First restore — the benign shape. A plugin update wiped bin/; nothing is wrong yet.
+	out, code := runBootstrap(t, root, data, offline)
+	if code != 0 {
+		t.Fatalf("bootstrap exited %d\n%s", code, out)
+	}
+	mustRun(t, BinPath(root))
+	if strings.Contains(out, "MISSING AGAIN") {
+		t.Errorf("the first restore was reported as suspicious; a plugin update is the normal "+
+			"reason to be here and crying wolf on it trains the user to skip the message:\n%s", out)
+	}
+
+	// Now the quarantine: the binary is removed from the plugin root after a good install, while
+	// the cache — which lives outside it — survives. Exactly what an antivirus does.
+	if err := os.Remove(BinPath(root)); err != nil {
+		t.Fatal(err)
+	}
+
+	out, code = runBootstrap(t, root, data, offline)
+	if code != 0 {
+		t.Fatalf("bootstrap exited %d; a warning must never break the session\n%s", code, out)
+	}
+	mustRun(t, BinPath(root)) // it still restores — refusing would leave the machine worse off
+	if !strings.Contains(out, "MISSING AGAIN") {
+		t.Fatalf("the binary vanished after a good install and was restored in silence, under a "+
+			"message blaming a plugin update that did not happen. Between the removal and this "+
+			"session nothing was gated, and nobody was told:\n%s", out)
+	}
+	// The warning has to name the cause worth checking and the consequence, or it is noise.
+	for _, want := range []string{"antivirus", "NOTHING IS BEING GATED"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the warning must name the likely cause and what it costs. Missing %q from:\n%s", want, out)
+		}
+	}
+}
+
+// The same alarm on the script Windows actually runs — and Windows is not the secondary case
+// here, it is the ONLY platform where this has been observed. Defender is the antivirus doing
+// the quarantining, so a warning that exists only in bootstrap.sh warns on the platform that does
+// not need it.
+func TestBootstrapPS1ReportsARepeatedRestore(t *testing.T) {
+	root, data := t.TempDir(), t.TempDir()
+	cacheDir := filepath.Join(data, "bin")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	copyFile(t, realBinary(t), filepath.Join(cacheDir, BinName()))
+	const offline = "http://127.0.0.1:1/unreachable"
+
+	out, code := runBootstrapPS(t, root, data, offline)
+	if code != 0 {
+		t.Fatalf("bootstrap.ps1 exited %d\n%s", code, out)
+	}
+	mustRun(t, BinPath(root))
+	if strings.Contains(out, "MISSING AGAIN") {
+		t.Errorf("the first restore was reported as suspicious:\n%s", out)
+	}
+
+	if err := os.Remove(BinPath(root)); err != nil {
+		t.Fatal(err)
+	}
+	out, code = runBootstrapPS(t, root, data, offline)
+	if code != 0 {
+		t.Fatalf("bootstrap.ps1 exited %d\n%s", code, out)
+	}
+	mustRun(t, BinPath(root))
+	if !strings.Contains(out, "MISSING AGAIN") {
+		t.Fatalf("on the platform where Defender actually does this, the second restore was "+
+			"silent:\n%s", out)
+	}
+	for _, want := range []string{"antivirus", "NOTHING IS BEING GATED"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q from:\n%s", want, out)
+		}
+	}
+}

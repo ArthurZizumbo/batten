@@ -58,8 +58,48 @@ install_from() {
 
 # 2. A previous install left a copy in the cache — this is the post-update path. Restore it
 #    rather than downloading again.
+#
+# This branch used to print "(plugin update)", asserting a cause it had not checked. A plugin
+# update is the USUAL reason ${CLAUDE_PLUGIN_ROOT}/bin is empty; it is not the only one, and the
+# other one is much worse:
+#
+#   an antivirus quarantines the binary AFTER a good install.
+#
+# Windows Defender classifies freshly built, unsigned Go binaries as `Trojan:Win32/*!ml` often
+# enough that this project hit it on its own machine — an ML verdict, not a signature, which is
+# why byte-identical builds get different answers and an explicit rescan comes back clean.
+# batten cannot stop that. What it must not do is be quiet about it, because the state it leaves
+# behind is precisely the one batten exists to eliminate: the seven hooks are exec-form on a file
+# that no longer exists, so they die in silence; the MCP server does not start; and `batten
+# doctor` cannot report it because doctor IS the missing binary. The gate is down and every
+# surface that could say so is the thing that was removed.
+#
+# The tell is the REPEAT. A plugin update explains this once. Twice inside a day means something
+# removed the binary after a good install — and restoring from the cache just hands the same
+# bytes back for the same treatment, printing a reassuring line every session while nothing is
+# ever gated. So the stamp is read before restoring and written after.
+stamp="$DATA/bin/.last-restore"
 if [ -x "$cache" ] && install_from "$cache"; then
-  echo "batten: restored from $DATA/bin (plugin update)" >&2
+  prev=0
+  if [ -f "$stamp" ]; then
+    prev="$(cat "$stamp" 2>/dev/null)"
+    case "$prev" in '' | *[!0-9]*) prev=0 ;; esac
+  fi
+  now="$(date +%s 2>/dev/null)"
+  case "$now" in '' | *[!0-9]*) now=0 ;; esac
+  mkdir -p "$DATA/bin" 2>/dev/null && printf '%s\n' "$now" >"$stamp" 2>/dev/null
+
+  if [ "$now" -gt 0 ] && [ "$prev" -gt 0 ] && [ "$((now - prev))" -lt 86400 ]; then
+    echo "batten: the binary was MISSING AGAIN and had to be restored from the cache." >&2
+    echo "batten: a plugin update explains that once; twice in a day means something is" >&2
+    echo "batten: deleting $target after a good install." >&2
+    echo "batten: on Windows that is nearly always an antivirus quarantine — Defender reports" >&2
+    echo "batten: unsigned Go binaries as Trojan:*!ml. Check its quarantine for batten." >&2
+    echo "batten: until it stops, the hooks have no binary to run and NOTHING IS BEING GATED" >&2
+    echo "batten: between the moment it is removed and the next session that restores it." >&2
+  else
+    echo "batten: restored from $DATA/bin — the plugin's bin/ was empty (usually a plugin update)" >&2
+  fi
   exit 0
 fi
 
