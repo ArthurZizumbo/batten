@@ -53,6 +53,42 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ### Fixed
 
+**The six field-test findings that blocked adoption are closed**, each with a test that fails
+against the commit before it. They were triaged on one question: does it stop an outside adopter
+reaching the end of the flow, or break the central promise in silence?
+
+- **#4 — `claim` handed out a fence it could not honour.** It only ever looked inside its own run,
+  so the second run of a project claimed the same path, was told *"any other agent writing them is
+  now denied"*, and then the guard denied **both** owners at write time. Half the mechanism already
+  existed and was never called from here: `store.WriteSetOwnerAcrossOpenRuns`, the same query the
+  write guard uses. The discovery moves from mid-fan-out, to both agents, to claim time, to the one
+  who can still change the plan. Two worktrees are still allowed — that is the arrangement batten's
+  own messages recommend.
+- **#7 — a claim outside the repo root was accepted with the same success line.** The guard compares
+  repo-relative paths, so it could never match: an imaginary fence around a file batten will never
+  guard. Refused by name now, and a relative argument resolves against the root.
+- **#16 — the documented flow ended at a deny naming a command the documents did not contain.** With
+  `checks:` declared, the gate wants two verdicts from two producers, and no `/batten-*` command or
+  skill mentioned `batten check`. `/batten-verify` said to run the gate's checks by hand, which
+  produces citations rather than a batten-sourced pass. A guard now holds the rule rather than the
+  list: every document that names `batten verdict` must name `batten check`.
+- **#27 — evidence containing JSON objects returned the Go decoder's own sentence.** At the moment
+  of an adopter's first verdict, `json: cannot unmarshal object into Go struct field
+  Verdict.evidence of type string` named a Go type and a struct field that appear nowhere in the
+  documentation they were following. The error now names the field, the shape it wants, and the
+  convention that replaces the object (`AC-<n>:` as a prefix) — rejecting without teaching sends the
+  agent guessing, and it guesses objects again.
+- **#50 — a commit closed the unit the session started on, not the unit it names.** The gate had
+  learned to read the commit message; the close path had not. On trunk, where the branch names
+  nothing, `feat(TASK-002)` was gated as TASK-002 and closed TASK-001 — marking ok a unit nobody
+  committed and releasing its write-set claims while it was still being worked. Both sites now
+  resolve the unit through one function, because answering the same question in two places
+  differently is what produced the bug.
+- **#59 — the first thing batten asks anyone to do committed batten's own database.** `batten init`
+  wrote `batten.yaml` and said nothing about `.gitignore`. It now adds `/.batten/` when it is
+  missing, appending rather than rewriting — `init` is a first-contact command in somebody else's
+  repo — and says that it did.
+
 - **The private field-test subject is no longer named outside `docs/field-test/`.** batten was
   exercised against a real private repo, and that repo's name had not stayed in the report: it had
   reached `internal/scan`, `cmd/batten`, `internal/hooks`, both matrix scripts, the ROADMAP and

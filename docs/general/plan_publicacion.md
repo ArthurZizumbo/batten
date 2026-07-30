@@ -461,6 +461,12 @@ como corrección en §11: el ítem se cerró sin que el documento que lo pedía 
 
 ## 5. BLOQUE 4 — las brechas del field test, triadas
 
+> **Estado a esta altura: quedan 7 abiertos, no 13** — los 6 BLOQUEA están cerrados. Regla de
+> conteo, la misma de abajo: hallazgos CONFIRMED de `verified.json` sin fix a HEAD, contados una
+> vez cada uno. 7 = **6 PULIDO + 1 LÍMITE** (#6, que se documenta y no se arregla). Nada más se
+> cerró de casualidad: los 6 PULIDO siguen sin tocar a propósito, porque publicar con un PULIDO
+> abierto es honesto y reclutar con un BLOQUEA abierto quema al adoptante caro (§9).
+
 **Primero, el conteo, corregido: son 13, no 14.** La lista anterior citaba "#6, #60" para el bypass
 por heredoc/Makefile. Verificado contra `docs/field-test/verified.json` (63 entradas, índices 0-62,
 52 CONFIRMED): **el índice 60 es otro hallazgo** — doctor cortaba en el primer error fatal — y está
@@ -474,16 +480,31 @@ El triaje usa un solo eje: **¿le impide a un adoptante externo llegar al final 
 la promesa central en silencio?** Eso es BLOQUEA. Lo que molesta pero no miente es PULIDO. Lo que no
 se puede arreglar sin heurísticas en el camino crítico es LÍMITE, y se documenta.
 
-### Los 6 que BLOQUEAN adopción — se cierran ANTES de reclutar (§6 depende de esto)
+### Los 6 que BLOQUEAN adopción — **LOS SEIS CERRADOS**
 
-| # | qué pasa | mecanismo del fix | verificación (falla contra HEAD) | costo |
+Se cerraban antes de reclutar porque §6 depende de esto. Cada uno con su test diferencial, probado
+revirtiendo **comportamiento y no símbolos**, y cada commit nombra el suyo.
+
+| # | qué pasaba | mecanismo del fix | test que falla contra el commit anterior | commit |
 |---|---|---|---|---|
-| **16** | el ejemplo del propio README, con un gate con `checks:`, termina en deny que exige `batten check` — comando que el README no menciona | documentar el paso `batten check` en el flujo del README y de los comandos | manual: seguir el README verbatim en un repo limpio termina en commit permitido | S |
-| **50** | trunk-only: un commit de OTRO unit se denegó como el unit atado a la sesión, y otro se permitió en silencio con un run abierto sin veredicto | la atribución por mensaje debe ganar a la atadura de sesión también para *denegar*, y el no-atribuible avisa (el orden de decisión ya lo contempla; el caso trunk lo esquiva) | test de gate con dos units en trunk: commit `feat(TASK-002)` desde sesión atada a TASK-001 verificado → deny nombrando TASK-002 | M |
-| **4** | `claim` solo mira su propia corrida: el segundo run recibe *"any other agent writing them is now denied"* y después el guard deniega a **ambos** dueños | **la mitad ya existe**: `store.WriteSetOwnerAcrossOpenRuns` (`store.go:1764`, testeada, usada por el guard en `hooks.go:835` y `bashwrite.go:56`) — falta llamarla en el claim y rechazar nombrando al dueño y sugiriendo `batten worktree` | test: dos runs abiertos, claim del mismo path → el segundo se rechaza con el dueño nombrado; hoy sale 0 con mensaje de éxito | S |
-| **27** | evidencia con objetos JSON → error crudo del decoder de Go, en el momento exacto del primer veredicto del adoptante | error tipado que nombra el campo y la forma esperada (strings; `AC-n:` como prefijo) | test: `batten verdict --file` con objetos → mensaje que nombra `evidence[]` y la forma; hoy: `json: cannot unmarshal object...` | S |
-| **59** | `batten init` no escribe `.gitignore` para `.batten/` → el primer `git add -A` del adoptante commitea la base | `init` agrega la entrada si falta (y lo dice); el propio repo ya la lleva | test de init en repo limpio: `.gitignore` contiene `/.batten/` | S |
-| **7** | un claim fuera de la raíz del repo se acepta con la misma frase de éxito → cerca imaginaria: el guard compara rutas repo-relativas y ese claim no matchea nunca | rechazar el claim fuera de raíz con error nombrado (el claim de directorio ya se rechaza; esto es el caso hermano) | test: claim de ruta absoluta externa → rechazo; hoy sale 0 | S |
+| **16** | el flujo con un gate con `checks:` termina en deny que exige `batten check` — comando que la documentación no menciona | documentar el paso en el flujo del README **y de los comandos** | `TestEveryDocumentThatDrivesAVerdictNamesBattenCheck` — regla, no lista: todo documento que nombre `batten verdict` nombra `batten check` | `9d519bc` |
+| **50** | trunk-only: el commit cerraba el unit de la SESIÓN, no el que el mensaje nombra | `commitTarget` compartido por el gate y el cierre — los dos contestaban distinto la misma pregunta | `TestACommitClosesTheUnitItNAMES`, `TestACommitNamingAnUnopenedUnitClosesNothing` | `badd036` |
+| **4** | `claim` solo miraba su propia corrida: el segundo run recibía *"any other agent writing them is now denied"* y después el guard denegaba a **ambos** dueños | llamar a `store.WriteSetOwnerAcrossOpenRuns`, que ya existía y nadie llamaba desde acá | `TestASecondRunCannotClaimAFileAnotherOpenRunOwns` | `f6f65f7` |
+| **27** | evidencia con objetos JSON → error crudo del decoder de Go, en el primer veredicto del adoptante | error tipado que nombra el campo y la forma, y **enseña** `AC-n:` como el reemplazo del objeto | `TestEvidenceOfObjectsIsRefusedByName`, `TestAWrongFieldTypeNamesThatField` | `2e43768` |
+| **59** | `batten init` no escribía `.gitignore` → el primer `git add -A` commiteaba la base | `init` agrega `/.batten/` si falta, **append y no reescritura**, y lo dice | `TestInitIgnoresBattensOwnDatabase`, `TestInitAppendsToAnExistingGitignore` | `45b332a` |
+| **7** | un claim fuera de la raíz se aceptaba con la frase de éxito → cerca imaginaria | rechazar nombrando la razón; el relativo se resuelve contra la RAÍZ | `TestAClaimOutsideTheRepoIsRefused` | `f6f65f7` |
+
+**Dos de los seis no estaban donde el informe decía, y salió de ejecutarlos:**
+
+- **#16** ya estaba cerrado en el README (`README:88-114` muestra el deny y el `batten check` que lo
+  levanta; QUICKSTART también). Lo que seguía vivo era la otra mitad del mecanismo —"y de los
+  comandos"—: **ningún comando ni skill del plugin nombraba `batten check`**. `/batten-verify` decía
+  correr los checks del gate a mano, que produce citas y no un pase con `source=batten`.
+- **#50**: las tres sub-formas de PreToolUse del repro (B1, B3, C2 de `verified.json`) ya estaban
+  cerradas — verificado contra el binario, una por una. La que seguía viva es la que el `fix_hint`
+  del propio hallazgo nombraba **en segundo lugar** y nadie tocó: el close path de `postToolUse`.
+  Un commit que dice `feat(TASK-002)` cerraba TASK-001 — y cerrar un run **libera sus claims de
+  write-set**, así que los archivos cercados de un unit que se sigue trabajando quedan libres.
 
 ### Los 6 de PULIDO — no gatean el reclutamiento
 
@@ -634,7 +655,7 @@ adjetivo indefinido.
 | | qué tiene que ser cierto | de dónde sale |
 |---|---|---|
 | **C1** | ≥1 adopción externa completada con **M1 = sí** (protocolo §6 entero, artefactos archivados) | §6 |
-| **C2** | los **6 BLOQUEA** de §5 cerrados, cada uno con su test diferencial | §5 |
+| **C2** | ✅ los **6 BLOQUEA** de §5 cerrados, cada uno con su test diferencial | §5 |
 | **C3** | ✅ verificación sha256 en los dos bootstraps con la matriz de manipulación en verde | §3.1 |
 | **C4** | la reversa §2.2 escrita **y el drill R2 ensayado una vez** con evidencia | §2.2 |
 | **C5** | la métrica §4.2 respondida: ≥10 runs, el número, y la decisión del umbral **anotada en este documento** | §4.2 |
