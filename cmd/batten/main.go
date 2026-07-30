@@ -33,6 +33,7 @@ import (
 	"github.com/ArthurZizumbo/batten/internal/export"
 	"github.com/ArthurZizumbo/batten/internal/gitx"
 	"github.com/ArthurZizumbo/batten/internal/hooks"
+	"github.com/ArthurZizumbo/batten/internal/install"
 	"github.com/ArthurZizumbo/batten/internal/mcp"
 	"github.com/ArthurZizumbo/batten/internal/plan"
 	"github.com/ArthurZizumbo/batten/internal/render"
@@ -2121,15 +2122,14 @@ func checkInstall(d *dx, projectDir string) {
 		return
 	}
 
-	bin := filepath.Join(dir, "bin", "batten")
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
-	}
+	bin := install.BinPath(dir)
 	switch out, err := exec.Command(bin, "version").Output(); {
 	case err != nil:
 		d.fail("installed binary %s does not run — %v\n"+
 			"    Every hook invokes THIS file, not the batten on your PATH, so the gate is not "+
-			"running at all. Reinstall the plugin.", bin, err)
+			"running at all.\n"+
+			"    Start a new session (SessionStart runs the bootstrap, which installs it), or run "+
+			"%s/scripts/bootstrap.sh by hand.", bin, err, dir)
 	default:
 		got := strings.TrimSpace(string(out))
 		if got != "batten "+version {
