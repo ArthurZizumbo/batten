@@ -2059,7 +2059,7 @@ func resolvable(root, exe string) bool {
 
 // checkAnchors catches a spec that declares an anchor the repo cannot produce.
 //
-// Found by rebuilding the proyecto_ui replica: `batten init` writes `anchor: git_sha` into the
+// Found by rebuilding the replica-ui fixture: `batten init` writes `anchor: git_sha` into the
 // spec of a directory that is not a git repo at all, `batten phase` then records an empty
 // base_sha, and nothing anywhere says so. `diff_from: anchor` is meant to read that anchor, so
 // the whole "verify only what this unit changed" story rests on a value that was never written.

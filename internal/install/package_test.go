@@ -51,6 +51,52 @@ func TestTrackedShellScriptsAreExecutable(t *testing.T) {
 	}
 }
 
+// TestNoPrivateProjectTokensAreTracked is the local reading of the CI step of the same name.
+//
+// batten was field-tested against a private repo, and the name of that repo did not stay in the
+// field-test report: it reached `internal/scan`, `cmd/batten`, both matrix scripts, the ROADMAP and
+// the manual — ten files of live code, tests and docs, none of which any decision about
+// `docs/field-test/` would ever touch.
+//
+// Two details are load-bearing:
+//
+//   - The pattern is masked with single-character classes. It matches the real token; the bytes of
+//     the files that CARRY the pattern (this one, the CI step, and the plan that documents both) do
+//     not match themselves. Unmasked, the guard would fail on its own source and the obvious "fix"
+//     would be a path exclusion that blinds it. `\b` is not decoration either: without a word
+//     boundary the second token matches inside ordinary Spanish words.
+//   - Nothing is excluded by PATH except `docs/field-test/`, which is the open subject of decision
+//     1.1 in docs/general/plan_publicacion.md. In particular `graphify-out/` is IN scope, unlike in
+//     the personal-paths guard next to it: a token is not a path, and a 2 MB generated `graph.json`
+//     is the one file in this repo where something private can land without a human or a check ever
+//     seeing it.
+//
+// And there is a SECOND lock on that same door, found by planting the token in `graph.json` and
+// watching a guard that had already dropped `:!graphify-out` still pass. `.gitattributes` marks
+// the three generated artifacts `-diff` so a rebuild does not bury real changes — and `git grep -I`
+// skips `-diff` files as binary. The flag that keeps the graph out of diffs also keeps it out of
+// the grep. So no `-I` here: a "Binary file ... matches" line is the correct output for a
+// minified 2 MB JSON, and it is the only output that arrives at all.
+func TestNoPrivateProjectTokensAreTracked(t *testing.T) {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git on PATH")
+	}
+	const masked = `[p]royecto[_]ui|\bM[N]A\b`
+
+	cmd := exec.Command(git, "-C", repoRoot(t), "grep", "-nE", masked, "--", ".", ":!docs/field-test")
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
+			return // git grep exits 1 on no match: the tree is clean
+		}
+		t.Skipf("not a git checkout: %v", err)
+	}
+	t.Errorf("the private field-test subject is named outside docs/field-test/:\n%s\n"+
+		"Use the neutral fixture name (replica-ui), or describe the repo without naming it. "+
+		"Every one of these files travels to anyone who clones this repo.", out)
+}
+
 // Every /batten-* command and every skill opens with a bash block that runs a bare `batten`. That
 // resolves only because Claude Code puts the plugin's bin/ on PATH — so when the binary is missing
 // the model gets `command not found` from a block it was told to run, and carries on: it plans, it

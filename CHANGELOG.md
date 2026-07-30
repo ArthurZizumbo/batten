@@ -8,7 +8,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **The private field-test subject is no longer named outside `docs/field-test/`.** batten was
+  exercised against a real private repo, and that repo's name had not stayed in the report: it had
+  reached `internal/scan`, `cmd/batten`, `internal/hooks`, both matrix scripts, the ROADMAP and
+  `docs/FIELD-TEST.md` — 10 tracked files of live code, tests, scripts and docs, none of which any
+  decision about `docs/field-test/` would ever have touched. Where the text means the replica the
+  subject is now `replica-ui`, the name the scripts already used; where it means the real repo it
+  is described without being named.
+
+### Added
+
+- **A guard against the same leak, on both readings.** `TestNoPrivateProjectTokensAreTracked`
+  (`internal/install`) and a matching `ci.yml` step. It needed the *opposite* exclusion list from
+  the personal-paths guard beside it, and getting there took two findings: a token is not a path,
+  so `:!graphify-out` had to go — and dropping it was still not enough, because `.gitattributes`
+  marks the generated graph `-diff` and **`git grep -I` skips `-diff` files as binary**. A token
+  planted in `graph.json` walked past the guard that had already dropped the path exclusion. The
+  guard runs without `-I`; it was verified red against the previous commit, red with the token
+  planted in `graph.json`, and green on the swept tree.
 
 ## [0.1.0-beta.1] — 2026-07-29
 

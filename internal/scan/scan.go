@@ -149,7 +149,7 @@ func Scan(root string) (*Facts, error) {
 // deriveUnit finds the work-item noun this repo already uses.
 //
 // Branch names were the only source, and they are the WEAKER one. A repo that has been planned
-// but not yet worked has no feature branches at all — proyecto_ui had a backlog of US-001..US-0NN
+// but not yet worked has no feature branches at all — replica-ui had a backlog of US-001..US-0NN
 // written down and a single `main`, so the scan proposed `TASK-\d+` and every downstream default
 // was wrong: the unit pattern, the artifact paths, the locator. The backlog is where the ids
 // actually live, and derivePurpose has already found the file.
@@ -638,7 +638,7 @@ func (f *Facts) ToYAML() string {
 	// so a generated spec without it means the most dangerous command in the plugin runs with no
 	// ceiling at all, and rule 2 has nothing to enforce.
 	//
-	// Found by re-running the proyecto_ui matrix after the rules became mechanical: `init` wrote a
+	// Found by re-running the replica-ui matrix after the rules became mechanical: `init` wrote a
 	// budget block, the ceiling was absent, and `batten iterate` correctly answered "nothing stops
 	// this" — correct, and not what anyone adopting batten should get by default.
 	//

@@ -88,7 +88,7 @@ PR generado) existe para que esas negaciones sean **auditables** y no sospechosa
 
 | bloque | qué cerró | estado |
 |---|---|---|
-| **1** | el tercer sitio del un-solo-veredicto · validación contra la réplica de `proyecto_ui` · fail-open ruidoso · `doctor` clínico · **el guard de "declarado ⇒ implementado"** · payload MCP + inyección por fase | ✅ |
+| **1** | el tercer sitio del un-solo-veredicto · validación contra la réplica `replica-ui` · fail-open ruidoso · `doctor` clínico · **el guard de "declarado ⇒ implementado"** · payload MCP + inyección por fase | ✅ |
 | **1b** | lo que trajo gentle-ai: identidad por dispositivo+inodo (híbrida) · huella del árbol (CAS-bound) · `batten recover` · contención de Windows como transitoria · el modo vigente grabado en cada decisión | ✅ |
 | **2** | `decision` en `events` · `batten report` · `batten demo` · los `.tape` · `batten pr` con DAG Mermaid · canvas HTML autocontenido · README reposicionado · **el sobre de fallo tipado** | ✅ (el GIF falta: vhs/ttyd/ffmpeg no instalados) |
 | **3** | `retry_of` + `depends_on` + `diff_from` + **el guard de valores de columna** · **worktrees** · **modo desatendido** · parseo de Bash advisory · **`scan-diff`** · la cadena graphify→engram | ✅ (el ítem 19 quedó absorbido por los worktrees) |

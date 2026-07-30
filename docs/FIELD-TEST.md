@@ -21,7 +21,8 @@ The headline number is not the 80 findings. It is that the run caught a regressi
 
 ## What was tested
 
-An isolated replica of `proyecto_ui`: four domains each with their own `AGENTS.md`, a root
+An isolated replica (`replica-ui`) of the private repo batten was designed against: four domains
+each with their own `AGENTS.md`, a root
 `AGENTS.md` and `CLAUDE.md`, 47 skills, 9 custom agents, a backlog of `US-001`..`US-0NN`, and no
 code yet. Plus a demo repo built from zero specifically to walk the five-step adoption path.
 
@@ -36,7 +37,7 @@ code yet. Plus a demo repo built from zero specifically to walk the five-step ad
 | `demo-zero` | adoption from an empty directory |
 
 Nothing outside a sandbox was touched, and this was checked afterwards rather than assumed. The
-real `proyecto_ui` still has one commit, a clean tree and no `batten.yaml`. The real
+repo it replicates still has one commit, a clean tree and no `batten.yaml`. The real
 `~/.batten/batten.db` contains only this repo's own dogfood runs.
 
 ## Results

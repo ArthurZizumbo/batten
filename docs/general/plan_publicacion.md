@@ -69,31 +69,49 @@ publicar" es "no publicar".
 - decisión 1.2 (push/tag/release): fecha límite ______ (después de 1.1, mismo día está bien)
 - decisión 1.3 (el adoptante, §6): nombre y fecha ______ (puede esperar al release; no más)
 
-### 1.0 — Lo que NO espera la decisión: el sweep de tokens
+### 1.0 — Lo que NO espera la decisión: el sweep de tokens — **HECHO**
 
 El hallazgo que cambió esta sección: los tokens del proyecto privado **no viven solo en
-`docs/field-test/`**. Un grep de verificación los encontró en **22 archivos, 13 fuera del
-directorio**: `ROADMAP.md` (el "Next target" nombra al proyecto; 3 líneas), `docs/FIELD-TEST.md` (2),
-`docs/general/plugin_al_momento.md:90`, `internal/scan/scan.go` (2) y sus tests (3),
-`internal/hooks/hooks_test.go:435`, `cmd/batten/main.go:2062`, `cmd/batten/main_test.go:969`,
-`scripts/replica-ui.sh` (3), `scripts/matrix-replica.sh` (2). O sea: **el sujeto de la réplica está
-nombrado en el código vivo y en los scripts de matriz**, no solo en el informe del field test.
+`docs/field-test/`**. **El sujeto de la réplica estaba nombrado en el código vivo y en los scripts
+de matriz**, no solo en el informe del field test.
 
-- **mecanismo** — renombrar el sujeto del fixture repo-wide (la réplica pasa a un nombre neutro,
-  p. ej. `replica-ui`), en código, tests, scripts y docs — **independiente de qué se decida sobre
-  `docs/field-test/`**, porque ninguna de las tres opciones de 1.1 toca estos 13 archivos.
-- **criterio** — `git grep -iE '[p]royecto[_]ui|\bM[N]A\b'` devuelve cero fuera de
+**El conteo, con su regla** (la versión anterior decía "22 archivos, 13 fuera" sin decir cómo se
+contó, y las dos cifras estaban una unidad altas): la regla es **archivos trackeados con ≥1 match
+de `git grep -nE` del patrón enmascarado**, medido contra el árbol de esta revisión — o sea con
+`plan_mejora.md` ya retirado y con el patrón de este documento ya enmascarado. Con esa regla eran
+**19 archivos, 10 fuera de `docs/field-test/`**: `ROADMAP.md` (3 líneas), `docs/FIELD-TEST.md` (2),
+`docs/general/plugin_al_momento.md`, `internal/scan/scan.go` (2) y sus tests (3),
+`internal/hooks/hooks_test.go`, `cmd/batten/main.go`, `cmd/batten/main_test.go`,
+`scripts/replica-ui.sh` (3), `scripts/matrix-replica.sh` (2). Contra el HEAD anterior a esta
+revisión eran 21 y 12 — la diferencia son los dos documentos de planificación, no código.
+
+- **mecanismo** — renombrar el sujeto del fixture repo-wide, en código, tests, scripts y docs —
+  **independiente de qué se decida sobre `docs/field-test/`**, porque ninguna de las tres opciones
+  de 1.1 toca esos 10 archivos. Ejecutado con dos destinos, no uno: donde el texto habla de **la
+  réplica** el sujeto pasa a `replica-ui` (el nombre que los scripts y `REPLICA-UI.md` ya usaban);
+  donde habla del **repo real** —`ROADMAP.md`, `docs/FIELD-TEST.md:39`— se describe sin nombrarlo,
+  porque "la réplica real" habría sido prosa falsa.
+- **criterio** — `git grep -nE '[p]royecto[_]ui|\bM[N]A\b'` devuelve cero fuera de
   `docs/field-test/` (el patrón va enmascarado a propósito: matchea el token real y los bytes del
-  archivo que lo contiene no — este documento y el guard pasan su propio chequeo; el `\b` tampoco
-  es decorativo: sin borde de palabra, "columna" da 8+ falsos positivos hoy). Y el guard de rutas
-  personales de `ci.yml` se extiende con ese mismo patrón, **sin heredar la exclusión
+  archivo que lo contiene no — este documento, el guard y el test pasan su propio chequeo; el `\b`
+  tampoco es decorativo: sin borde de palabra, "columna" da 8+ falsos positivos hoy). Y el guard de
+  rutas personales de `ci.yml` se extiende con ese mismo patrón, **sin heredar la exclusión
   `:!graphify-out`** — los tokens no son rutas, y `graph.json` fue exactamente el vector que §11
-  documenta.
-- **verificación** — el guard nuevo en rojo sobre un commit de prueba que planta el token, en verde
-  sobre el árbol limpio (la trampa del `grep -v` de §11 dice por qué se prueba en las dos
-  direcciones).
+  documenta. ✅
+- **la segunda cerradura, que este ítem encontró ejecutando** — quitar `:!graphify-out` **no
+  alcanzó**. `.gitattributes` marca los tres artefactos generados `-diff` (para que un rebuild no
+  entierre cambios reales) y **`git grep -I` saltea los archivos `-diff` como binarios**: un token
+  plantado en `graph.json` pasó limpio por un guard que ya había soltado la exclusión de ruta. El
+  guard va **sin `-I`**; `Binary file … matches` es la salida correcta para un JSON minificado de
+  2 MB, y es la única que llega. Queda anotada en §11.
+- **verificación** — `TestNoPrivateProjectTokensAreTracked` (`internal/install/package_test.go`),
+  la lectura local del step de CI, probada en las cuatro direcciones sobre un clon de sandbox:
+  **rojo** contra HEAD (nombra los 12 archivos), **rojo** con el token plantado en
+  `graphify-out/graph.json`, **verde** sobre el árbol barrido, **verde** con el mismo token bajo
+  `docs/field-test/`. (La trampa del `grep -v` de §11 dice por qué se prueba en las dos
+  direcciones; la segunda cerradura dice por qué no alcanzaba con dos.)
 - **costo** — S-M (mecánico; un commit).
-- **depende de** — nada. Va primero.
+- **depende de** — nada. Fue primero.
 
 ### 1.1 — `docs/field-test/`: tres formas, no dos
 
@@ -715,6 +733,13 @@ Y tres trampas que solo aparecieron **ejecutando**, anotadas porque van a volver
   entrar sin que ningún humano ni ningún check lo vea. De ahí `.graphifyignore`; usar siempre
   `graphify . --code-only` + `cluster-only --no-label`. (El guard de tokens de §1.0 cierra el otro
   lado: deja de excluir por ruta lo que se busca por contenido.)
+- **`git grep -I` sobre un archivo `-diff`.** La cerradura de arriba tiene **dos** llaves y la
+  segunda no se ve leyendo: `.gitattributes` marca `graph.json`, `graph.html` y `manifest.json`
+  como `-diff` para que un rebuild no entierre cambios reales, y `git grep -I` trata a todo archivo
+  `-diff` como binario y **lo saltea**. O sea que el mismo atributo que saca al grafo de los diffs
+  lo saca de los greps: el guard de §1.0 con `:!graphify-out` ya quitado **pero con `-I`** dejó
+  pasar un token plantado en `graph.json`. Se descubrió plantándolo, no leyendo el flag. Cualquier
+  guard de contenido que tenga que ver `graphify-out/` va sin `-I`.
 
 ---
 

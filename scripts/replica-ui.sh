@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# replica-ui.sh — rebuild the sandbox replica of proyecto_ui.
+# replica-ui.sh — rebuild the sandbox replica `replica-ui`.
 #
 # WHY THIS IS A COMMITTED SCRIPT AND NOT A THROWAWAY
 #
 # batten's test suite and its synthetic sandboxes all describe a repo that has code, build files
-# and git history. proyecto_ui — the only project batten was ever exercised against that it did
-# not itself write — has none of those:
+# and git history. The subject this replica copies — the only project batten was ever exercised
+# against that it did not itself write — has none of those:
 #
-#   |               | taskly (the synthetic sandbox) | proyecto_ui              |
+#   |               | taskly (the synthetic sandbox) | replica-ui               |
 #   |---------------|--------------------------------|--------------------------|
 #   | git repo      | yes                            | NO                       |
 #   | code          | Go with tests                  | NONE: 4 AGENTS.md, no src |

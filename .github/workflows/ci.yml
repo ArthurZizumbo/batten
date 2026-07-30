@@ -152,6 +152,44 @@ jobs:
           fi
           exit $fail
 
+      # The other half of the same problem, and it needs the OPPOSITE exclusion list.
+      #
+      # The guard above hunts for personal PATHS and skips `graphify-out` because a 2 MB generated
+      # JSON is unreviewable in a diff. A token is not a path: the name of the private project
+      # batten was field-tested against is exactly the kind of string that rides into `graph.json`
+      # when `graphify update .` runs without `--code-only`, and that file is the one place in this
+      # repo where something private can land without a human or a check ever seeing it. So this
+      # step does NOT inherit `:!graphify-out` — the path exclusion is precisely the hole.
+      #
+      # The pattern is masked with single-character classes on purpose: it matches the real token,
+      # and the bytes of the files that carry the pattern — this one, and the plan that documents
+      # it — do not match themselves. Without the masking the guard fails on its own source, and
+      # the "fix" would be an exclusion that blinds it. The `\b` is not decoration either: without
+      # a word boundary the second token matches inside ordinary Spanish words.
+      #
+      # `docs/field-test/` is excluded while decision 1.1 of docs/general/plan_publicacion.md is
+      # open; that directory is the whole subject of that decision. Everything else — code, tests,
+      # scripts, docs and the generated graph — is in scope.
+      #
+      # There is no `-I`, and that is the second half of the same lesson. Dropping `:!graphify-out`
+      # was not enough: `.gitattributes` marks the three generated artifacts `-diff` so a rebuild
+      # does not bury real changes, and `git grep -I` skips `-diff` files as binary. The attribute
+      # that keeps the graph out of diffs also kept it out of the grep — a token planted in
+      # `graph.json` walked past a guard that had already dropped the path exclusion. "Binary file
+      # ... matches" is the right output for a minified 2 MB JSON; it is also the only one.
+      #
+      # `git grep` exits 1 on no-match, which under `bash -e` would fail the step on a HEALTHY
+      # tree. Same trap as the `grep -v` above: capture first, decide after.
+      - name: no private-project tokens are tracked
+        run: |
+          hits="$(git grep -nE '[p]royecto[_]ui|\bM[N]A\b' -- . ':!docs/field-test' || true)"
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "^ the private field-test subject is named outside docs/field-test/."
+            echo "  Use the neutral fixture name (replica-ui), or describe the repo without naming it."
+            exit 1
+          fi
+
       # The download name in bootstrap.sh and the archive name GoReleaser builds are one contract
       # written in two files. When they drifted, every platform's first-run install 404'd.
       - name: bootstrap and goreleaser agree on the archive name

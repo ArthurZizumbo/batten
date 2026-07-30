@@ -30,7 +30,7 @@ func has(list []string, want string) bool {
 	return false
 }
 
-// TestPlannedButUnbuiltRepoStillHasDomains is the proyecto_ui case, and the reason deriveDomains
+// TestPlannedButUnbuiltRepoStillHasDomains is the replica-ui case, and the reason deriveDomains
 // no longer requires code. A repo can be fully planned — one AGENTS.md per domain, a planning
 // doc, no source files yet — and those directories ARE the fan-out axes. Somebody drew those
 // boundaries deliberately; requiring code to see them returned an empty domain list for exactly
@@ -163,7 +163,7 @@ func keys(m map[string]HarnessFact) []string {
 	return out
 }
 
-// TestUnitComesFromTheBacklogNotJustBranches is the proyecto_ui case that motivated reading the
+// TestUnitComesFromTheBacklogNotJustBranches is the replica-ui case that motivated reading the
 // planning doc at all. That repo had US-001..US-020 written down and a single `main` branch, so
 // deriving from branch names alone proposed `TASK-\d+` — and every default downstream of the
 // unit was then wrong. The backlog is where the ids actually live.
@@ -243,7 +243,7 @@ func TestASingleMentionIsNotAConvention(t *testing.T) {
 // entry spends context arguing for the wrong tool. Suggesting nothing beats suggesting noise.
 // TestGeneratedSpecDeclaresTheIterationCeiling.
 //
-// Found by re-running the proyecto_ui acceptance matrix after /batten-night's four rules became
+// Found by re-running the replica-ui acceptance matrix after /batten-night's four rules became
 // mechanisms. `init` wrote a `budget:` block with no `max_iterations`, so a freshly adopted repo
 // got the most dangerous command in the plugin with NO ceiling — and `batten iterate` answered,
 // correctly and uselessly, "no budget.max_iterations declared, so nothing stops this".

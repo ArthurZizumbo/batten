@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# matrix-replica.sh — la matriz de aceptación sobre la réplica de proyecto_ui.
+# matrix-replica.sh — la matriz de aceptación sobre la réplica `replica-ui`.
 #
 # POR QUÉ ESTO ES UN SCRIPT COMMITEADO Y NO UNA LISTA EN UN DOCUMENTO
 #
@@ -46,7 +46,7 @@ print(json.dumps(d))" "$1" "$CWDW"; }
 hook() { pay "$2" > "$SB/.p.json"; "$B" hook "$1" < "$SB/.p.json" 2>&1; }
 has()  { grep -q "$2" <<<"$1" && echo y || echo n; }
 
-echo "=== MATRIZ · réplica de proyecto_ui (no es repo git, sin código, sin build files) ==="
+echo "=== MATRIZ · réplica replica-ui (no es repo git, sin código, sin build files) ==="
 echo
 
 # ---- 1 · init -------------------------------------------------------------

@@ -966,7 +966,7 @@ func TestDoctorStaysQuietAboutChecksThatResolve(t *testing.T) {
 	}
 }
 
-// TestDoctorCatchesAnAnchorTheRepoCannotRecord came out of the proyecto_ui replica.
+// TestDoctorCatchesAnAnchorTheRepoCannotRecord came out of the replica-ui fixture.
 //
 // `batten init` writes `anchor: git_sha` into the spec of a directory that is not a git repo,
 // `batten phase` then records an empty base_sha, and nothing says so — while `diff_from: anchor`
