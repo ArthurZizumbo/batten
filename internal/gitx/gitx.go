@@ -89,6 +89,31 @@ func CommonDir(dir string) (string, error) {
 	return Canonical(p), nil
 }
 
+// RelTo expresses p relative to root, and reports whether p is INSIDE root at all.
+//
+// Both sides are canonicalised first, because in every caller they arrive from different places —
+// one from git, the other from a cwd, a tool payload or a `t.TempDir()` — and the same directory
+// spelled two ways makes filepath.Rel return a `../../..` walk instead of a descent. That walk is
+// not merely wrong: joined back onto another path it can LAND somewhere real, which is how a
+// worktree lookup came to resolve to the main tree and tell the user they were standing in a
+// worktree they were not in.
+//
+// The bool is the part callers must not skip. "Not inside root" and "at root" are different
+// answers, and treating the first as the second is how a path outside the repo gets treated as a
+// repo-relative one.
+func RelTo(root, p string) (string, bool) {
+	rel, err := filepath.Rel(Canonical(root), Canonical(p))
+	if err != nil {
+		// Different volumes on Windows, mostly. Not inside, and not an error worth propagating.
+		return "", false
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return "", false
+	}
+	return rel, true
+}
+
 // Canonical resolves a path to the form two different processes will agree on: symlinks followed
 // on Unix, 8.3 short names expanded on Windows.
 //
@@ -174,7 +199,12 @@ func IsDirty(root string, ignore ...string) (bool, string, error) {
 		if e == "" {
 			continue
 		}
-		if rel, rerr := filepath.Rel(root, e); rerr == nil {
+		// Canonical on both sides: the ignore list is batten's own database path and `root` comes
+		// from the caller, so an alias on either makes the exclusion silently not apply and every
+		// tree looks dirty because batten wrote to its own ledger.
+		if rel, inside := RelTo(root, e); inside {
+			e = rel
+		} else if rel, rerr := filepath.Rel(root, e); rerr == nil {
 			e = rel
 		}
 		e = strings.ReplaceAll(e, `\`, "/")

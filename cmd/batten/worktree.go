@@ -121,11 +121,17 @@ func specRootIn(sp *spec.Spec, tree string) string {
 	if err != nil {
 		return tree
 	}
-	rel, err := filepath.Rel(top, sp.Root)
-	if err != nil || rel == "." {
+	// gitx.RelTo, not filepath.Rel: `top` comes from git and `sp.Root` from the process cwd, so on
+	// a machine where either carries an alias — an 8.3 short name on Windows, /var vs /private/var
+	// on macOS — Rel returns a `../..` walk instead of ".". Joined onto another worktree's path
+	// that walk LANDS somewhere real, and this function then reported the main tree as the unit's
+	// worktree: the merge guard told the user they were standing in a worktree they were not in,
+	// and the gate compared a verdict against a tree it was never made about.
+	rel, inside := gitx.RelTo(top, sp.Root)
+	if !inside || rel == "." {
 		return tree
 	}
-	return filepath.Join(tree, rel)
+	return filepath.Join(tree, filepath.FromSlash(rel))
 }
 
 func worktreeAdd(sp *spec.Spec, st *store.Store, unit, path, branch, from string) error {

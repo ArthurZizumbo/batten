@@ -926,12 +926,13 @@ func (h *Handler) repoRel(in Input, path string) (string, bool) {
 		}
 		path = filepath.Join(base, path)
 	}
-	rel, err := filepath.Rel(h.Spec.Root, path)
-	if err != nil {
-		return "", false
-	}
-	rel = filepath.ToSlash(rel)
-	if strings.HasPrefix(rel, "../") || rel == ".." {
+	// gitx.RelTo canonicalises both sides. It matters more here than anywhere: `path` arrives from
+	// a tool payload and `h.Spec.Root` from wherever batten.yaml was found, so an alias on either
+	// — an 8.3 short name, a symlinked /var — makes a file INSIDE the repo look outside it. The
+	// guard then returns "not this repository's business" and the write goes through unfenced,
+	// which is the one outcome the write-set guard exists to prevent.
+	rel, inside := gitx.RelTo(h.Spec.Root, path)
+	if !inside {
 		return "", false // outside the repo
 	}
 	return rel, true
