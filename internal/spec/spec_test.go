@@ -446,3 +446,29 @@ func TestTheSpecsThisRepoShipsHaveNoDeadKeys(t *testing.T) {
 		}
 	}
 }
+
+// Finding #1 from the field test, which shipped as a Known gap: `enforcment: report` (one letter
+// missing) made doctor print a green "enforcement: enforce — gates block" and exit 0. The spec
+// loads either way; what changes is whether anyone is told. A typo in the key that decides whether
+// gates BLOCK is the most expensive silent default in the file.
+func TestATypoInAKeyIsNamed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, Filename)
+	typo := strings.Replace(valid, "project: acme", "project: acme\nenforcment: report", 1)
+	if err := os.WriteFile(path, []byte(typo), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	sp, err := Load(path)
+	if err != nil {
+		t.Fatalf("the spec must still load: %v", err)
+	}
+	if sp.ReportOnly() {
+		t.Fatal("the misspelled key must NOT take effect — that is the whole danger")
+	}
+	got := UnknownKeys(path)
+	if len(got) != 1 || got[0] != "enforcment" {
+		t.Errorf("UnknownKeys = %v, want [enforcment]: the key that decides whether gates block "+
+			"cannot be ignored in silence", got)
+	}
+}

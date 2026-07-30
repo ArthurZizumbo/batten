@@ -107,6 +107,51 @@ fields went from 16 to **7** — four wired up, three deleted from the spec enti
   injected by the binary into the phase briefing, and it *requires* saying so when neither memory
   answered — an agent asked to consult two tools will report having consulted them either way.
 
+### Fixed — installation, which is where a first release is actually judged
+
+Five of these were blockers found by auditing the *distribution*, not the engine. batten worked; a
+person receiving batten did not.
+
+- **The binary was downloaded to a path nothing invokes.** `bootstrap.sh` installed into
+  `${CLAUDE_PLUGIN_DATA}/bin` while the eight hooks in `hooks.json`, the MCP server in `.mcp.json`,
+  the bare `batten` in every `/batten-*` command (which resolves only because Claude Code puts a
+  plugin's `bin/` on PATH) and `batten doctor` all name `${CLAUDE_PLUGIN_ROOT}/bin/batten`. A release
+  install therefore printed `installed` and then: no hook ran, the MCP server never started, every
+  bash block was `command not found`, and doctor reported *"the gate is not running at all"* about a
+  machine where the bootstrap had just succeeded. One contract written in four files, and nothing
+  compared them. `${CLAUDE_PLUGIN_ROOT}/bin` is now the destination; `${CLAUDE_PLUGIN_DATA}/bin` is a
+  cache that survives plugin updates, so an update costs a copy instead of 14 MB.
+- **And the same bug made itself permanent.** The first check was `command -v batten`, which a dev
+  build, a `go install`ed copy or a stale PATH entry all satisfy — so after an update wiped
+  `$ROOT/bin`, the bootstrap declared victory over an empty directory forever. The check now names
+  the file, because naming PATH *was* the bug.
+- **Both `bootstrap.sh` copies were committed without the execute bit** — `Permission denied` on
+  macOS and Linux, the two platforms this repo's author cannot reproduce, with the binary never
+  downloaded and every hook no-opping in silence. Same class as the CRLF problem `.gitattributes`
+  already solves, and it now has the same treatment: the mode is fixed, CI refuses a tracked `.sh`
+  that is not `100755`, and `hooks.json` names the interpreter so a bit lost in transit degrades to
+  a working install instead of a dead gate.
+- **Windows without Git Bash had no way to install at all**, on the platform this project declares
+  primary. `bootstrap.ps1` (PowerShell 5.1, the one in the box) and `bootstrap.cmd` now exist, and
+  the hook dispatches with `bash … || powershell …` — which is unambiguous because both scripts exit
+  0 even when the download fails, so the fallback fires on exactly one condition: no bash here.
+- **`tar` broke the Windows download**, found by running the new script rather than reading it: `tar`
+  on PATH is usually Git Bash's GNU tar, which reads `C:\Users\…` as a *remote host* — "Cannot
+  connect to C: resolve failed" — and unpacks nothing. The PowerShell path now calls
+  `System32\tar.exe` by full path; the shell path stopped passing absolute paths to tar at all.
+- **Every `/batten-*` command now refuses to run without the binary** instead of stepping over a
+  `command not found` and completing the phase ungated.
+- **`batten.schema.json` rejected this repo's own `batten.yaml`.** `provenance.format` and
+  `models.*` were deleted from the struct and the schema in one commit and left behind in
+  `batten.yaml` and two examples, so an editor validating against the published schema called the
+  file invalid while `batten doctor` called it perfect — and CI's schema job was red on the spec
+  that *is* the product.
+- **A typo in a top-level key is no longer silent** — this was *Known gap #1*. `enforcment: report`
+  made doctor print a green `enforcement: enforce — gates block` and exit 0. `batten doctor` now
+  names every key batten does not read. Loading still tolerates them, because a spec written for a
+  newer batten must work on an older one; what changes is that you are told. **14 of the 52
+  confirmed findings remain open, not 15.**
+
 ### Fixed
 
 - **`batten measure` under-reported token spend by a factor that depended on the traffic** — 21.9×
@@ -196,18 +241,17 @@ fields went from 16 to **7** — four wired up, three deleted from the spec enti
 
 ### Known gaps
 
-**15 of the 52 confirmed findings are still open at this tag.** They are listed here rather than
+**14 of the 52 confirmed findings are still open at this tag.** They are listed here rather than
 carried quietly, because a release that hides its own defect list is the artefact this project
 exists to argue against. Reproductions for all of them are in
 [`docs/field-test/verified.json`](docs/field-test/verified.json).
 
-The two that matter most, both instances of the pattern above:
+Finding #1 — a silently ignored top-level key — was the other one that mattered most, and it is
+fixed above. It had never been triaged into any block, which was its own lesson: the gap list was
+where it went to be remembered instead of fixed.
 
-- **A typo in a top-level `batten.yaml` key is silently ignored** (#1). `enforcment: report` makes
-  `batten doctor` print a green `enforcement: enforce — gates block`, exit 0, no warning. The parser
-  is a non-strict `yaml.Unmarshal`, so it never sees a key it did not bind, and
-  `batten.schema.json`'s root `additionalProperties: false` has zero Go readers — it is documentation
-  the binary never enforces. This one was never triaged into any block, which is its own lesson.
+The one that matters most of what remains:
+
 - **`batten claim` only looks for collisions inside its own run** (#4), so a second run can claim a
   file another run's agent already owns, be told *"any other agent writing them is now denied"*, and
   then the hook denies **both** declared owners. The worktree work resolved this structurally for
