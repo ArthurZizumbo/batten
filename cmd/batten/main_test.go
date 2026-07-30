@@ -251,6 +251,71 @@ func TestASecondRunCannotClaimAFileAnotherOpenRunOwns(t *testing.T) {
 	})
 }
 
+// TestEvidenceOfObjectsIsRefusedByName is finding #27 (plan §5).
+//
+// A model asked for evidence naturally emits a list of objects. evidence[] is a list of strings on
+// purpose, and what came back was the Go decoder's own sentence — `json: cannot unmarshal object
+// into Go struct field Verdict.evidence of type string` — naming a Go type and a Go struct field
+// that appear nowhere in the docs the adopter was following. At the moment of their FIRST verdict,
+// which is the step the whole workflow exists to reach.
+//
+// Rejecting is right; rejecting without naming the shape that IS accepted sends the agent
+// guessing, and it guesses objects again. So the assertion is on the fix, not just the refusal.
+func TestEvidenceOfObjectsIsRefusedByName(t *testing.T) {
+	dir := gitRepoWithSpec(t, diffFromSpec)
+	t.Setenv("BATTEN_DB", filepath.Join(dir, "state.db"))
+
+	file := filepath.Join(dir, "v.json")
+	if err := os.WriteFile(file, []byte(
+		`{"check_id":"TASK-1-qa","result":"ok","evidence":[{"criterion":"AC-1","output":"137 tests"}],`+
+			`"why":"","safe_next_step":""}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var err error
+	inDir(t, dir, func() {
+		_ = captureStdout(t, func() { err = cmdVerdict([]string{"--unit", "TASK-1", "--file", file}) })
+	})
+	if err == nil {
+		t.Fatal("a verdict with objects in evidence[] was accepted")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "Go struct field") || strings.Contains(msg, "cannot unmarshal") {
+		t.Errorf("the raw decoder error reaches the user, at the moment of their first verdict:\n%s", msg)
+	}
+	for _, want := range []string{"evidence[]", "STRINGS", "AC-"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the error must name the field, the shape it wants, and the convention that "+
+				"replaces the object. Missing %q from:\n%s", want, msg)
+		}
+	}
+}
+
+// The same translation for the rest of the envelope, and the control that it did not become a
+// blanket message: a wrong type anywhere else must still name ITS field, not evidence[].
+func TestAWrongFieldTypeNamesThatField(t *testing.T) {
+	dir := gitRepoWithSpec(t, diffFromSpec)
+	t.Setenv("BATTEN_DB", filepath.Join(dir, "state.db"))
+
+	file := filepath.Join(dir, "v.json")
+	if err := os.WriteFile(file, []byte(`{"check_id":"TASK-1-qa","result":5,"evidence":["x"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var err error
+	inDir(t, dir, func() {
+		_ = captureStdout(t, func() { err = cmdVerdict([]string{"--unit", "TASK-1", "--file", file}) })
+	})
+	if err == nil {
+		t.Fatal("a verdict with a numeric result was accepted")
+	}
+	if !strings.Contains(err.Error(), `"result"`) {
+		t.Errorf("the error must name the field that is wrong:\n%s", err)
+	}
+	if strings.Contains(err.Error(), "STRINGS") {
+		t.Errorf("every shape error was collapsed into the evidence[] message:\n%s", err)
+	}
+}
+
 // TestCriteriaFlowFromPlanToPR is ítem 21 end to end: the unit's acceptance criteria leave
 // the markdown (fase A), become rows when the phase opens (fase B), get covered by the
 // verdict's `AC-n:` citations, and the PR then says "AC-1 covered by X" — which is a

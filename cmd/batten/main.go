@@ -313,6 +313,57 @@ func loadForHook(raw []byte) (*spec.Spec, *store.Store, error) {
 
 // ---------- verdict ----------
 
+// verdictShapeError translates the JSON decoder's complaint into something the agent that wrote
+// the file can act on (#27).
+//
+// This fires at the worst possible moment — the FIRST verdict a new adopter records, which is the
+// step the whole workflow exists to reach — and what it used to hand back was
+// `json: cannot unmarshal object into Go struct field Verdict.evidence of type string`. True, and
+// it names a Go type and a Go struct field that appear nowhere in the documentation they were
+// following, so the only way out is to go read batten's source.
+//
+// The specific mistake behind the finding is worth teaching rather than merely rejecting: a model
+// asked for evidence naturally emits a list of OBJECTS (`{"criterion": ..., "output": ...}`), and
+// evidence[] is a list of strings on purpose — a string is what survives the envelope round trip
+// and what every surface renders. The convention that replaces the object is `AC-<n>:` as a
+// prefix, so the error says so; a rejection that does not name the shape it wants sends the agent
+// guessing, and it will guess objects again.
+func verdictShapeError(err error) error {
+	const envelope = "verdict must be a JSON envelope {check_id, result, evidence[], why, " +
+		"safe_next_step, requires_confirmation}"
+
+	var te *json.UnmarshalTypeError
+	if !errors.As(err, &te) {
+		return fmt.Errorf("%s: %w", envelope, err)
+	}
+	if strings.HasPrefix(te.Field, "evidence") {
+		return fmt.Errorf("verdict: evidence[] must be a list of STRINGS, and this envelope has "+
+			"%s in it.\n"+
+			"Each entry is one citation — a command and its output, a test count, a criterion "+
+			"verified — written as plain text:\n"+
+			"    \"evidence\": [\"go test ./... — ok, 137 tests\", \"AC-2: rejects an empty body (handler_test.go:88)\"]\n"+
+			"To tie a citation to an acceptance criterion, prefix it `AC-<n>:` rather than nesting "+
+			"an object. The prefix is the whole convention; there is no object form.", aOrAn(te.Value))
+	}
+	if te.Field != "" {
+		return fmt.Errorf("verdict: field %q must be %s, and this envelope has %s in it.\n%s",
+			te.Field, te.Type, aOrAn(te.Value), envelope)
+	}
+	return fmt.Errorf("%s — this file is %s, not an object: %w", envelope, aOrAn(te.Value), err)
+}
+
+// aOrAn renders the decoder's Value ("object", "array", "number", "string", "bool") with an
+// article, because the message reads as a sentence to whoever has to fix the file.
+func aOrAn(value string) string {
+	if value == "" {
+		return "the wrong type"
+	}
+	if strings.ContainsAny(value[:1], "aeiou") {
+		return "an " + value
+	}
+	return "a " + value
+}
+
 func cmdVerdict(args []string) error {
 	sp, st, err := load()
 	if err != nil {
@@ -347,8 +398,7 @@ func cmdVerdict(args []string) error {
 
 	var v store.Verdict
 	if err := json.Unmarshal(raw, &v); err != nil {
-		return fmt.Errorf("verdict must be a JSON envelope {check_id, result, evidence[], why, "+
-			"safe_next_step, requires_confirmation}: %w", err)
+		return verdictShapeError(err)
 	}
 	if unit == "" {
 		unit = sp.MatchUnit(v.CheckID)
