@@ -34,3 +34,9 @@ graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 # Artefactos de inspeccion en navegador (playwright MCP): son de la sesion, no del repo.
 .playwright-mcp/
 *.playwright-mcp/
+
+# Machine-local Claude Code settings. This file carries an absolute statusLine command, so it
+# is per-machine by construction: tracked, it leaked the author's home path AND broke the
+# statusline for every cloner. `.claude/settings.local.json` is the documented per-user file;
+# a project-wide setting belongs in a committed file that has no absolute path in it.
+/.claude/settings.json

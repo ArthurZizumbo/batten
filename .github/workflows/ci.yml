@@ -106,10 +106,19 @@ jobs:
       # This repo is public and was authored on one machine. Absolute home paths and private
       # working files have both reached git here before; four private files had to be purged
       # from the whole history once. Catch the next one at the pull request instead.
+      #
+      # The separator is `[/\\]+`, not `[/\\]`, and that plus sign is the whole lesson. This
+      # guard ran green for weeks while `.claude/settings.json` carried
+      # `C:\\Users\\arthu\\...` — a JSON string escapes its backslashes, so the tracked bytes
+      # hold TWO separators where the pattern demanded exactly one, and the one file most
+      # likely to hold a machine-specific absolute path is a JSON settings file. A guard that
+      # cannot see the most probable instance of what it guards against is the failure this
+      # project exists to eliminate, committed by the check meant to prevent it.
       - name: no personal paths or private files are tracked
         run: |
           fail=0
-          if git grep -In -e 'C:[/\\]Users[/\\][a-zA-Z0-9._-]*[/\\]' -e '/home/[a-zA-Z0-9._-]*/' \
+          if git grep -In -e 'C:[/\\]\+Users[/\\]\+[a-zA-Z0-9._-]\+[/\\]' -e '/home/[a-zA-Z0-9._-]\+/' \
+               -e '/Users/[a-zA-Z0-9._-]\+/' \
                -- . ':!go.sum' ':!graphify-out' ':!.github/workflows/ci.yml'; then
             echo "^ an absolute home path is tracked; use ~ or a placeholder"
             fail=1
