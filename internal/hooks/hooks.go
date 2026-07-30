@@ -304,8 +304,19 @@ func (h *Handler) postToolUse(in Input) (*Output, error) {
 	// instead of lingering and denying edits forever. The PreToolUse gate already let this commit
 	// through, so if we reach here the verdict was ok (or overridden) — either way it's done.
 	if commitRe.MatchString(bi.Command) {
-		unit := h.activeUnit(in)
+		// #50's other half, and the one the trunk case slipped through. This path trusted
+		// activeUnit alone, so where the branch names nothing a commit reading `feat(TASK-002)`
+		// closed TASK-001 — the unit the session happened to START on. The gate a moment earlier
+		// had already decided the commit was TASK-002's; the close path disagreed with it in
+		// silence, marked ok a unit nobody committed, and released that unit's write-set claims so
+		// any agent could write its files.
+		//
+		// Both sites go through commitTarget now, so the gate and the close cannot drift apart.
+		_, unit, _ := h.commitTarget(in, bi.Command)
 		if unit == "" {
+			// Nothing attributes this commit — including the case where the message names a unit
+			// with no open run. PreToolUse has already said something useful about that; closing
+			// on a guess is strictly worse than not closing.
 			return nil, nil
 		}
 		closing, ok := h.Spec.ClosingPhase()
@@ -510,6 +521,35 @@ func shortUnit(st *store.Store, runID string) string {
 	return runID
 }
 
+// commitTarget answers "which unit is this commit FOR". The gate and the close path both go
+// through it, which is the point: they used to answer it differently, and finding #50 is the bill.
+//
+// The commit MESSAGE outranks the session binding. On trunk the branch names nothing, so the
+// binding is the only other signal — and the binding says which unit this session STARTED on,
+// while the message says which unit this commit IS. When they disagree the message is the more
+// specific statement of intent, and it names the unit whose work is about to land.
+//
+// Three states, because the callers owe different answers to the third:
+//
+//	bound  — what the session or the branch resolved to, before the message was read
+//	unit   — the unit to act on; "" when nothing attributes this commit
+//	orphan — the message named a unit that has NO open run
+//
+// On orphan the gate can say something useful (it denies when a binding exists, advises when it
+// does not). The close path must do NOTHING: closing on a guess marks a unit ok that nobody
+// committed and releases its write-set claims, which is strictly worse than leaving it open.
+func (h *Handler) commitTarget(in Input, cmd string) (bound, unit, orphan string) {
+	bound = h.activeUnit(in)
+	named := h.Spec.MatchUnit(cmd)
+	if named == "" || named == bound {
+		return bound, bound, ""
+	}
+	if r, err := h.Store.ActiveRun(h.Spec.Project, named); err == nil {
+		return bound, r.UnitID, ""
+	}
+	return bound, "", named
+}
+
 // verdictGate is wedge #1. The golden rule of the workflow doc — "never approve with an
 // empty evidence[]" — is a request a model can ignore. Here it is a denial it cannot.
 func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
@@ -531,43 +571,37 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	// on ambiguity would stop honest work. But principle #3 is "fail open only OUT LOUD", and
 	// both of the paths below used to return in silence. Silence from this hook is
 	// indistinguishable from approval, so the user concludes the gate is working. It is not.
-	unit := h.activeUnit(in)
 
 	// The commit message is evidence about which unit this commit is FOR, and it was never
 	// read. So a session bound to a verified TASK-001 could land `feat(TASK-002): ...` — a
 	// unit with no verdict at all — because the gate only ever looked at the binding. Under
 	// trunk-based development, where the branch names nothing, the message is the only signal
 	// there is. batten.schema.json has promised this resolution the whole time.
-	if named := h.Spec.MatchUnit(cmd); named != "" && named != unit {
-		switch r, err := h.Store.ActiveRun(h.Spec.Project, named); {
-		case err == nil:
-			// The message names a real open unit. Gate THAT one — it is the more specific
-			// statement of intent, and it is the unit whose work is about to land.
-			unit = r.UnitID
-		case unit != "":
+	bound, unit, orphan := h.commitTarget(in, cmd)
+	if orphan != "" {
+		if bound != "" {
 			return h.gateWith("PreToolUse", envelope{
 				Code: CodeWrongUnit,
-				Fix:  "batten phase " + named + " " + firstPhaseID(h.Spec),
+				Fix:  "batten phase " + orphan + " " + firstPhaseID(h.Spec),
 				Message: fmt.Sprintf(
 					"batten: this commit message names %s, but this session is working %s and %s has "+
 						"no open run.\nCommitting it under %s's verdict would credit one unit's review "+
 						"to another's work.\nOpen it (`batten phase %s %s`) or fix the commit message.",
-					named, unit, named, unit, named, firstPhaseID(h.Spec)),
-			}), nil
-		default:
-			// Nothing else resolved a unit either, so this message is the only evidence there
-			// is about what the commit is for — and the unit it names was never opened. Falling
-			// through here would reach the "nothing to attribute" path and say nothing at all,
-			// which is the silence this whole class of fix exists to remove.
-			return adviseWith("PreToolUse", envelope{
-				Code: CodeUnattributed,
-				Fix:  "batten phase " + named + " " + firstPhaseID(h.Spec),
-				Message: fmt.Sprintf(
-					"batten: this commit is NOT gated. Its message names %s, which has no run on "+
-						"record, so nothing was verified.\nOpen one with `batten phase %s %s`.",
-					named, named, firstPhaseID(h.Spec)),
+					orphan, bound, orphan, bound, orphan, firstPhaseID(h.Spec)),
 			}), nil
 		}
+		// Nothing else resolved a unit either, so this message is the only evidence there
+		// is about what the commit is for — and the unit it names was never opened. Falling
+		// through here would reach the "nothing to attribute" path and say nothing at all,
+		// which is the silence this whole class of fix exists to remove.
+		return adviseWith("PreToolUse", envelope{
+			Code: CodeUnattributed,
+			Fix:  "batten phase " + orphan + " " + firstPhaseID(h.Spec),
+			Message: fmt.Sprintf(
+				"batten: this commit is NOT gated. Its message names %s, which has no run on "+
+					"record, so nothing was verified.\nOpen one with `batten phase %s %s`.",
+				orphan, orphan, firstPhaseID(h.Spec)),
+		}), nil
 	}
 
 	if unit == "" {

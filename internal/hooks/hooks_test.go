@@ -895,3 +895,110 @@ func gitAddCommitPaths(t *testing.T, dir, msg string, paths ...string) {
 		}
 	}
 }
+
+// TestACommitClosesTheUnitItNAMES is finding #50's other half (plan §5).
+//
+// The gate learned to read the commit message; the CLOSE path never did. So on trunk — where the
+// branch names nothing and the session binding is the only other signal — a commit reading
+// `feat(TASK-002)` was gated as TASK-002 and then closed TASK-001, the unit the session happened
+// to start on.
+//
+// Two things go wrong at once, and the second is the expensive one: a unit nobody committed is
+// marked `ok`, and closing a run RELEASES its write-set claims, so every file TASK-001's agents
+// had fenced is free for anyone to write while TASK-001 is still being worked.
+func TestACommitClosesTheUnitItNAMES(t *testing.T) {
+	h, first := gateFixture(t, nil, "enforce")
+
+	// Both units in the closing phase with a verdict, so nothing else can explain the outcome.
+	second, err := h.Store.EnsureRun("p", "TASK-2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []*store.Run{first, second} {
+		if err := h.Store.SetPhase(r.RunID, "close"); err != nil {
+			t.Fatal(err)
+		}
+		if err := h.Store.SaveVerdict(store.Verdict{
+			RunID: r.RunID, Gate: "qa", CheckID: r.UnitID + "-qa", Result: "ok",
+			Evidence: []string{"go test ./... — ok"}, Source: "agent",
+		}, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The session is bound to TASK-1; the commit says TASK-2. No branch names either one.
+	ti, _ := json.Marshal(bashInput{Command: `git commit -m "feat(TASK-2): second slice"`})
+	in := Input{HookEventName: "PostToolUse", ToolName: "Bash", ToolInput: ti, SessionID: "sess-1"}
+	if _, err := h.postToolUse(in); err != nil {
+		t.Fatal(err)
+	}
+
+	closed, err := h.Store.Run(second.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if closed.Status != "ok" {
+		t.Errorf("the unit the commit NAMES (%s) was left open with status %q — the gate approved "+
+			"it, the commit landed, and its write-set claims are still held", second.UnitID, closed.Status)
+	}
+	stillOpen, err := h.Store.Run(first.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stillOpen.Status != "running" {
+		t.Errorf("%s was closed by a commit that names %s: status %q. Nobody committed %s — and "+
+			"closing it released every write-set claim its agents were relying on",
+			first.UnitID, second.UnitID, stillOpen.Status, first.UnitID)
+	}
+}
+
+// The control, and the reason this is not "always trust the message": when the message names a
+// unit with NO open run, the close path must do nothing at all. PreToolUse has already denied or
+// advised on that commit; closing the session's unit on a guess would mark ok a unit the commit
+// was explicitly not for.
+func TestACommitNamingAnUnopenedUnitClosesNothing(t *testing.T) {
+	h, run := gateFixture(t, nil, "enforce")
+	if err := h.Store.SetPhase(run.RunID, "close"); err != nil {
+		t.Fatal(err)
+	}
+
+	ti, _ := json.Marshal(bashInput{Command: `git commit -m "feat(TASK-9): a unit nobody opened"`})
+	in := Input{HookEventName: "PostToolUse", ToolName: "Bash", ToolInput: ti, SessionID: "sess-1"}
+	if _, err := h.postToolUse(in); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.Store.Run(run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "running" {
+		t.Errorf("%s was closed by a commit whose message names TASK-9: status %q. The commit said "+
+			"it was not for this unit, and batten closed it anyway", run.UnitID, got.Status)
+	}
+}
+
+// And the plain case, unchanged: no unit in the message, so the session binding is all there is
+// and the run it names closes. A fix that stopped this from working would have broken the normal
+// single-unit flow to fix the trunk one.
+func TestACommitWithNoUnitInItStillClosesTheSessionsRun(t *testing.T) {
+	h, run := gateFixture(t, nil, "enforce")
+	if err := h.Store.SetPhase(run.RunID, "close"); err != nil {
+		t.Fatal(err)
+	}
+
+	ti, _ := json.Marshal(bashInput{Command: `git commit -m "fix: a typo"`})
+	in := Input{HookEventName: "PostToolUse", ToolName: "Bash", ToolInput: ti, SessionID: "sess-1"}
+	if _, err := h.postToolUse(in); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.Store.Run(run.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != "ok" {
+		t.Errorf("the session's own run did not close on its own commit: status %q — write-set "+
+			"claims linger and deny edits forever", got.Status)
+	}
+}
