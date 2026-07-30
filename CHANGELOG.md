@@ -30,6 +30,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
   alternative is remote code execution by download, and it only ever applies to a first install —
   from the first good one, the cache restores the last *verified* binary without network.
 
+### Added
+
+- **`batten scan-diff` now keeps its contrast, and `batten measure` reports it.** The command
+  already computed the one number nobody else in this ecosystem reports — how far a hand-declared
+  write-set over-declares — and wrote it to stdout, where it died. The denominator had been in the
+  database since v1 (`writesets` never deletes a row); the numerator was computed and thrown away.
+  Migration **v12** adds a `scans` table, one row per scan, and `batten measure` grows a
+  *write-sets* block: the median `unused/claims` across scanned runs, with the N it was computed
+  over.
+
+  Three rules keep it from flattering itself. A run that claimed paths and was never scanned reads
+  **NOT MEASURED**, never 0% — otherwise the median describes whichever runs somebody bothered to
+  check, and those are the ones somebody was already worried about. The median is over runs, taking
+  each run's newest scan, so a run scanned six times does not count six times. And `unused` is
+  labelled an **upper bound** everywhere it is printed: it mixes "claimed too much" with "the file
+  legitimately needed no change", so it picks between actions rather than measuring dishonesty.
+
+  `batten scan-diff --strict` is now in this repo's own `gates.checks`. That is the accumulation
+  mechanism, not a flourish: nobody remembers to run scan-diff by hand, so without it the ≥10
+  scanned runs the pre-registered threshold needs would never arrive.
+
 ### Fixed
 
 - **The private field-test subject is no longer named outside `docs/field-test/`.** batten was

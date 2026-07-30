@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -263,7 +264,7 @@ CREATE TABLE IF NOT EXISTS overrides (
 // schemaVersion is bumped whenever an additive migration is added below. The base schema
 // (CREATE TABLE IF NOT EXISTS ...) always runs; versioned steps run once, in order, so a
 // database created by an older batten upgrades in place instead of needing a rebuild.
-const schemaVersion = 11
+const schemaVersion = 12
 
 // migrations are EXPAND-ONLY, and that is a rule with a specific failure behind it, not a style.
 //
@@ -361,6 +362,34 @@ var migrations = []string{
 		  status   TEXT NOT NULL DEFAULT 'open',
 		  evidence TEXT,
 		  PRIMARY KEY (run_id, idx)
+	)`,
+	// v12: the write-set contrast, kept instead of printed (plan §4.2).
+	//
+	// `batten scan-diff` already computed the one number nobody else in this ecosystem reports
+	// — how far a hand-declared write-set over-declares — and wrote it to stdout. Nothing kept
+	// it. So the question S-Bus (arXiv:2605.17076) raises about batten, batten could not answer
+	// about itself over more than a single run.
+	//
+	// The half that was missing was only ever the numerator: `writesets` never deletes a row, so
+	// the denominator has been in this file since v1. `contrastDiff` produced the numerator and
+	// threw it away. The cheap alternative — rebuilding it from `events` — does not exist:
+	// PostToolUse is registered for Bash only, so a `Write` in events is an intention, not a fact.
+	//
+	// One row per SCAN, not per run. Re-running scan-diff after more work is a new measurement of
+	// the same run, and keeping both is what makes a history rather than a snapshot; readers take
+	// the newest per run.
+	//
+	// `claims = 0` is written too, and it does NOT mean 0% over-declaration — it means this run
+	// claimed nothing, which is a planning gap and not a clean result. Every reader divides by
+	// claims and skips the row when it is zero. Collapsing "not measured" into "measured zero" is
+	// the exact failure this whole section exists to avoid.
+	`CREATE TABLE IF NOT EXISTS scans (
+		  run_id     TEXT NOT NULL,
+		  ts         INTEGER NOT NULL,
+		  claims     INTEGER NOT NULL,
+		  owned      INTEGER NOT NULL,
+		  unused     INTEGER NOT NULL,
+		  undeclared INTEGER NOT NULL
 	)`,
 }
 
@@ -1705,6 +1734,103 @@ func (s *Store) MeasureByHeadroom(project string) ([]MeasureGroup, error) {
 // the orientation cost of a run? Same rule — measured on YOUR runs, not taken on faith.
 func (s *Store) MeasureByCodeGraph(project string) ([]MeasureGroup, error) {
 	return s.measureByFlag(project, "code_graph", "code graph")
+}
+
+// ---------- the write-set contrast (plan §4.2) ----------
+
+// Scan is one recorded contrast between what a run's write-sets CLAIMED and what its diff did.
+// Counts only: the paths themselves are already in `writesets` and in git, and a copy of them
+// here would be a third place for the same fact to go stale.
+type Scan struct {
+	RunID      string
+	TS         int64
+	Claims     int // paths claimed by all nodes of the run
+	Owned      int // changed files that some node had claimed
+	Unused     int // claimed and never touched — the numerator of over-declaration
+	Undeclared int // changed and claimed by nobody
+}
+
+// SaveScan records one run of `batten scan-diff`. Append-only on purpose: a later scan of the
+// same run is a later measurement, not a correction of the earlier one.
+func (s *Store) SaveScan(sc Scan) error {
+	if sc.TS == 0 {
+		sc.TS = now()
+	}
+	_, err := s.db.Exec(
+		`INSERT INTO scans(run_id, ts, claims, owned, unused, undeclared) VALUES(?,?,?,?,?,?)`,
+		sc.RunID, sc.TS, sc.Claims, sc.Owned, sc.Unused, sc.Undeclared)
+	return err
+}
+
+// WriteSetStats is the answer to "do batten's hand-declared write-sets over-declare the way
+// S-Bus measured automatically reconstructed read-sets do?", with the two numbers that stop it
+// being read as more than it is: how many runs it is computed over, and how many runs claimed
+// something and were never scanned.
+type WriteSetStats struct {
+	Runs         int     // runs with claims AND a scan — the denominator of the median
+	Unscanned    int     // runs with claims and NO scan: NOT MEASURED, never 0%
+	MedianUnused float64 // median of unused/claims across Runs, in [0,1]
+	Undeclared   int     // changed-but-unclaimed files, summed over the newest scan of each run
+}
+
+// WriteSetUtilization computes the median over-declaration across a project's scanned runs.
+//
+// Median rather than mean: one fan-out that claimed forty files and touched two would drag a
+// mean far enough to look like a finding. Per RUN rather than per scan, taking the newest scan
+// of each — otherwise a run someone scanned six times counts six times, and the runs that get
+// re-scanned are exactly the ones somebody was worried about.
+//
+// Runs with `claims = 0` are excluded from the median and are NOT counted as zero
+// over-declaration: dividing by zero claims is not a measurement. Runs that claimed something
+// and were never scanned come back as Unscanned so the caller can print NOT MEASURED — the one
+// thing this number must never quietly become is a total.
+func (s *Store) WriteSetUtilization(project string) (WriteSetStats, error) {
+	var out WriteSetStats
+	rows, err := s.db.Query(`SELECT s.claims, s.unused, s.undeclared
+	   FROM scans s JOIN runs r ON r.run_id = s.run_id
+	   WHERE (?='' OR r.project=?) AND s.claims > 0
+	     AND s.rowid = (SELECT MAX(s2.rowid) FROM scans s2 WHERE s2.run_id = s.run_id)`,
+		project, project)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	var ratios []float64
+	for rows.Next() {
+		var claims, unused, undeclared int
+		if err := rows.Scan(&claims, &unused, &undeclared); err != nil {
+			return out, err
+		}
+		ratios = append(ratios, float64(unused)/float64(claims))
+		out.Undeclared += undeclared
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+	out.Runs = len(ratios)
+	out.MedianUnused = median(ratios)
+
+	// The runs the number does not cover. Without this the median silently describes whichever
+	// runs somebody happened to scan, which is the sampling bias this metric was designed to
+	// avoid — hence `batten scan-diff --strict` in this repo's own gate.
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM (
+	    SELECT w.run_id FROM writesets w JOIN runs r ON r.run_id = w.run_id
+	     WHERE (?='' OR r.project=?)
+	       AND NOT EXISTS (SELECT 1 FROM scans s WHERE s.run_id = w.run_id)
+	     GROUP BY w.run_id)`, project, project).Scan(&out.Unscanned)
+	return out, err
+}
+
+func median(xs []float64) float64 {
+	if len(xs) == 0 {
+		return 0
+	}
+	s := append([]float64(nil), xs...)
+	sort.Float64s(s)
+	if n := len(s); n%2 == 1 {
+		return s[n/2]
+	}
+	return (s[len(s)/2-1] + s[len(s)/2]) / 2
 }
 
 // SetCodeGraph records whether a fresh code graph existed when the run opened. Write-once

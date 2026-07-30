@@ -381,7 +381,12 @@ agregar imposición), **enrutamiento de modelos por fase** (batten no orquesta, 
 `models.*` se sacó del spec por eso), y **Strict TDD Mode** (lo que batten inyecta sale del
 `batten.yaml` del usuario, no de su opinión).
 
-### 4.2 — Medir antes de rediseñar: la métrica, exacta
+### 4.2 — Medir antes de rediseñar: la métrica, exacta — **MAQUINARIA HECHA, MEDICIÓN ABIERTA**
+
+> Las cuatro piezas están. Lo que sigue abierto es el **número**: hacen falta ≥10 runs escaneados y
+> hoy hay los que el dogfood acumule desde acá. C5 de §8 sigue en rojo a propósito — es la única
+> parte de este ítem que el tiempo tiene que pagar, y el umbral de abajo quedó escrito **antes** de
+> ver el primer dato para que no se elija después.
 
 [S-Bus](https://arxiv.org/pdf/2605.17076) reporta que los agentes sobre-declaran su uso de recursos
 **entre 32 % y 49 %**. Si los write-sets declarados a mano sobre-declaran parecido, el bloqueo por
@@ -423,9 +428,26 @@ hecho.
     mezcla "reclamé de más" con "el archivo legítimamente no necesitó cambio". El número decide
     entre las acciones de arriba; no se cita como "X % de mentira".
 - **criterio** — `batten measure` muestra el bloque con mediana y N; `scans` tiene una fila por
-  scan; el spec propio corre scan-diff en su gate.
+  scan; el spec propio corre scan-diff en su gate. ✅ las tres.
 - **verificación** — `TestScanDiffPersistsTheContrast` y `TestMeasureReportsWriteSetUtilization`,
-  ambos **fallan contra HEAD** (no existen ni la tabla ni el bloque).
+  ambos **fallan contra el commit anterior** (`d6b6589`) **por comportamiento, no por símbolo**: se
+  probaron sobre un árbol con la API de store entera y solo los dos call-sites revertidos (el
+  `SaveScan` en scan-diff y el `printWriteSets` en measure), y ahí dicen *"the scan was printed and
+  not recorded"* y *"`batten measure` has no write-set block"*. Un fallo de compilación no habría
+  probado nada. Los acompaña `TestAnUnscannedRunIsNotZeroPercent`, que fija la distinción sobre la
+  que se apoya todo el resto.
+- **decisiones de forma, tomadas al implementar** (cada una era una manera de sacar un número
+  favorable):
+  - **mediana, no promedio** — un fan-out que reclamó 40 y tocó 2 arrastra un promedio hasta que
+    parezca hallazgo.
+  - **por run, tomando el scan más nuevo** — si no, un run escaneado seis veces cuenta seis veces, y
+    los runs que se re-escanean son justamente aquellos de los que alguien ya sospechaba.
+  - **el `claims = 0` se graba igual** — es un hueco de planeación y vale registrarlo, pero queda
+    fuera de la mediana: dividir por cero claims no es medir. Es el `-1` de `OverDeclared()`
+    llevado a la persistencia.
+  - **el INSERT no puede poner el gate en rojo** — si falla, avisa por stderr y el check sigue. El
+    `--strict` gatea el DIFF; que la contabilidad de la métrica pueda tumbar el gate la volvería un
+    pasivo para lo que mide.
 - **costo** — S-M. **depende de** — nada; corre en paralelo desde ya, y §6/M4 lo consume.
 
 ### 4.3 — El diferenciador que no está contado — RESUELTO

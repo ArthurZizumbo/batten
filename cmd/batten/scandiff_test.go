@@ -169,6 +169,209 @@ func TestScanDiffSeesWhatNoShellParserCan(t *testing.T) {
 	}
 }
 
+// TestScanDiffPersistsTheContrast — plan §4.2's numerator.
+//
+// The contrast was computed and printed. Nothing kept it, so the one question S-Bus raises about
+// batten (do hand-declared write-sets over-declare the way automatically reconstructed read-sets
+// do?) could be answered about a single run and never about the project. `writesets` has held the
+// denominator since v1; this is the row that makes it divisible.
+func TestScanDiffPersistsTheContrast(t *testing.T) {
+	dir := gitRepoWithSpec(t, "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n"+
+		"phases:\n  - id: build\n    fanout: true\n    anchor: git_sha\n  - id: close\n    requires_verdict: ok\n")
+	db := filepath.Join(t.TempDir(), "batten.db")
+	t.Setenv("BATTEN_DB", db)
+
+	_ = captureStdout(t, func() { inDir(t, dir, func() { _ = cmdPhase([]string{"TASK-1", "build"}) }) })
+
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.LatestRun("p", "TASK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := store.AgentNodeID(run.RunID, "agent-a")
+	if err := st.AddNode(store.Node{
+		NodeID: node, RunID: run.RunID, Kind: "subagent", Label: "api", AgentID: "agent-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Four claims, one of which gets touched: 3 of 4 unused, and one changed file nobody claimed.
+	if err := st.ClaimWriteSet(run.RunID, node, []string{"seed.txt", "a.go", "b.go", "c.go"}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	for _, f := range []string{"seed.txt", "loose.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_ = captureStdout(t, func() {
+		inDir(t, dir, func() {
+			if err := cmdScanDiff([]string{"TASK-1"}); err != nil {
+				t.Errorf("scan-diff: %v", err)
+			}
+		})
+	})
+
+	st, err = store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+
+	ws, err := st.WriteSetUtilization("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ws.Runs != 1 {
+		t.Fatalf("the scan was printed and not recorded: WriteSetUtilization saw %d run(s). "+
+			"Without the row, ten runs of scan-diff still answer nothing about the project", ws.Runs)
+	}
+	if ws.MedianUnused < 0.74 || ws.MedianUnused > 0.76 {
+		t.Errorf("median over-declaration = %.3f, want ~0.75 (3 of 4 claims never touched)", ws.MedianUnused)
+	}
+	if ws.Undeclared != 1 {
+		t.Errorf("undeclared = %d, want 1 (loose.txt changed and nobody claimed it)", ws.Undeclared)
+	}
+	if ws.Unscanned != 0 {
+		t.Errorf("unscanned = %d, but the only run that claimed anything was just scanned", ws.Unscanned)
+	}
+}
+
+// The distinction the whole metric rests on, as a test: a run that claimed paths and was never
+// scanned is NOT MEASURED. Counting it as 0% over-declaration would make the median describe
+// whichever runs somebody bothered to check — and those are the ones somebody was worried about,
+// so the bias runs the wrong way and looks like good news.
+func TestAnUnscannedRunIsNotZeroPercent(t *testing.T) {
+	dir := gitRepoWithSpec(t, "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n"+
+		"phases:\n  - id: build\n    fanout: true\n    anchor: git_sha\n  - id: close\n    requires_verdict: ok\n")
+	db := filepath.Join(t.TempDir(), "batten.db")
+	t.Setenv("BATTEN_DB", db)
+
+	_ = captureStdout(t, func() { inDir(t, dir, func() { _ = cmdPhase([]string{"TASK-1", "build"}) }) })
+
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.LatestRun("p", "TASK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := store.AgentNodeID(run.RunID, "agent-a")
+	if err := st.AddNode(store.Node{NodeID: node, RunID: run.RunID, Kind: "subagent", AgentID: "agent-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ClaimWriteSet(run.RunID, node, []string{"a.go"}); err != nil {
+		t.Fatal(err)
+	}
+	ws, err := st.WriteSetUtilization("p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	if ws.Runs != 0 {
+		t.Errorf("Runs = %d with no scan recorded; an unscanned run must not enter the median", ws.Runs)
+	}
+	if ws.Unscanned != 1 {
+		t.Errorf("Unscanned = %d, want 1 — the run claimed a path and nobody ever contrasted it", ws.Unscanned)
+	}
+}
+
+// TestMeasureReportsWriteSetUtilization — the surface where §4.2's number is read.
+//
+// A number in a table nobody prints is not an answer. This asserts the three things that stop the
+// block being read as more than it is: the median with its N, the unscanned runs called NOT
+// MEASURED rather than counted as zero, and the pre-registered threshold quoted alongside — so
+// nobody picks the band after seeing the number.
+func TestMeasureReportsWriteSetUtilization(t *testing.T) {
+	dir := gitRepoWithSpec(t, "version: 1\nproject: p\nunit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n"+
+		"phases:\n  - id: build\n    fanout: true\n    anchor: git_sha\n  - id: close\n    requires_verdict: ok\n")
+	db := filepath.Join(t.TempDir(), "batten.db")
+	t.Setenv("BATTEN_DB", db)
+
+	_ = captureStdout(t, func() { inDir(t, dir, func() { _ = cmdPhase([]string{"TASK-1", "build"}) }) })
+
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := st.LatestRun("p", "TASK-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := store.AgentNodeID(run.RunID, "agent-a")
+	if err := st.AddNode(store.Node{NodeID: node, RunID: run.RunID, Kind: "subagent", AgentID: "agent-a"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ClaimWriteSet(run.RunID, node, []string{"seed.txt", "a.go"}); err != nil {
+		t.Fatal(err)
+	}
+	// A SECOND run that claims and is never scanned. It is the whole point of the assertion below.
+	run2, err := st.EnsureRun("p", "TASK-2", "s2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node2 := store.AgentNodeID(run2.RunID, "agent-b")
+	if err := st.AddNode(store.Node{NodeID: node2, RunID: run2.RunID, Kind: "subagent", AgentID: "agent-b"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ClaimWriteSet(run2.RunID, node2, []string{"z.go"}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	if err := os.WriteFile(filepath.Join(dir, "seed.txt"), []byte("touched\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = captureStdout(t, func() {
+		inDir(t, dir, func() {
+			if err := cmdScanDiff([]string{"TASK-1"}); err != nil {
+				t.Errorf("scan-diff: %v", err)
+			}
+		})
+	})
+
+	out := captureStdout(t, func() {
+		inDir(t, dir, func() {
+			if err := cmdMeasure(); err != nil {
+				t.Fatalf("measure: %v", err)
+			}
+		})
+	})
+
+	if !strings.Contains(out, "write-sets") {
+		t.Fatalf("`batten measure` has no write-set block, so §4.2's number exists in the database "+
+			"and nowhere a human reads:\n%s", out)
+	}
+	// 1 of 2 claims never touched.
+	if !strings.Contains(out, "50%") {
+		t.Errorf("the median over-declaration is missing or wrong (want 50%%):\n%s", out)
+	}
+	if !strings.Contains(out, "N=1") {
+		t.Errorf("the median is printed without the run count it was computed over:\n%s", out)
+	}
+	if !strings.Contains(out, "NOT MEASURED") {
+		t.Errorf("a run claimed paths and was never scanned, and the block did not say so. "+
+			"Silence there turns the median into a description of whichever runs somebody "+
+			"happened to check:\n%s", out)
+	}
+	if !strings.Contains(out, "UPPER BOUND") {
+		t.Errorf("`unused` mixes over-claiming with files that legitimately needed no change; "+
+			"the block must say so wherever it prints the number:\n%s", out)
+	}
+	// The threshold is pre-registered in plan §4.2 and has to travel WITH the number, or it can
+	// be chosen after the fact — which is the failure mode the pre-registration exists to stop.
+	if !strings.Contains(out, "≥10") && !strings.Contains(out, "32%") {
+		t.Errorf("the pre-registered threshold is not quoted with the number:\n%s", out)
+	}
+}
+
 // A run with no anchor has an UNKNOWN diff, not an empty one. Reporting "0 files changed" for a
 // unit that never entered its anchoring phase is the same inversion as reporting an unmeasured
 // token count as zero.

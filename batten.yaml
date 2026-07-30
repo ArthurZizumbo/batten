@@ -42,7 +42,19 @@ domains:
 
 gates:
   qa:
-    checks: ['go build ./...', 'go vet ./...', 'go test ./...']
+    # `batten scan-diff --strict` is here as the dogfood mechanism for plan §4.2, not as decoration.
+    # It is the check that does not depend on reading shell: git cannot be fooled by a heredoc, a
+    # Makefile target or a code generator, which is the declared LÍMITE of the Bash write-set guard.
+    #
+    # And it is the only way the over-declaration metric ever accumulates. Nobody remembers to run
+    # scan-diff by hand, so without this line the "≥10 scanned runs" the threshold needs never
+    # arrive and `batten measure` prints NOT MEASURED forever. In the gate, every `batten check`
+    # records one row.
+    #
+    # --strict fails the gate when a file changed that no write-set claimed. On a run with no
+    # claims at all it reports the planning gap and passes: a fan-out that declared nothing is a
+    # different problem from a fan-out that went around its fence.
+    checks: ['go build ./...', 'go vet ./...', 'go test ./...', 'batten scan-diff --strict']
     verdict: required
     evidence: required
 

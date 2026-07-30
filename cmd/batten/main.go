@@ -1001,7 +1001,103 @@ func cmdMeasure() error {
 	if groups, err := st.MeasureByCodeGraph(sp.Project); err == nil {
 		printFlagComparison(groups, "code graph")
 	}
+	printWriteSets(st, sp.Project)
 	return nil
+}
+
+// printWriteSets is the block plan §4.2 exists for: does declaring a write-set by hand
+// over-declare the way S-Bus (arXiv:2605.17076) measured automatically reconstructed read-sets
+// over-declaring, between 32% and 49%?
+//
+// Three rules hold this honest, and each of them was a way to get a flattering number:
+//
+//   - a run that claimed something and was never scanned is NOT MEASURED, never 0%. Silence
+//     about the unscanned would make the median describe whichever runs somebody bothered to
+//     check, and those are the ones somebody was already worried about.
+//   - the deny and advise counts are printed SEPARATELY, because under `enforcement: report`
+//     every deny becomes an advise and a cross-run collision with no agent_id is advisory
+//     always. Summing them subcounts nothing, but reading the deny line alone in a report-mode
+//     history reads as "the guard never fired" when it fired every time.
+//   - `bash_write` is its own line. It is the advisory half of the guard (the `sed -i` route),
+//     and folding it into write_set would claim a fence held where it only spoke.
+//
+// And the fence around the whole block: FirstDecisionAt. Without it a reader takes these for
+// project-lifetime totals, and they are only ever "since batten started watching".
+func printWriteSets(st *store.Store, project string) {
+	ws, err := st.WriteSetUtilization(project)
+	if err != nil {
+		return
+	}
+	if ws.Runs == 0 && ws.Unscanned == 0 {
+		return // no run of this project ever claimed a path; there is nothing to be honest about
+	}
+
+	fmt.Println("write-sets — declared against touched:")
+	if ws.Runs == 0 {
+		fmt.Printf("  NOT MEASURED: %d run(s) declared write-sets and none was ever scanned.\n", ws.Unscanned)
+		fmt.Println("  Run `batten scan-diff <unit>` after a fan-out, or put it in gates.checks so")
+		fmt.Println("  every `batten check` records one. Nothing here is 0% — it is unmeasured.")
+		fmt.Println()
+		return
+	}
+
+	pct := ws.MedianUnused * 100
+	fmt.Printf("  median over-declaration: %.0f%% of claimed paths were never touched (N=%d run(s))\n", pct, ws.Runs)
+	if ws.Unscanned > 0 {
+		fmt.Printf("  NOT MEASURED: %d further run(s) claimed paths and were never scanned — not 0%%.\n", ws.Unscanned)
+	}
+	if ws.Undeclared > 0 {
+		fmt.Printf("  %d file(s) changed across those runs that no write-set claimed.\n", ws.Undeclared)
+	}
+	// The pre-registered reading, printed with the number so the threshold cannot be chosen
+	// after seeing it. The bands and the actions are in plan_publicacion.md §4.2.
+	switch {
+	case ws.Runs < 10:
+		fmt.Printf("  (below the pre-registered N: the threshold in plan §4.2 needs ≥10 scanned runs.\n")
+		fmt.Printf("   %d more to go. Read this as a direction, not a result.)\n", 10-ws.Runs)
+	case pct >= 32:
+		fmt.Println("  → at or above the 32% floor of the S-Bus band: over-declaration is real here.")
+	case pct <= 15:
+		fmt.Println("  → at or below 15%: hand-declared write-sets are not over-declaring.")
+	default:
+		fmt.Println("  → between the pre-registered bands: keep measuring.")
+	}
+	// Stated every time, because `unused` is a ceiling and the number is easy to quote as
+	// something sharper than it is.
+	fmt.Println("  (`unused` is an UPPER BOUND on over-declaration: it mixes \"claimed too much\"")
+	fmt.Println("   with \"the file legitimately needed no change\". It picks between actions;")
+	fmt.Println("   it is not a percentage of lying.)")
+
+	printGuardDecisions(st, project)
+	fmt.Println()
+}
+
+// printGuardDecisions is the other half: what the guard actually did over the same history.
+// Split deny/advise per rule for the reason in printWriteSets' comment.
+func printGuardDecisions(st *store.Store, project string) {
+	first, err := st.FirstDecisionAt(project)
+	if err != nil || first == 0 {
+		return
+	}
+	counts, err := st.CountDecisions(project, 0)
+	if err != nil {
+		return
+	}
+	denied, advised := map[string]int{}, map[string]int{}
+	for _, c := range counts {
+		switch c.Decision {
+		case store.DecisionDeny:
+			denied[c.Rule] += c.N
+		case store.DecisionAdvise:
+			advised[c.Rule] += c.N
+		}
+	}
+	fmt.Printf("  write-set guard: %d denied, %d advised   ·   bash writes: %d advised\n",
+		denied[store.RuleWriteSet], advised[store.RuleWriteSet], advised[store.RuleBashWrite]+denied[store.RuleBashWrite])
+	fmt.Printf("  (counted since batten's first recorded decision, %s — not the project's lifetime.\n",
+		time.Unix(first, 0).Format("2006-01-02"))
+	fmt.Println("   Under `enforcement: report` a denial is recorded as an advisory, so a zero on the")
+	fmt.Println("   left with a number on the right means the guard fired and did not block.)")
 }
 
 // measurePrice renders one model row's dollar column. A model with no published rate has no

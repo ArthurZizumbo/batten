@@ -333,7 +333,7 @@ es lo que hace que la gente se rinda a la tercera iteración.
 | `batten pr <unit>` | `--out <ruta>` | el cuerpo del PR desde el registro: DAG Mermaid, evidencia, costo |
 | `batten canvas <unit>` | `--out <ruta>`, `--html` | el DAG como JSON Canvas, o **un solo HTML autocontenido** |
 | `batten budget [<unit>]` | — | estado del gobernador: tokens / $ imputado / cuota |
-| `batten measure` | — | gasto por modelo, y qué compraron las capacidades |
+| `batten measure` | — | gasto por modelo, qué compraron las capacidades, y **cuánto sobre-declaran los write-sets** (mediana sobre los runs escaneados, con su N y con los no escaneados aparte) |
 | `batten tui` | — | revisar runs en una UI de terminal |
 
 ### Integración
@@ -529,8 +529,15 @@ over-declaration: 1 of 2 claimed path(s) were never touched (50%)
   a1                   api/never.go
   (S-Bus measured 32–49% over-declaration in automatically reconstructed
    read-sets. This is ONE run of hand-declared write-sets — a data point,
-   not a rate. Plan §3.3 wants the rate across many.)
+   not a rate. `batten measure` has the median across every scanned run.)
 ```
+
+Y desde la migración **v12** cada corrida se **graba** (tabla `scans`: una fila por scan, no por
+run). Eso es lo que convierte un contraste en una medición: `batten measure` publica la **mediana**
+de `unused/claims` sobre los runs escaneados, **con su N**, y aparte —jamás sumados como cero— los
+runs que reclamaron rutas y nunca se escanearon. Un run con `claims = 0` no entra en la mediana:
+dividir por cero claims no es medir. Y para que la muestra no sea "los runs que alguien se acordó de
+revisar", `batten scan-diff --strict` está cableado en los `gates.checks` de este mismo repo.
 
 Dos cosas que **se niega** a concluir, y las dice:
 
@@ -1043,11 +1050,16 @@ imponen sobre el artefacto lo mismo que los cuatro de arriba imponen sobre el sp
 | `TestTheSpecsThisRepoShipsHaveNoDeadKeys` | `internal/spec` | ningún spec que el repo envíe declara claves que batten no lea; el schema publicado y los ejemplos no pueden contradecirse |
 | `TestEveryMigrationIsAdditive` | `internal/store` | las migraciones son **expand-only**, y `len(migrations) == schemaVersion` |
 
-Los cinco tests del bootstrap **ejecutan los scripts de verdad** contra un `tar.gz` real servido por
-un servidor local: solo la fuente de descarga es falsa. `curl`, `tar`, la plantilla del nombre del
-asset, el `chmod` y el auto-chequeo `batten version` son el código que se envía. Es la respuesta
-directa a que el camino de release estuviera "verificado leyéndolo" — y leerlo es exactamente lo que
-no vio el bug.
+Los **14** tests del bootstrap **ejecutan los scripts de verdad** contra un `tar.gz` real servido
+por un servidor local: solo la fuente de descarga es falsa. `curl`, `tar`, la plantilla del nombre
+del asset, el `chmod`, el sha256 contra `checksums.txt` y el auto-chequeo `batten version` son el
+código que se envía. Es la respuesta directa a que el camino de release estuviera "verificado
+leyéndolo" — y leerlo es exactamente lo que no vio el bug.
+
+*(Regla de conteo: funciones `Test*` de `internal/install/bootstrap_test.go` que llaman a
+`runBootstrap` o `runBootstrapPS`, o sea que ejecutan el script enviado — **9 sobre `bootstrap.sh`,
+5 sobre `bootstrap.ps1`**. Decía "cinco" porque contaba solo los del `.sh` de antes de la matriz de
+manipulación, y sin decir cómo contaba.)*
 
 ---
 

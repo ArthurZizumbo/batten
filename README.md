@@ -397,7 +397,7 @@ Read in that order — the gate is the last thing you turn on, not the first:
 | `batten unattended <unit>` | nobody is watching: four rules become denials |
 | `batten iterate <unit>` | count one fix→re-verify round; refuses at the ceiling |
 | `batten budget [<unit>]` | the governor: tokens, imputed $, share of the rolling quota |
-| `batten measure` | spend by model, and whether the optional capabilities paid for themselves |
+| `batten measure` | spend by model, whether the optional capabilities paid for themselves, and how far the declared write-sets over-declare |
 
 Two of those are worth a sentence each, because they close gaps the other commands could not.
 
@@ -408,6 +408,13 @@ who claimed what, and contrasts them — so a code generator is as visible as a 
 conclude two things it cannot know: *who* touched an unclaimed file (from a diff, the orchestrator
 integrating and an agent crossing the fence look identical), and that a run with zero claims is
 clean. Zero claims is a planning hole, and calling it clean would be the emptiest green tick there is.
+
+Each run of it is also **recorded**, which is what turns one contrast into a measurement.
+`batten measure` reports the median over-declaration across your scanned runs, with the number of
+runs it was computed over and — separately, never folded in as zero — how many runs claimed paths
+and were never scanned. S-Bus ([arXiv:2605.17076](https://arxiv.org/pdf/2605.17076)) measured 32–49%
+over-declaration in automatically *reconstructed* read-sets; whether hand-declared write-sets do the
+same is a question about your repo, and this is the only place it gets answered with your data.
 
 **`batten status`** is the view `batten runs` cannot be. A work item nobody has started has no run
 to list, and those are exactly the ones you want to see:

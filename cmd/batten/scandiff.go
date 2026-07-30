@@ -29,6 +29,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -92,10 +93,40 @@ func cmdScanDiff(args []string) error {
 	rep := contrastDiff(changed, ws)
 	printScanDiff(run, rep)
 
+	// Keep it. This one line is the whole of plan §4.2's numerator: everything above was already
+	// computed and then written to stdout, so the over-declaration question could be answered
+	// about one run at a time and never about the project.
+	//
+	// The row is written even when nothing was claimed. `claims = 0` is a fact worth keeping —
+	// a fan-out that declared no write-sets is a planning gap — and it is emphatically NOT 0%
+	// over-declaration; the readers divide by claims and skip zero, exactly as
+	// scanReport.OverDeclared returns -1 rather than 0 for it.
+	if err := st.SaveScan(store.Scan{
+		RunID:      run.RunID,
+		Claims:     rep.Claims,
+		Owned:      countPaths(rep.Owned),
+		Unused:     countPaths(rep.Unused),
+		Undeclared: len(rep.Undeclared),
+	}); err != nil {
+		// Bookkeeping must not fail the check. `--strict` gates the DIFF — files changed that
+		// nobody claimed — and turning a failed INSERT into a red gate would make the metric a
+		// liability to the thing it measures.
+		fmt.Fprintf(os.Stderr, "batten: could not record this scan (%v). The contrast above still stands; "+
+			"`batten measure` will simply not count this run.\n", err)
+	}
+
 	if strict && len(rep.Undeclared) > 0 {
 		return fmt.Errorf("%d file(s) changed that no write-set claimed", len(rep.Undeclared))
 	}
 	return nil
+}
+
+func countPaths(m map[string][]string) int {
+	n := 0
+	for _, ps := range m {
+		n += len(ps)
+	}
+	return n
 }
 
 // scanReport is the contrast, as data. Kept separate from the printing so the comparison is
@@ -114,11 +145,7 @@ func (r scanReport) OverDeclared() float64 {
 	if r.Claims == 0 {
 		return -1
 	}
-	unused := 0
-	for _, ps := range r.Unused {
-		unused += len(ps)
-	}
-	return float64(unused) / float64(r.Claims)
+	return float64(countPaths(r.Unused)) / float64(r.Claims)
 }
 
 func contrastDiff(changed []string, ws map[string][]string) scanReport {
@@ -208,10 +235,7 @@ func printScanDiff(run *store.Run, rep scanReport) {
 	}
 
 	if over := rep.OverDeclared(); over >= 0 {
-		unused := 0
-		for _, ps := range rep.Unused {
-			unused += len(ps)
-		}
+		unused := countPaths(rep.Unused)
 		fmt.Printf("\nover-declaration: %d of %d claimed path(s) were never touched (%.0f%%)\n",
 			unused, rep.Claims, over*100)
 		if unused > 0 {
@@ -229,6 +253,6 @@ func printScanDiff(run *store.Run, rep scanReport) {
 		// number that flatters whoever printed it.
 		fmt.Println("  (S-Bus measured 32–49% over-declaration in automatically reconstructed")
 		fmt.Println("   read-sets. This is ONE run of hand-declared write-sets — a data point,")
-		fmt.Println("   not a rate. Plan §3.3 wants the rate across many.)")
+		fmt.Println("   not a rate. `batten measure` has the median across every scanned run.)")
 	}
 }
