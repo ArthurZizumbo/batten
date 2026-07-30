@@ -81,6 +81,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
   mechanism, not a flourish: nobody remembers to run scan-diff by hand, so without it the ≥10
   scanned runs the pre-registered threshold needs would never arrive.
 
+### Removed
+
+- **`docs/field-test/` is retired from the tree** — nine files, 1.2 MB, in git history from here on.
+  It held the raw material of the field test: 63 verdicts with per-finding reproductions, verbatim
+  evidence and positive controls, the 80 findings as filed, and the per-dimension returns. It also
+  described the **private repository** the replica was modelled on rather than the replica itself,
+  and a document about someone else's codebase is not publishable at any amount of rewriting.
+
+  What stays public is the part that can be checked: the analysis in
+  [`docs/FIELD-TEST.md`](docs/FIELD-TEST.md), the findings' status under *Known gaps* below, and the
+  **executable** evidence — `scripts/replica-ui.sh` rebuilds the fixture from scratch and
+  `scripts/matrix-replica.sh` runs 41 assertions over it. What is lost, said rather than omitted:
+  the per-finding reproduction steps are no longer public.
+
+  History was **not** purged, and the reason is written down so it is not re-litigated: a
+  `filter-repo` renumbers every SHA, and this project cites commits by SHA throughout its plan, this
+  changelog and its saved notes. Seven of the nine files had been public for months, so what a purge
+  bought was narrow and what it cost was the whole reference system.
+
+  Three now-dead exclusions went with it, rather than being left behind: the tracked-token guard in
+  `ci.yml` and `internal/install` now runs with **no exclusions at all** — no path, no `-I` — and
+  stays green. An exclusion that outlives its reason is a hole nobody remembers.
+
 ### Fixed
 
 **The six field-test findings that blocked adoption are closed**, each with a test that fails
@@ -154,8 +177,13 @@ in four blocks. **45 are fixed and verified at this tag; 7 remain open** and are
 its counting rule: a finding is open if it is CONFIRMED in `verified.json` and has no fix at HEAD,
 counted once.
 
-That ratio is the honest headline of this release. The findings, with their reproductions and
-evidence, are in [`docs/field-test/`](docs/field-test/).
+That ratio is the honest headline of this release. The findings' raw material — 63 verdicts with
+their reproductions, verbatim evidence and positive controls — lived in `docs/field-test/` and was
+**retired from the tree before this tag**: it described a private repository rather than the
+synthetic replica, and no amount of rewriting makes a document about someone else's codebase
+publishable. It remains in git history. What survives in the open is the analysis:
+[`docs/FIELD-TEST.md`](docs/FIELD-TEST.md), and the acceptance matrix rebuilt as a script anyone can
+run — [`scripts/matrix-replica.sh`](scripts/matrix-replica.sh).
 
 The single most useful thing the field test taught was structural: a third of the findings were
 **one failure repeated nine times** — batten declaring a governance capability it did not impose.
@@ -373,8 +401,11 @@ person receiving batten did not.
 
 **7 of the 52 confirmed findings are still open at this tag.** They are listed here rather than
 carried quietly, because a release that hides its own defect list is the artefact this project
-exists to argue against. Reproductions for all of them are in
-[`docs/field-test/verified.json`](docs/field-test/verified.json).
+exists to argue against.
+
+The per-finding reproductions were in `docs/field-test/verified.json`, retired from the tree before
+this tag because it described a private repository (see above). They are in git history; what
+follows is the list itself, which is the part that owed you a public answer.
 
 **The counting rule, because this number has now been wrong twice.** A finding is open if it is
 CONFIRMED in `verified.json` and has no fix at HEAD, counted **once**. The arithmetic, in full:

@@ -85,4 +85,4 @@ echo "next:"
 echo "  export BATTEN_DB=\"$TARGET/.batten/batten.db\"   # BEFORE every batten command"
 echo "  (cd \"$TARGET\" && batten init)"
 echo
-echo "the 8-test matrix this exists for is in docs/field-test/REPLICA-UI.md"
+echo "the acceptance matrix this exists for: scripts/matrix-replica.sh (41 assertions)"

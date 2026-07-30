@@ -76,7 +76,7 @@ conteo.** "47 comandos" vivió tres días en este documento porque nadie escribi
 Las tres necesitan **fecha**: 1.1 y 1.2 gatean todo lo serial, y sin fecha "decidir antes de
 publicar" es "no publicar".
 
-- decisión 1.1 (field-test): fecha límite ______
+- ~~decisión 1.1 (field-test)~~ ✅ **A2, ejecutada** — el directorio salió del árbol
 - decisión 1.2 (push/tag/release): fecha límite ______ (después de 1.1, mismo día está bien)
 - decisión 1.3 (el adoptante, §6): nombre y fecha ______ (puede esperar al release; no más)
 
@@ -119,45 +119,45 @@ revisión eran 21 y 12 — la diferencia son los dos documentos de planificació
   la lectura local del step de CI, probada en las cuatro direcciones sobre un clon de sandbox:
   **rojo** contra HEAD (nombra los 12 archivos), **rojo** con el token plantado en
   `graphify-out/graph.json`, **verde** sobre el árbol barrido, **verde** con el mismo token bajo
-  `docs/field-test/`. (La trampa del `grep -v` de §11 dice por qué se prueba en las dos
-  direcciones; la segunda cerradura dice por qué no alcanzaba con dos.)
+  `docs/field-test/` — la exclusión que existía entonces. (La trampa del `grep -v` de §11 dice por
+  qué se prueba en las dos direcciones; la segunda cerradura dice por qué no alcanzaba con dos.)
+  **Con 1.1 ejecutada esa exclusión ya no existe**: el guard corre sin excluir NADA, ni por ruta ni
+  por `-I`, y sigue verde. Un guard sin agujeros es el resultado, no el punto de partida.
 - **costo** — S-M (mecánico; un commit).
 - **depende de** — nada. Fue primero.
 
-### 1.1 — `docs/field-test/`: tres formas, no dos
+### 1.1 — `docs/field-test/` — **DECIDIDA: A2, retirar y consolidar. EJECUTADA.**
 
-El directorio no describe la réplica sintética: describe el proyecto privado. El inventario
-archivo-por-archivo está en la revisión anterior de esta sección (historial de git) y no se repite
-acá **a propósito**: esta sección va a quedar en el árbol después de la decisión, y un documento que
-enumera sus propias fugas con nombre y línea rompe el criterio de 1.0 para siempre. Lo que hay que
-saber para decidir: **siete de nueve archivos ya son públicos desde `b38fd5a`**; los dos que no
-(`verified.json`, que filtra, y `REPLICA-UI.md`, sintético legítimo) se publican con el merge a
-`main`. Una corrección previa se sostiene: los SHAs de `HANDOFF.md` son commits de ESTE repo, no
-del privado.
+El directorio no describía la réplica sintética: describía el proyecto privado. Nueve archivos,
+1.2 MB, **retirados del árbol**; viven en el historial de git.
 
-Las tres formas, con su costo real:
+**Qué queda público, que es la parte que importa:** el análisis (`docs/FIELD-TEST.md`), el estado de
+los hallazgos (CHANGELOG, *Known gaps* — 45 cerrados, 7 abiertos, cada abierto nombrado), y la
+evidencia **ejecutable**: `scripts/replica-ui.sh` reconstruye la réplica desde cero y
+`matrix-replica.sh` corre 41 aserciones sobre ella. **Qué se pierde, dicho y no omitido:** los
+repros por hallazgo dejan de ser públicos.
 
-| | qué se hace | qué queda después | qué se pierde | costo |
-|---|---|---|---|---|
-| **A1 — reescribir en el lugar** | un commit reescribe los 9 archivos con la réplica como sujeto | `docs/field-test/` sigue público, consistente con el sweep de 1.0 | la procedencia real de la evidencia: los hallazgos se encontraron sobre un proyecto real y los archivos dirían que no; **el historial sigue recuperable** | M |
-| **A2 — retirar y consolidar** | un commit borra el directorio del árbol; las conclusiones ya viven en `docs/FIELD-TEST.md` (227 líneas, el informe público); README:521 y :530 se re-apuntan | un solo documento de field test, sin material crudo | la reproducibilidad pública de los 52 hallazgos (los repros mueren con los archivos); §5 deja de poder citar `verified.json`; **el historial sigue recuperable** | S-M |
-| **B — purgar historia** | `git filter-repo` sobre los 9 paths **más `--replace-message`** (los mensajes de commit también nombran; `git grep` no los ve), force-push | la única forma que borra de verdad | todo clon existente queda inválido; **y el costo que la versión anterior de este plan no decía: invalida TODOS los SHAs citados** — este documento, el CHANGELOG y los engrams citan `f2f289c`, `76b1e0a`, `b38fd5a`… por SHA, y una purga los renumera todos | M-L |
+**Por qué no B.** La irrecuperabilidad se pagaba con todo el sistema de referencias del proyecto:
+`git filter-repo` renumera cada SHA, y este documento, el CHANGELOG y los engrams citan `f2f289c`,
+`76b1e0a`, `b38fd5a` por SHA. Con siete de los nueve archivos públicos desde `b38fd5a`, lo que la
+purga compraba era estrecho. Queda dicho para no re-litigarlo: **si alguna vez el criterio pasa a
+ser la irrecuperabilidad, el momento era antes de publicar y ya no lo es** — un tag firmado y assets
+descargados congelan el contenido, y GitHub cachea lo que ya sirvió.
 
-> **Recomendación: A2**, y B solo si el criterio es la irrecuperabilidad — en cuyo caso es AHORA:
-> B se vuelve mucho más cara después de publicar (un tag firmado y assets descargados congelan el
-> contenido, y GitHub cachea lo que ya sirvió). A1 y A2 aceptan explícitamente que lo ya público
-> siga siendo recuperable del historial; con siete de nueve archivos públicos hace meses, lo que B
-> compra de verdad es estrecho y lo que cobra es todo el sistema de referencias del proyecto.
+**Lo que la ejecución agregó, y no estaba en el plan:**
 
-- **criterio** — el de 1.0, más: bajo A2, ningún link del repo apunta a `docs/field-test/`
-  (README:521/:530, CHANGELOG:28/:247, `scripts/matrix-replica.sh:6` y `replica-ui.sh:88` se
-  re-apuntan o se reformulan); bajo B, el grep de 1.0 limpio también **en historia**
-  (`git log -S`). Y en las tres: esta sección §1.1 reescrita a registro de decisión.
-- **verificación** — el guard de 1.0; bajo A2, un link-check manual de los 6 referentes.
-- **de paso** — muere el `35/35` de `REPLICA-UI.md` (las matrices son 41 desde `plan_mejora`
-  §"bloque 3"; dos números públicos en conflicto para la misma matriz es el defecto que `AGENTS.md`
-  §"One contract, one home" declara recurrente).
-- **depende de** — 1.0 (el sweep primero deja esta decisión limpia de lo incondicional).
+- **Las tres exclusiones que quedaron muertas se sacaron, no se dejaron.** `ci.yml`,
+  `internal/install/package_test.go` y `.graphifyignore` excluían `docs/field-test/` mientras la
+  decisión estaba abierta. Con el directorio retirado, el guard de tokens corre **sin excluir nada
+  — ni por ruta ni por `-I`** — y sigue verde. Una exclusión que sobrevive a su motivo es un agujero
+  que nadie recuerda.
+- **Ocho referentes re-apuntados**, dos más de los seis que el plan contaba: los dos que agregó el
+  propio guard de §1.0. La regla se cumplió una vez más — *el arreglo desactualiza la prosa que lo
+  describía*.
+- **De paso murió el `35/35`.** `REPLICA-UI.md` publicaba 35/35 para la misma matriz que
+  `matrix-replica.sh` reporta 41/41. Dos números públicos para una matriz es el defecto que
+  `AGENTS.md` §"One contract, one home" declara recurrente; se resolvió por borrado del que no se
+  podía re-correr.
 
 ### 1.2 — El push, el tag y el release quedaron en espera a propósito
 
@@ -537,9 +537,10 @@ revirtiendo **comportamiento y no símbolos**, y cada commit nombra el suyo.
   heredoc) — que con §4.2 queda además cableado en el gate propio. Costo 0 en código; el manual ya
   lo dice en voz alta.
 
-Las reproducciones de los 13 están en `docs/field-test/verified.json` **mientras la decisión 1.1 no
-se ejecute**; si gana A2, la referencia pasa al historial (y este párrafo se actualiza — está
-anotado en el criterio de 1.1).
+Las reproducciones estaban en `docs/field-test/verified.json`. **1.1 se ejecutó con la opción A2**,
+así que están en el historial de git y no en el árbol — este párrafo se actualiza porque el criterio
+de 1.1 lo anotaba de antemano, que es la única forma de que una prosa no se quede mintiendo. Lo
+público hoy: la lista de los 7 abiertos en el CHANGELOG, y los 41 checks de `matrix-replica.sh`.
 
 ---
 
@@ -742,8 +743,8 @@ release de assets dummy (§2.2, *verificación*), o sea que hay que crear ese re
 
 ```mermaid
 graph LR
-  D0["§1.0 sweep"] --> D1["decisión 1.1<br/>field-test"]
-  D1 --> D2["decisión 1.2<br/>push/tag"]
+  D0["§1.0 sweep ✅"] --> D1["decisión 1.1 ✅<br/>A2 ejecutada"]
+  D1 --> D2["decisión 1.2<br/>push/tag ← ACÁ ESTÁ EL FRENTE"]
   D2 --> M["merge a main"]
   M --> T["tag v0.1.0-beta.1"]
   T --> R["release + gh edit<br/>+ smoke §2 paso 5"]

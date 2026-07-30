@@ -3,7 +3,7 @@
 #
 # POR QUÉ ESTO ES UN SCRIPT COMMITEADO Y NO UNA LISTA EN UN DOCUMENTO
 #
-# La matriz existía como prosa en docs/field-test/REPLICA-UI.md con ocho pruebas enumeradas, y los
+# La matriz existía como prosa en un documento con ocho pruebas enumeradas, y los
 # conteos que se reportaban al cerrar cada bloque (11/11, después 12/12) no correspondían a ninguna
 # lista escrita: las pruebas nuevas vivían en la memoria de quien las había corrido. Una matriz de
 # aceptación que nadie más puede re-correr exactamente no es una matriz, es un recuerdo — y es la

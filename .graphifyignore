@@ -3,15 +3,18 @@
 # graphify has two modes and only one of them is safe here. `graphify . --code-only` indexes the
 # AST and nothing else — that is how graphify-out/ has always been built, and it is what `batten
 # doctor` tells you to run. Plain `graphify update .` also indexes docs, and GRAPH_REPORT.md's own
-# "next steps" line recommends exactly that. Run it once and docs/field-test lands inside
-# graph.json and graph.html: 328 references, verbatim.
+# "next steps" line recommends exactly that.
 #
-# That matters more than it looks, for two reasons. The field-test notes describe a private
-# project, and the CI guard against tracked personal paths EXCLUDES graphify-out — a machine-
-# generated 2 MB JSON is unreviewable in a diff, which is the same reason .gitattributes marks it
-# linguist-generated. So a generated file is the one place where something private can be
-# committed and no human or check will ever see it.
-docs/field-test/
+# That matters more than it looks. A machine-generated 2 MB JSON is unreviewable in a diff, which
+# is the same reason .gitattributes marks it linguist-generated — so a generated file is the one
+# place where something private can be committed and no human will ever see it. Two checks now
+# look INSIDE it anyway (the tracked-token guard in ci.yml and internal/install), and both had to
+# defeat two locks to get there: the `:!graphify-out` path exclusion, and `git grep -I`, which
+# skips `-diff` files as binary.
+#
+# `docs/field-test/` was listed here — it held 328 verbatim references to a private project and
+# was the exact payload this file existed to keep out of the graph. It was retired from the tree
+# (decision 1.1, option A2), so the entry is gone rather than left as a rule about nothing.
 
 # Personal working material. Same rule as .gitignore, restated here because a graph is built from
 # the working tree, not from the index — an untracked file is still fair game for the extractor.

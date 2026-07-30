@@ -184,9 +184,13 @@ Each fix carries a test that fails against the commit before it.
 | the gate requires two verdicts from two different producers, and `close` uses the same rule | 9, 15 |
 | the commit message decides which unit is gated | 22, 50 |
 
-The remaining confirmed findings — the majority of the 52 — are recorded in
-[`field-test/verified.json`](field-test/verified.json) with their reproduction, verbatim
-evidence, the positive control that was run, and a `fix_hint` naming the file and line.
+The remaining confirmed findings — the majority of the 52 — were recorded in
+`field-test/verified.json` with their reproduction, verbatim evidence, the positive control that
+was run, and a `fix_hint` naming the file and line. **That directory was retired from the tree**
+before the first tag: it described a private repository rather than the synthetic replica, and a
+document about someone else's codebase is not publishable at any amount of rewriting. It is in git
+history. Their current status — 45 fixed, 7 open, each open one named — is in
+[CHANGELOG.md](../CHANGELOG.md) under *Known gaps*.
 
 ## What this says about the method
 
@@ -207,21 +211,32 @@ same work with nothing lost. The batch size is the only reason this document exi
 
 ## Reproducing it
 
-The inputs are all in [`docs/field-test/`](field-test/):
+**What you can run, and it is the part that matters.** The replica this was executed against is a
+committed script, and so is the acceptance matrix over it:
 
-| file | what it is |
-|---|---|
-| `HANDOFF.md` | the entry point, written for a session with no prior context |
-| `verified.json` | all 63 second-pass verdicts, with repro, evidence and positive control |
-| `unverified.json` | the findings as filed, before verification |
-| `FINDINGS-RAW.md` | all 80 findings, blocker first, with command and verbatim output |
-| `dimensions.json` | the raw per-dimension returns, including the 90 `worked` entries |
-| `verdicts.json` | the 26 first-pass verdicts |
-| `TEST-MATRIX.md` | every claim × happy/degraded/adversarial/edge, and what needs a live session |
-| `ARTIFACT-PLAN.md` | what batten should generate for a project like this, and the acceptance criteria |
+```bash
+scripts/replica-ui.sh <sandbox>      # rebuilds the fixture from scratch
+scripts/matrix-replica.sh <sandbox>  # 41 assertions over it
+scripts/matrix-demo.sh <sandbox>     # 26 over the from-zero adoption path
+```
 
-Paths are sanitized to `$SANDBOX` / `$HOME` / `$REPO`; CI fails on tracked absolute home paths.
+That is deliberate, and it came out of this exercise: the matrix used to be prose in a document
+with eight numbered tests, while the counts being reported (11/11, then 12/12) matched no written
+list — the newer tests lived in the memory of whoever had run them. An acceptance matrix nobody
+else can re-run exactly is not a matrix, it is a recollection.
 
-**If you run this yourself:** export `BATTEN_DB` into your sandbox before every batten command.
+**What you cannot, and why it is said rather than quietly omitted.** The raw material — 63 verdicts
+with per-finding reproductions, verbatim evidence and positive controls, plus the 80 findings as
+filed and the per-dimension returns — was in `docs/field-test/`. It was **retired from the tree
+before the first tag**: it described the private repository the replica was modelled on, not the
+replica, and a document about someone else's codebase is not publishable at any amount of
+rewriting. It is in git history, which is where a decision to stop publishing something belongs
+rather than in a purge that would invalidate every commit SHA this project cites.
+
+So the honest statement of what survives: the analysis is this document, the findings' status is in
+[CHANGELOG.md](../CHANGELOG.md) under *Known gaps* (45 fixed, 7 open, each open one named), and the
+executable evidence is the three scripts above. The per-finding repro steps are not public.
+
+**If you run any of it yourself:** export `BATTEN_DB` into your sandbox before every batten command.
 `dbPath()` falls back to the real database the moment it is unset, and a field test that
 contaminates the user's own vault has failed before it started.

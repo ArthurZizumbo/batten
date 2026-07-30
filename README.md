@@ -528,8 +528,8 @@ repo with no code, no build files and no git history at all, which is the shape 
 synthetic sandboxes had. Nothing previously fixed came undone. What it did turn up was two
 silences and a false green, including the one that mattered most: **the very first commit after
 installing batten used to get no output at all**, which is indistinguishable from approval. That
-is fixed, and the matrix that found it is in
-[docs/field-test/REPLICA-UI.md](docs/field-test/REPLICA-UI.md).
+is fixed, and the matrix that found it now runs as a committed script:
+[`scripts/matrix-replica.sh`](scripts/matrix-replica.sh), 41 assertions.
 
 ### Where the 52 findings stand
 

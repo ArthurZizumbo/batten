@@ -1159,14 +1159,24 @@ Ninguna de esas se ve leyendo el código.
 **Los cinco bloques están completos.** El detalle, con su orden y su verificación, está en
 [`plan_publicacion.md`](plan_publicacion.md); acá el resumen:
 
-**Bloqueado en dos decisiones que no son de código:**
+**La decisión de `docs/field-test/` está tomada, y es la opción A2: retirar y consolidar.** El
+directorio no describía la réplica sintética sino el proyecto privado, así que se sacó del árbol —
+los nueve archivos, 1.2 MB — y vive en el historial de git. Lo que queda público es el análisis
+(`docs/FIELD-TEST.md`), el estado de los hallazgos (CHANGELOG, *Known gaps*) y la evidencia
+**ejecutable**, que es la parte que vale: `scripts/replica-ui.sh` reconstruye la réplica y
+`matrix-replica.sh` corre 41 aserciones sobre ella. Lo que se pierde y se dice: los repros
+por hallazgo dejan de ser públicos.
 
-1. **`docs/field-test/`** no describe la réplica sintética: describe el proyecto privado. Siete de
-   sus nueve archivos ya son públicos; `verified.json` no lo es todavía y filtra. Limpiar hacia
-   adelante o purgar historia — y hay que decidirlo **antes** de publicar, porque un release
-   congela el contenido y encarece la purga.
-2. **El push, el tag y el release** están en espera por lo mismo: el merge a `main` es parte de la
-   decisión anterior, no un paso independiente.
+No se purgó historia, y la razón está escrita para no re-litigarla: purgar invalida todo clon
+existente **y todos los SHAs que este proyecto cita** — el plan, el CHANGELOG y los engrams nombran
+`f2f289c`, `76b1e0a`, `b38fd5a` por SHA. Con siete de los nueve archivos públicos desde hacía meses,
+lo que la purga compraba era estrecho y lo que cobraba era el sistema de referencias entero.
+
+De paso murió un número en conflicto: el `35/35` de `REPLICA-UI.md` contra el 41 de la matriz real.
+Dos números públicos para la misma matriz es el defecto que `AGENTS.md` declara recurrente.
+
+**Sigue en espera el push, el tag y el release**, ahora por una sola razón: son decisión del autor,
+y el merge a `main` es parte de ella (el marketplace clona la rama default).
 
 **La verificación de la descarga — media cerrada.** Los bootstraps bajaban 14 MB y no verificaban
 nada, teniendo GoReleaser publicado un `checksums.txt` que nadie leía. Los dos bajan ahora ese

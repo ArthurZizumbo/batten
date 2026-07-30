@@ -56,7 +56,7 @@ func TestTrackedShellScriptsAreExecutable(t *testing.T) {
 // batten was field-tested against a private repo, and the name of that repo did not stay in the
 // field-test report: it reached `internal/scan`, `cmd/batten`, both matrix scripts, the ROADMAP and
 // the manual — ten files of live code, tests and docs, none of which any decision about
-// `docs/field-test/` would ever touch.
+// `docs/field-test/` would ever have touched.
 //
 // Two details are load-bearing:
 //
@@ -65,11 +65,12 @@ func TestTrackedShellScriptsAreExecutable(t *testing.T) {
 //     not match themselves. Unmasked, the guard would fail on its own source and the obvious "fix"
 //     would be a path exclusion that blinds it. `\b` is not decoration either: without a word
 //     boundary the second token matches inside ordinary Spanish words.
-//   - Nothing is excluded by PATH except `docs/field-test/`, which is the open subject of decision
-//     1.1 in docs/general/plan_publicacion.md. In particular `graphify-out/` is IN scope, unlike in
-//     the personal-paths guard next to it: a token is not a path, and a 2 MB generated `graph.json`
-//     is the one file in this repo where something private can land without a human or a check ever
-//     seeing it.
+//   - NOTHING is excluded, by path or otherwise. `docs/field-test/` used to be, while decision 1.1
+//     was open; that directory has been retired from the tree (option A2), so the exclusion went
+//     with it rather than staying as a hole nobody remembered. `graphify-out/` is in scope too,
+//     unlike in the personal-paths guard next to it: a token is not a path, and a 2 MB generated
+//     `graph.json` is the one file in this repo where something private can land without a human or
+//     a check ever seeing it.
 //
 // And there is a SECOND lock on that same door, found by planting the token in `graph.json` and
 // watching a guard that had already dropped `:!graphify-out` still pass. `.gitattributes` marks
@@ -84,7 +85,7 @@ func TestNoPrivateProjectTokensAreTracked(t *testing.T) {
 	}
 	const masked = `[p]royecto[_]ui|\bM[N]A\b`
 
-	cmd := exec.Command(git, "-C", repoRoot(t), "grep", "-nE", masked, "--", ".", ":!docs/field-test")
+	cmd := exec.Command(git, "-C", repoRoot(t), "grep", "-nE", masked, "--", ".")
 	out, err := cmd.Output()
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 {
@@ -92,7 +93,7 @@ func TestNoPrivateProjectTokensAreTracked(t *testing.T) {
 		}
 		t.Skipf("not a git checkout: %v", err)
 	}
-	t.Errorf("the private field-test subject is named outside docs/field-test/:\n%s\n"+
+	t.Errorf("the private field-test subject is named in this repo:\n%s\n"+
 		"Use the neutral fixture name (replica-ui), or describe the repo without naming it. "+
 		"Every one of these files travels to anyone who clones this repo.", out)
 }

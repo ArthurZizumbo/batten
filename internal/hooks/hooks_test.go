@@ -432,7 +432,7 @@ func TestAnAmbiguousCommitNamesTheUnitsItCannotChooseBetween(t *testing.T) {
 
 // TestTheVeryFirstCommitAfterAdoptingIsNotSilent.
 //
-// Found by rebuilding the replica-ui fixture (docs/field-test/REPLICA-UI.md, test 5) — the one
+// Found by rebuilding the replica-ui fixture (scripts/replica-ui.sh) — the one
 // shape batten had never been exercised against: a repo that is planned but not yet built, with
 // no code, no build files and no git history at all.
 //
