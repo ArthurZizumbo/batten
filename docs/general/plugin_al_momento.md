@@ -32,7 +32,7 @@ pidiéndole al agente que tenga cuidado.
 | instalación | plugin de marketplace; el binario llega solo en el primer `SessionStart` |
 | configuración | `batten init` escribe un `batten.yaml` funcional **en modo `report`**: los gates avisan, no bloquean |
 | primer valor | `batten demo` corre el flujo entero en un repo desechable y lo borra; no toca nada tuyo |
-| superficie | 27 subcomandos, 7 hooks, 6 slash-commands, 2 skills, 1 servidor MCP |
+| superficie | 28 subcomandos, 7 hooks, 6 slash-commands, 2 skills, 1 servidor MCP |
 | estado | 17 paquetes en verde en Linux/macOS/Windows · matrices de aceptación 41/41 y 26/26 |
 | honestidad | 13 hallazgos del field test siguen abiertos y están listados, no escondidos |
 
@@ -270,7 +270,11 @@ batten.fix: batten doctor
 
 ---
 
-## 6. El CLI completo — 27 subcomandos
+## 6. El CLI completo — 28 subcomandos
+
+*(Regla de conteo: 29 brazos del `switch` de `main()`, uno de los cuales es `version` con tres
+grafías. Decía 27 sin decir cómo contaba — y el repo llegó a tener publicados un 47, un 27, un 26 y
+un 25 para la misma pregunta, cada uno contando otra cosa.)*
 
 Los 27 que lista `batten --help`, más `batten version`. Todos leen y escriben la misma base; ninguno
 manda nada por red. Los que un usuario toca a mano son media docena — el resto los invocan los
@@ -503,11 +507,11 @@ falla de este chequeo, es su frontera — y es exactamente lo que cubre el sigui
 ### `batten scan-diff` — el chequeo que no lee shell
 
 No mira comandos en absoluto: le pregunta a git qué cambió y a la base quién reclamó qué, y
-contrasta. **Determinista, sin heurísticas, sin falsos positivos** — por eso §5.1 dice que debería
-haber ido primero aunque esté cuarto en la lista. Un generador de código, un target de Makefile o un
+contrasta. **Determinista, sin heurísticas, sin falsos positivos** — por eso debería haber ido
+primero en el trabajo de write-sets aunque haya aterrizado último. Un generador de código, un target de Makefile o un
 script de python quedan igual de visibles que un `sed`.
 
-Y produce gratis el número que §3.3 quiere y nadie tiene: cuánto **sobre-declaran** los agentes.
+Y produce gratis el número que nadie más tiene: cuánto **sobre-declaran** los agentes.
 Salida real de un sandbox donde un script generó un archivo que nadie reclamó:
 
 ```
@@ -553,7 +557,7 @@ Y sin ancla se niega a reportar: *"nothing here is measurable — that is differ
 
 Un `claim` de `src/**` o de un directorio se aceptaba, se contestaba *"owns 1 file(s); any other
 agent writing them is now denied"* y **no cercaba nada**: el guard compara rutas exactas. De las
-dos salidas que §5.2 dejó escritas, ganó el rechazo con la forma de lista — soportar prefijos
+dos salidas posibles, ganó el rechazo con la forma de lista — soportar prefijos
 metería una heurística en el camino crítico del guard, que es exactamente donde el bypass por
 Bash enseñó a no ponerlas sin un ciclo de medición. Un archivo que todavía no existe sigue siendo
 reclamable: los agentes reclaman lo que están por crear.
@@ -565,7 +569,7 @@ reclamable: los agentes reclaman lo que están por crear.
 **El argumento más fuerte no era la literatura: era que batten ya lo prescribía y no lo hacía.**
 Tres mensajes distintos del binario le decían al usuario que usara un worktree por unidad. Ninguno
 lo creaba. Diagnosticar el problema, nombrar la solución y no ejecutarla es la misma brecha entre
-declarado y hecho que el §8 trata en otro contexto.
+declarado y hecho que un campo muerto del spec trata en otro contexto.
 
 Y encima batten **castigaba** a quien seguía el consejo: toda ruta que batten conoce es relativa al
 repo, y `api/handler.go` es la misma cadena en todos los worktrees. Dos units en dos árboles se
@@ -1086,7 +1090,8 @@ default, o sea que todo repo recién adoptado estaba en la rama muerta); `downgr
 **sacó**, porque bajar el esfuerzo del modelo es orquestación.
 
 La severidad la decide el **spec**, no el modelo ni el tamaño del exceso: el usuario declaró cuál
-quería. Esa es la condición de §4.1 y viaja con cada ablandamiento de enforcement.
+quería. Esa es la condición de [`plan_publicacion.md`](plan_publicacion.md) §4.1, y viaja con cada
+ablandamiento de enforcement.
 
 Un spec que todavía traiga `resources:` **sigue cargando** —batten no ladrillea un repo por una
 clave que dejó de leer— y `doctor` lo reporta como clave desconocida. `on_exceed: downgrade_effort`
@@ -1121,11 +1126,14 @@ el modelo como un hecho sobre los datos.
   real de Windows servido por HTTP local y bajado por el bootstrap de verdad → `batten version`
   responde `0.1.0-beta.1`. Lo que falta es publicarlo.
 - **Sin release taggeado.** Nunca adoptado por un proyecto ajeno, con gente que no lo escribió.
-- **13 hallazgos confirmados del field test siguen abiertos**, triados uno por uno en
-  [`plan_publicacion.md`](plan_publicacion.md) §5. Eran 15: el #1 —un typo en una clave top-level
-  ignorado en silencio— se cerró con `spec.UnknownKeys`, y el #60 de la lista vieja resultó ser un
-  error de numeración sobre un hallazgo ya cerrado con test — la historia está en ese §5. (El
-  CHANGELOG todavía dice 14; corregirlo es parte del criterio C7 del plan.)
+- **7 hallazgos confirmados del field test siguen abiertos**, triados uno por uno en
+  [`plan_publicacion.md`](plan_publicacion.md) §5. Regla de conteo: hallazgo CONFIRMED en
+  `verified.json` sin fix a HEAD, contado **una vez**. Eran 15 → 14 (el #1, un typo en una clave
+  top-level ignorado en silencio, se cerró con `spec.UnknownKeys`) → 13 (el #60 de la lista vieja
+  era un error de numeración sobre un hallazgo ya cerrado con test) → **7**, con los seis que
+  BLOQUEABAN adopción cerrados, cada uno con su test diferencial. Los 7 son 6 de pulido y **un
+  LÍMITE declarado**: la escritura cruzada por heredoc de `python` o target de Makefile, que ningún
+  parser de shell alcanza y que `scan-diff` responde de forma estructural.
 
 ### La lección técnica que se repitió en cada bloque
 

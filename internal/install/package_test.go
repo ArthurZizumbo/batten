@@ -137,7 +137,7 @@ func TestEveryCommandRefusesToRunWithoutTheBinary(t *testing.T) {
 	}
 }
 
-// TestEveryDocumentThatDrivesAVerdictNamesBattenCheck is finding #16 (plan §5), as a rule rather
+// TestEveryDocumentThatDrivesAVerdictNamesBattenCheck is finding #16 (plan_publicacion.md §5), as a rule rather
 // than a list — so the next command that learns to record a verdict inherits it.
 //
 // A gate that declares `checks:` needs TWO verdicts from two different producers: `batten check`

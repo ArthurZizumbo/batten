@@ -45,7 +45,7 @@ var relsReadWithoutProducer = map[string]string{
 		"`runs.status` can be 'rolled_back', but nothing ever writes the EDGE, and there is no " +
 		"command that would. Listed rather than deleted because the renderer is correct for the " +
 		"day one exists; the tool description that promised rollbacks over MCP was removed, since " +
-		"that one was read by the model as a fact about the data (plan §9, lifecycle)",
+		"that one was read by the model as a fact about the data",
 }
 
 // TestEveryEdgeRelationReadHasAProducer is the guard.

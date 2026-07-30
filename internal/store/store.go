@@ -346,7 +346,7 @@ var migrations = []string{
 	// One flag on the run turns all four into denials, with no new orchestration: batten still
 	// does not run the loop, it just stops being the only participant that cannot say no.
 	`ALTER TABLE runs ADD COLUMN mode TEXT`,
-	// v11: acceptance criteria as data (plan §7, ítem 21).
+	// v11: acceptance criteria as data (ítem 21).
 	//
 	// "Criteria" appeared ten times in the codebase's prose and zero times as data:
 	// evidence was a flat []string and nothing could say WHICH criterion a piece of
@@ -363,7 +363,7 @@ var migrations = []string{
 		  evidence TEXT,
 		  PRIMARY KEY (run_id, idx)
 	)`,
-	// v12: the write-set contrast, kept instead of printed (plan §4.2).
+	// v12: the write-set contrast, kept instead of printed (plan_publicacion.md §4.2).
 	//
 	// `batten scan-diff` already computed the one number nobody else in this ecosystem reports
 	// — how far a hand-declared write-set over-declares — and wrote it to stdout. Nothing kept
@@ -1736,7 +1736,7 @@ func (s *Store) MeasureByCodeGraph(project string) ([]MeasureGroup, error) {
 	return s.measureByFlag(project, "code_graph", "code graph")
 }
 
-// ---------- the write-set contrast (plan §4.2) ----------
+// ---------- the write-set contrast (plan_publicacion.md §4.2) ----------
 
 // Scan is one recorded contrast between what a run's write-sets CLAIMED and what its diff did.
 // Counts only: the paths themselves are already in `writesets` and in git, and a copy of them

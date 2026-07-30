@@ -149,8 +149,10 @@ exercised, and most of it was found by exercising it.
 Before this version, batten was run against a replica of a real four-domain project. That produced
 **80 findings**; the 63 that had not been fixed on the spot went through an adversarial verifier
 that tried to refute each one, leaving **52 confirmed and 11 refuted**. Those 52 were then worked
-in four blocks. **37 are fixed and verified at this tag; 15 remain open** and are listed under
-*Known gaps* rather than quietly carried.
+in four blocks. **45 are fixed and verified at this tag; 7 remain open** and are listed under
+*Known gaps* rather than quietly carried. That number has been wrong twice, so it now travels with
+its counting rule: a finding is open if it is CONFIRMED in `verified.json` and has no fix at HEAD,
+counted once.
 
 That ratio is the honest headline of this release. The findings, with their reproductions and
 evidence, are in [`docs/field-test/`](docs/field-test/).
@@ -277,8 +279,8 @@ person receiving batten did not.
 - **A typo in a top-level key is no longer silent** — this was *Known gap #1*. `enforcment: report`
   made doctor print a green `enforcement: enforce — gates block` and exit 0. `batten doctor` now
   names every key batten does not read. Loading still tolerates them, because a spec written for a
-  newer batten must work on an older one; what changes is that you are told. **14 of the 52
-  confirmed findings remain open, not 15.**
+  newer batten must work on an older one; what changes is that you are told. **This took the open
+  count from 15 to 14** — and see *Known gaps* for the two corrections after it.
 
 ### Fixed
 
@@ -369,35 +371,45 @@ person receiving batten did not.
 
 ### Known gaps
 
-**14 of the 52 confirmed findings are still open at this tag.** They are listed here rather than
+**7 of the 52 confirmed findings are still open at this tag.** They are listed here rather than
 carried quietly, because a release that hides its own defect list is the artefact this project
 exists to argue against. Reproductions for all of them are in
 [`docs/field-test/verified.json`](docs/field-test/verified.json).
 
-Finding #1 — a silently ignored top-level key — was the other one that mattered most, and it is
-fixed above. It had never been triaged into any block, which was its own lesson: the gap list was
-where it went to be remembered instead of fixed.
+**The counting rule, because this number has now been wrong twice.** A finding is open if it is
+CONFIRMED in `verified.json` and has no fix at HEAD, counted **once**. The arithmetic, in full:
 
-The one that matters most of what remains:
+- **15** was the count when the four blocks closed.
+- **14** after finding #1 — a silently ignored top-level key — was fixed. It had never been triaged
+  into any block, which was its own lesson: the gap list was where it went to be remembered instead
+  of fixed.
+- **13** after a renumbering correction. This list used to cite *"#6, #60"* for the heredoc/Makefile
+  bypass, as though they were one finding filed twice. They are not the same finding: **index 60 is
+  doctor stopping at the first fatal error**, and it was already closed, with a test that cites it
+  by number (`TestDoctorReportsEverythingInOnePass`). The heredoc bypass is not a second finding
+  either — it is the declared **boundary** of #6. So one number was counted that should not have
+  been, and it was attached to the wrong defect.
+- **7** now: the six that blocked an outside adopter are fixed above (#4, #7, #16, #27, #50, #59).
 
-- **`batten claim` only looks for collisions inside its own run** (#4), so a second run can claim a
-  file another run's agent already owns, be told *"any other agent writing them is now denied"*, and
-  then the hook denies **both** declared owners. The worktree work resolved this structurally for
-  the worktree-per-unit arrangement, but nothing requires, creates or even warns toward a worktree,
-  so in a single checkout it reproduces exactly as filed.
+What remains is six cosmetic findings and one declared limit:
 
-The rest, in one line each: a write-set claim outside the repo root is still accepted with the same
-false assurance (#7) · the write-set stores and reports the case-folded path, so
-`useTrace.ts` comes back as `usetrace.ts` (#43) · unit attribution reads the commit message but the
-documented happy path still omits the `batten check` step a gate with `checks:` requires (#16, #50)
-· a phase that diffs from a missing anchor now warns at runtime but `doctor` does not (#24) ·
-`batten runs` prints no run id, start time or age (#23) and drops the "checks ran" mark (#28) ·
-`measure` still prints a headroom heading in a repo that never declared compression (#34) · the TUI
-run list labels 113 % as "quota" while the detail pane says 17.0 % for the same quantity (#47) ·
-`batten init` writes no `.gitignore` entry for `.batten/` (#59) · a verdict whose evidence items are
-objects instead of strings fails with a raw Go decoder error (#27) · a cross-fence write through a
-`python` heredoc or a Makefile target is still invisible to the Bash guard, which is a stated
-boundary rather than an oversight — `batten scan-diff` is the after-the-fact complement (#6, #60).
+- **The write-set stores and reports the case-folded path** (#43), so `useTrace.ts` comes back as
+  `usetrace.ts` on every surface. The fence itself is correct — it compares files, not filenames —
+  but what it prints is not what you wrote.
+- **`batten runs` prints no run id, start time or age** (#23), and `show --run <id>` discards the
+  flag rather than refusing an id that does not exist.
+- **Every surface shows only the LATEST verdict** (#28), so a second producer hides the first from
+  view. The database holds both.
+- **`measure` prints a headroom heading in a repo that never declared compression** (#34).
+- **The TUI labels the same quantity `113% quota` in the list and `17.0%` in the detail** (#47).
+- **`doctor` does not mention a phase that diffs from a missing anchor** (#24), though the runtime
+  warns about it.
+- **A cross-fence write through a `python` heredoc, a Makefile target or a third-party tool is
+  invisible to the Bash guard** (#6). This is a **declared limit, not an oversight**: no shell
+  parser reaches inside a heredoc, and putting deeper heuristics on the critical path is what the
+  bash-guard cycle taught this project not to do without measurement. The structural complement
+  already exists and git cannot be fooled by a heredoc — `batten scan-diff`, now wired into this
+  repo's own `gates.checks`.
 
 Beyond the field test:
 

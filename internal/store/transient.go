@@ -10,7 +10,7 @@ package store
 //
 // Treating that as a broken database is wrong twice over. It is wrong about the world — nothing
 // is damaged and the next attempt a few milliseconds later succeeds — and it is expensive here,
-// because §4.3 made batten announce loudly when it cannot run. A scan that lasted 30ms would put
+// because batten announces loudly when it cannot run. A scan that lasted 30ms would put
 // "batten did NOT run for this tool call" in front of a user whose machine is perfectly healthy,
 // and a warning that cries wolf is a warning people learn to skip past.
 //

@@ -37,7 +37,7 @@ import (
 // or write it down here, with a reason. What you can no longer do is add it and forget.
 
 // declaredAsFuture is the explicit, deliberate list: fields batten.yaml accepts today whose
-// promise batten does not keep. Every entry needs a reason and the plan section that owns it.
+// promise batten does not keep. Every entry needs a reason.
 //
 // "No consumer" is the usual reason and it is not the only one. `Budget.MaxIterations` sat here
 // while TWO surfaces read it — MCP returned it and the TUI DREW it as `iters %d/%d` — because
@@ -45,8 +45,6 @@ import (
 // keeping it; it is the same lie told with more confidence. It came off the list when
 // `batten iterate` started counting and `batten phase` started refusing.
 //
-// This list is DEBT, not a parking lot. It should get shorter. A new entry is a decision to
-// publish a promise batten does not keep, and it should be made on purpose and in a review.
 // It is EMPTY, and that is the state it was built to reach. Sixteen entries, then seven, now none:
 // every field batten.yaml accepts has something in production that reads it.
 //
@@ -335,13 +333,105 @@ func repoRoot(t *testing.T) string {
 	return root
 }
 
+// ---------- the third half: pointers into documents ----------
+
+// TestEveryPlanReferenceNamesTheDocumentAndResolves — C7 of plan_publicacion.md §8, as a
+// mechanism instead of a sweep.
+//
+// Twenty-one comments cited bare section numbers — "plan, section 5.1", "section 4.3",
+// "section 10" and so on. All of them pointed at `plan_mejora.md`, which was retired from the
+// tree, so at best the reader had nowhere to go.
+//
+// At worst, and this is what makes it a defect rather than untidiness: the surviving plan has its
+// OWN sections 7, 4.1, 4.3 and 9, about completely different things. A bare number silently
+// re-pointed itself at unrelated prose, and a reader who followed it would be confidently
+// misinformed rather than merely stuck. That is strictly worse than a dead link.
+//
+// So the rule is two-part and both parts are checkable: a reference must NAME its document, and
+// the section must exist in it.
+//
+// The examples above are spelled "section N" rather than with the sigil, and that is the same
+// discipline as the masked pattern in TestNoPrivateProjectTokensAreTracked: a guard whose own
+// prose trips it teaches whoever hits that failure to add an exclusion, and the exclusion is what
+// blinds it. This file is IN scope, like every other.
+func TestEveryPlanReferenceNamesTheDocumentAndResolves(t *testing.T) {
+	root := repoRoot(t)
+	const planPath = "docs/general/plan_publicacion.md"
+	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(planPath)))
+	if err != nil {
+		t.Skipf("the plan is not in this tree: %v", err)
+	}
+	sections := map[string]bool{}
+	for _, m := range planHeadingRe.FindAllStringSubmatch(string(b), -1) {
+		sections[m[1]] = true
+	}
+	if len(sections) == 0 {
+		t.Fatalf("parsed no numbered sections out of %s; this guard would pass vacuously", planPath)
+	}
+
+	// The basename is enough to disambiguate and short enough to live in a comment without
+	// pushing the sentence off the line. The path is only for the error message.
+	const want = "plan_publicacion.md "
+	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "graphify-out", "node_modules", "vendor", "testdata":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(p, ".go") {
+			return nil
+		}
+		src, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(root, p)
+		rel = filepath.ToSlash(rel)
+		for _, loc := range sectionRefRe.FindAllStringSubmatchIndex(string(src), -1) {
+			ref := string(src[loc[0]:loc[1]])
+			num := string(src[loc[2]:loc[3]])
+			line := 1 + strings.Count(string(src[:loc[0]]), "\n")
+			start := loc[0] - len(want)
+			if start < 0 || string(src[start:loc[0]]) != want {
+				t.Errorf("%s:%d cites %q without naming the document.\n"+
+					"    Write `%s%s`, or drop the pointer and state the reason inline. A bare "+
+					"section number re-points itself the day a plan is superseded — and the "+
+					"surviving plan has its own §%s, about something else.",
+					rel, line, ref, want, ref, num)
+				continue
+			}
+			if !sections[num] {
+				t.Errorf("%s:%d cites %s%s, and %s has no section %s.\n"+
+					"    Re-point it or state the reason inline; a pointer nobody can follow is "+
+					"prose pretending to be a citation.", rel, line, want, ref, planPath, num)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walking %s: %v", root, err)
+	}
+}
+
+// planHeadingRe matches the plan's numbered headings: `## 4. ...` and `### 4.2 — ...`.
+var planHeadingRe = regexp.MustCompile(`(?m)^#{2,3} (\d+(?:\.\d+)?)[ .]`)
+
+// sectionRefRe matches a section reference. The lookbehind Go lacks is done by the caller, which
+// checks the bytes immediately before the match.
+var sectionRefRe = regexp.MustCompile(`§(\d+(?:\.\d+)?)`)
+
 // ---------- the other half: the unattended run's rules ----------
 
 // The same idea applied to /batten-night, which is the most dangerous command batten ships.
 //
 // Its four absolute rules used to be 112 lines of prose asking the model to behave — the loudest
 // possible example of batten not taking its own medicine, since its whole thesis is that a rule a
-// document can only ask for, a hook can impose. All four are mechanisms now (plan §5.6), and this
+// document can only ask for, a hook can impose. All four are mechanisms now, and this
 // file is what keeps them that way: a rule may be listed as mechanical only if the identifier its
 // mechanism is built on is actually USED in production, not merely declared. That is the exact
 // distinction the rest of this file exists to enforce, applied to the enforcement itself.

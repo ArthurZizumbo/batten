@@ -75,7 +75,7 @@ const partialPricingSpec = "version: 1\nproject: p\nunit:\n  name: TASK\n  patte
 	"phases:\n  - id: build\n    anchor: git_sha\n" +
 	"budget:\n  tokens_per_run: 3000000\n  imputed_usd_per_run: 2.0\n  on_exceed: warn\n"
 
-// TestADirectoryClaimIsRefusedWithTheShapeThatWorks is finding #7 (plan §5.2). A claim of
+// TestADirectoryClaimIsRefusedWithTheShapeThatWorks is finding #7. A claim of
 // `src/**` or a directory was accepted, echoed back as "owns 1 file(s); any other agent
 // writing them is now denied" — and fenced nothing, because the guard compares exact paths.
 // A false fence is worse than none: the plan trusts it.
@@ -132,7 +132,7 @@ func TestADirectoryClaimIsRefusedWithTheShapeThatWorks(t *testing.T) {
 	})
 }
 
-// TestAClaimOutsideTheRepoIsRefused is finding #7's sibling case (plan §5).
+// TestAClaimOutsideTheRepoIsRefused is finding #7's sibling case (plan_publicacion.md §5).
 //
 // The directory claim above is refused; a claim of an ABSOLUTE path outside the root was not. It
 // was stored verbatim and answered with the same success line, and the guard — which compares
@@ -188,7 +188,7 @@ func TestAClaimOutsideTheRepoIsRefused(t *testing.T) {
 	})
 }
 
-// TestASecondRunCannotClaimAFileAnotherOpenRunOwns is finding #4 (plan §5).
+// TestASecondRunCannotClaimAFileAnotherOpenRunOwns is finding #4 (plan_publicacion.md §5).
 //
 // `claim` only ever looked inside its OWN run — the writesets primary key defends one run — so the
 // second run of a project claimed the same path, got *"any other agent writing them is now
@@ -251,7 +251,7 @@ func TestASecondRunCannotClaimAFileAnotherOpenRunOwns(t *testing.T) {
 	})
 }
 
-// TestEvidenceOfObjectsIsRefusedByName is finding #27 (plan §5).
+// TestEvidenceOfObjectsIsRefusedByName is finding #27 (plan_publicacion.md §5).
 //
 // A model asked for evidence naturally emits a list of objects. evidence[] is a list of strings on
 // purpose, and what came back was the Go decoder's own sentence — `json: cannot unmarshal object
@@ -316,7 +316,7 @@ func TestAWrongFieldTypeNamesThatField(t *testing.T) {
 	}
 }
 
-// TestInitIgnoresBattensOwnDatabase is finding #59 (plan §5).
+// TestInitIgnoresBattensOwnDatabase is finding #59 (plan_publicacion.md §5).
 //
 // `batten init` wrote batten.yaml and said nothing about .gitignore, so the adopter's very next
 // `git add -A` committed batten's database: a binary SQLite file that grows with every run,
@@ -1035,7 +1035,7 @@ func runHook(t *testing.T, event, payload string) string {
 	return <-done
 }
 
-// TestABrokenStoreSaysSoInsteadOfPassingInSilence is §4.3: fail open, but never quietly.
+// TestABrokenStoreSaysSoInsteadOfPassingInSilence: fail open, but never quietly.
 //
 // The hook entry point funnelled every failure into `return nil` — no spec, unreadable store,
 // dispatch error, recovered panic. Exit 0 with no output is also what an ALLOW looks like, so a
@@ -1424,7 +1424,7 @@ func TestEnteringAPhaseChainsItToThePrevious(t *testing.T) {
 	}
 }
 
-// TestDoctorCrossesQueryBeforeReadWithReality is plan §5.3 step 2.
+// TestDoctorCrossesQueryBeforeReadWithReality crosses a declaration with reality.
 //
 // `query_before_read: true` is now an instruction batten injects into every fanned-out agent's
 // orientation. An instruction to consult a tool that is not installed is WORSE than no instruction:

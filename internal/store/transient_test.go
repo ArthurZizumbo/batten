@@ -11,7 +11,7 @@ import (
 // On Windows a virus scanner opens the database file in the microsecond after it is created, and
 // SQLite reports SQLITE_BUSY or a sharing violation. Nothing is damaged; the next attempt a few
 // milliseconds later works. Treating it as a broken database would put "batten did NOT run for
-// this tool call" in front of a user whose machine is perfectly healthy — and §4.3 made that
+// this tool call" in front of a user whose machine is perfectly healthy — and that
 // warning loud on purpose, so crying wolf with it is expensive.
 //
 // Being precise matters more than being patient: retrying a corrupt file, a read-only volume or
@@ -84,7 +84,7 @@ func TestRetrySucceedsOnceTheContentionClears(t *testing.T) {
 }
 
 // And it must give up eventually, or a genuinely locked database hangs the hook instead of
-// reporting — which is the failure §4.3 exists to make visible.
+// reporting — which is the failure the loud degradation notice exists to make visible.
 func TestRetryStopsRatherThanHanging(t *testing.T) {
 	calls := 0
 	start := time.Now()

@@ -3,7 +3,7 @@
 //
 // Both fields have been written by `batten init` since the beginning — derived from the
 // backlog's real heading shape — and read back by nobody: unit.locator sat in the
-// declared-as-future list as a promise with no consumer (plan §8). This package is the
+// declared-as-future list as a promise with no consumer. This package is the
 // consumer. It is deliberately a parser and nothing more: batten does not manage the backlog,
 // does not rewrite it, and does not invent structure the document does not have — a document
 // with no matching headings yields zero units, and the callers say so out loud rather than

@@ -300,20 +300,21 @@ dashboard cannot.
 
 ## Install
 
-> **At `0.1.0-beta.1`, install from source.** An audit of the install path — the one thing this
-> project had verified by *reading* rather than by executing — found that the download path does not
-> yet deliver a working binary: `bootstrap.sh` fetches into `${CLAUDE_PLUGIN_DATA}/bin` while every
-> hook and the MCP server invoke `${CLAUDE_PLUGIN_ROOT}/bin/batten`, so a marketplace install
-> announces success and then gates nothing. That is a worse failure than the one described two
-> paragraphs below, and fixing it is the next release's first item. Until then:
+> **The marketplace path is the path.** An audit of the install route — the one thing this project
+> had verified by *reading* rather than by executing — found that `bootstrap.sh` fetched into
+> `${CLAUDE_PLUGIN_DATA}/bin` while every hook and the MCP server invoke
+> `${CLAUDE_PLUGIN_ROOT}/bin/batten`, so a marketplace install announced success and then gated
+> nothing. That is fixed, along with four more install blockers the same audit surfaced, and the
+> suite now RUNS both bootstrap scripts against a real archive instead of reading them.
+>
+> What is still true, and is a different sentence: **no release has been published yet**, so the
+> download half of this path has not been exercised against a real tag. Building from source
+> remains a supported route and is what this repo runs on:
 >
 > ```console
 > $ git clone https://github.com/ArthurZizumbo/batten && cd batten
 > $ go build -o plugin/claude-code/bin/batten ./cmd/batten   # .exe on Windows
 > ```
->
-> A binary in the plugin's own `bin/` is what the hooks resolve, so this path works today — it is
-> what this repo runs on.
 
 ```
 /plugin marketplace add ArthurZizumbo/batten
@@ -532,26 +533,28 @@ is fixed, and the matrix that found it is in
 
 ### Where the 52 findings stand
 
-Those 52 confirmed findings were then worked in four blocks. At `0.1.0-beta.1`, **37 are fixed and
-verified; 15 remain open.** They are enumerated, with reproductions, under *Known gaps* in
-[CHANGELOG.md](CHANGELOG.md) — because a project whose whole argument is *"never report a number you
-do not have"* does not get to summarize its own defect list as "mostly done".
+Those 52 confirmed findings were then worked. **45 are fixed and verified; 7 remain open.** They are
+enumerated, with reproductions, under *Known gaps* in [CHANGELOG.md](CHANGELOG.md) — because a
+project whose whole argument is *"never report a number you do not have"* does not get to summarize
+its own defect list as "mostly done".
 
-Two of the open ones are worth naming here, since both are instances of the pattern batten exists to
-eliminate:
+*(Counting rule, because this number has been wrong twice: a finding is **open** if it is CONFIRMED
+in `verified.json` and has no fix at HEAD, counted once. The 7 are 6 cosmetic ones plus one declared
+LIMIT — a cross-fence write through a `python` heredoc or a Makefile target, which no shell parser
+reaches and `batten scan-diff` answers structurally instead. Two earlier printings said 15 and then
+14: the first predated the typo fix below, and the second double-counted one finding under two
+numbers.)*
 
-- **A typo in a top-level `batten.yaml` key is silently ignored.** Write `enforcment: report` and
-  `doctor` prints a green `enforcement: enforce — gates block`, exit 0. The parser is a non-strict
-  unmarshal, so it never sees a key it did not bind, and the `additionalProperties: false` in
-  `batten.schema.json` has zero readers in the binary — it is documentation the code never enforces.
-- **`batten claim` only checks collisions inside its own run**, so two concurrent runs in one
-  checkout can each be told they own the same file, after which the guard denies both. A worktree per
-  work item resolves it structurally, and nothing requires or even suggests one.
+The six that **blocked an outside adopter** are closed, each with a test that fails against the
+commit before it — including the two that were instances of the pattern batten exists to eliminate:
+a typo in a top-level `batten.yaml` key used to be ignored in silence while `doctor` printed a green
+`enforcement: enforce — gates block`; and `batten claim` only checked collisions inside its own run,
+so two concurrent runs in one checkout were each told they owned the same file, after which the
+guard denied both.
 
 What has **not** happened yet, stated plainly: **the plugin has never been installed from a
-release** — see the note at the top of *Install*, and the audit that found the download path does not
-deliver a working binary. batten has not been adopted by a project it does not belong to, with people
-who did not write it. The bootstraps verify the release's **sha256** before installing anything and
+release**, because no release has been published — see the note at the top of *Install*. batten has
+not been adopted by a project it does not belong to, with people who did not write it. The bootstraps verify the release's **sha256** before installing anything and
 refuse to install what does not match, but they verify no **signature** — a compromised release
 account replaces the asset and its checksum line together, so that half of the supply chain is still
 open. And there is no GIF in this README — the `.tape` scripts that generate one are

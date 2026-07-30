@@ -675,17 +675,34 @@ adjetivo indefinido.
 | **C4** | la reversa §2.2 escrita **y el drill R2 ensayado una vez** con evidencia | §2.2 |
 | **C5** | la métrica §4.2 respondida: ≥10 runs, el número, y la decisión del umbral **anotada en este documento** | §4.2 |
 | **C6** | ✅ `declaredAsFuture` con **cero entradas** y `on_exceed` sin valores muertos | §7 |
-| **C7** | **cero documentos mintiendo a HEAD** — la lista al pie | abajo |
+| **C7** | ✅ **cero documentos mintiendo a HEAD** — la lista al pie | abajo |
 | **C8** | minisign publicado con custodia LOCAL decidida y verificación en los bootstraps | §3.3 |
 
-**C7, enumerado** (cada uno S, y juntos son la credibilidad del release):
-README:309-314 — el blockquote que manda a instalar desde fuente por el bug A1 **ya arreglado** (la
-lección del CHANGELOG, repetida en el README); README:534 — "15 remain open" (el conteo va dos
-generaciones atrás: son 13); CHANGELOG "Known gaps" — renumerar con la historia del #60 (§5) y
-corregir el conteo; los comentarios del código que citan "plan §8"/"plan §10" de `plan_mejora.md`
-(`declared_test.go`, `scandiff.go:18`) — re-apuntar o citar la razón inline, el documento ya no está
-en el árbol; y el link a `plan_mejora.md` en `plugin_al_momento.md` si esta revisión no lo dejó ya
-sin link.
+**C7, enumerado — HECHO** (cada uno S, y juntos son la credibilidad del release):
+
+- ✅ **README §Install** — el blockquote que mandaba a instalar desde fuente por el bug A1 **ya
+  arreglado**. Reescrito para separar las dos frases que estaban mezcladas: el camino de descarga
+  está arreglado y verificado ejecutándolo, y **todavía no hay release publicado**, que es otra
+  cosa. La primera dejó de ser cierta; la segunda lo sigue siendo.
+- ✅ **README y CHANGELOG, el conteo** — decían "15 remain open" y "14 of the 52". Son **7**, con la
+  regla adelante y la aritmética completa a la vista en *Known gaps*: 15 → 14 (#1) → 13 (el #60
+  fantasma) → 7 (los seis BLOQUEA). El CHANGELOG explica además **qué** era el índice 60, para que
+  la corrección no haya que volver a hacerla de memoria.
+- ✅ **`plugin_al_momento.md`** — decía 13, y decía "27 subcomandos" sin regla de conteo (son **28**;
+  29 brazos del `switch`, uno es `version` con tres grafías). El link a `plan_mejora.md` ya no
+  existía: la revisión lo había dejado como mención sin enlace.
+- ✅ **Las referencias de sección del código, y son más de las que este ítem creía.** Eran **21**, no
+  dos, y el agravante no era el enlace muerto: **el plan que sobrevive tiene sus propios §7, §4.1,
+  §4.3 y §9, sobre otras cosas.** Un número de sección pelado se re-apunta solo a prosa que no tiene
+  nada que ver, y quien lo sigue queda mal informado con confianza — estrictamente peor que no
+  poder seguirlo. Las que apuntaban al documento retirado pasaron a decir la razón inline; las que
+  siguen vivas **nombran el documento**.
+- ✅ **Y el mecanismo, para que esta clase no vuelva:**
+  `TestEveryPlanReferenceNamesTheDocumentAndResolves` — toda referencia `§N` en Go tiene que nombrar
+  `plan_publicacion.md` **y** resolver a una sección que existe en él. Probado en las dos
+  direcciones. Su propio comentario escribe los ejemplos como "section N" en vez de con el signo,
+  por la misma disciplina que el patrón enmascarado de §1.0: un guard cuya prosa lo hace fallar le
+  enseña a quien lo toque a agregar una exclusión, y la exclusión es lo que lo ciega.
 
 **Qué NO bloquea 0.1.0, dicho para que no se cuele:** el GIF del README (los `.tape` están escritos;
 es marketing), los 6 PULIDO de §5, el refactor de `main.go` (§10), la línea de transcript-parse en
@@ -730,7 +747,7 @@ PULIDO abierto es honesto (están listados); reclutar con un BLOQUEA abierto que
 
 Candidatos reales que no entran en este ciclo, con el motivo:
 
-- **`cmd/batten/main.go` tiene 2387 líneas y 28 subcomandos** (regla de conteo: 29 brazos del
+- **`cmd/batten/main.go` tiene 2632 líneas y 28 subcomandos** (regla de conteo: 29 brazos del
   `switch` de `main()`, uno es `version` con tres grafías; sin cobra, a propósito — cero
   dependencias de CLI). Es el olor de capa horizontal que describía el documento de Gentleman
   Programming, y la lectura correcta —un archivo por comando— es válida. No es lo que se hace a
@@ -789,7 +806,18 @@ se entera solo:
 8. **"El diferenciador no está contado en ningún lado" (§4.3 anterior) — falso a HEAD.** README
    §"The metric nobody else reports" ya existía. El ítem se había cerrado sin avisarle al plan.
 9. **README:309-314 sigue mandando a instalar desde fuente por un bug arreglado** — la instancia
-   nueva de esta misma lección, ahora como ítem C7 en vez de como sorpresa.
+   nueva de esta misma lección, ahora como ítem C7 en vez de como sorpresa. **Cerrado**, y separando
+   las dos frases que estaban mezcladas: el camino de descarga está arreglado, y todavía no hay
+   release publicado. La primera dejó de ser cierta; la segunda no.
+10. **"27 subcomandos" en el manual — falso**, y falso *sin regla de conteo*, que es la corrección 5
+    reincidiendo en otro documento el mismo mes. Son 28.
+11. **Una referencia de sección pelada no muere: se re-apunta.** Los 21 `§N` del código que
+    señalaban a `plan_mejora.md` no quedaron colgando — **7 de ellos resuelven hoy a una sección
+    REAL de este documento, sobre otro tema.** Un enlace muerto frena al lector; uno re-apuntado lo
+    manda con confianza al lugar equivocado. La regla que salió de acá: una referencia nombra su
+    documento o no es una referencia, y `TestEveryPlanReferenceNamesTheDocumentAndResolves` la
+    impone. Es el mismo error de forma que "47 comandos": publicar un puntero que nadie puede
+    verificar.
 
 Y tres trampas que solo aparecieron **ejecutando**, anotadas porque van a volver:
 

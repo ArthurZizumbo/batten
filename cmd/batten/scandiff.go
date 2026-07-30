@@ -9,13 +9,13 @@ package main
 //
 // This one does, because it does not look at commands at all. It asks git what changed and asks the
 // database who claimed what, and contrasts the two. Deterministic, no heuristics, no false
-// positives — which is why plan §5.1 says it should have come FIRST even though it is listed fourth.
+// positives — which is why it should have come FIRST in the write-set work even though it landed last.
 //
-// It also produces, for free, the number §3.3 wants and nobody has: how much batten's agents
+// It also produces, for free, the number nobody else has: how much batten's agents
 // OVER-declare. S-Bus (arXiv:2605.17076) measured 32–49% over-declaration in automatically
 // reconstructed read-sets. batten's write-sets are declared by hand, by a planning agent, and until
 // now nothing compared the declaration to the outcome. That number is the evidence that would
-// reopen the OCC/MTPO decision (plan §10) — or keep it closed.
+// reopen the OCC-with-LLM-repair decision — or, far more likely, keep it closed.
 //
 // WHAT IT REPORTS AND WHAT IT REFUSES TO CONCLUDE:
 //
@@ -93,7 +93,7 @@ func cmdScanDiff(args []string) error {
 	rep := contrastDiff(changed, ws)
 	printScanDiff(run, rep)
 
-	// Keep it. This one line is the whole of plan §4.2's numerator: everything above was already
+	// Keep it. This one line is the whole of plan_publicacion.md §4.2's numerator: everything above was already
 	// computed and then written to stdout, so the over-declaration question could be answered
 	// about one run at a time and never about the project.
 	//

@@ -2,7 +2,7 @@ package main
 
 // `batten demo` — the full flow, on a repo batten builds and throws away.
 //
-// Even in report mode, §6.2's problem remains: you have to install and configure something
+// Even in report mode, the adoption problem remains: you have to install and configure something
 // before you see anything. This is the "try it before configuring it" that did not exist.
 //
 // It builds a small repo in a temp directory, runs the real engine over it — the real scanner,

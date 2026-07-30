@@ -514,7 +514,7 @@ func TestOneOpenUnitTheSessionDoesNotOwnIsStillUngated(t *testing.T) {
 	}
 }
 
-// TestTheReplayLogRecordsWhatBattenDECIDED is §6.7a's prerequisite.
+// TestTheReplayLogRecordsWhatBattenDECIDED is the report's prerequisite.
 //
 // The events table has called itself a replay log since the beginning and could replay nothing:
 // it wrote the INCOMING payload, once, BEFORE dispatch. So the only fact worth keeping — whether
@@ -896,7 +896,7 @@ func gitAddCommitPaths(t *testing.T, dir, msg string, paths ...string) {
 	}
 }
 
-// TestACommitClosesTheUnitItNAMES is finding #50's other half (plan §5).
+// TestACommitClosesTheUnitItNAMES is finding #50's other half (plan_publicacion.md §5).
 //
 // The gate learned to read the commit message; the CLOSE path never did. So on trunk — where the
 // branch names nothing and the session binding is the only other signal — a commit reading
@@ -1003,9 +1003,9 @@ func TestACommitWithNoUnitInItStillClosesTheSessionsRun(t *testing.T) {
 	}
 }
 
-// ---------- plan §7: the fields that were declared and never read ----------
+// ---------- plan_publicacion.md §7: the fields that were declared and never read ----------
 
-// TestThePhaseBriefingCarriesTheWhenCondition — `phases[].when` (plan §7).
+// TestThePhaseBriefingCarriesTheWhenCondition — `phases[].when` (plan_publicacion.md §7).
 //
 // Its whole declared contract is "free-form, advisory", and that is honest: batten cannot evaluate
 // an English condition and never claimed it would. But advisory and UNREAD are different things,
@@ -1052,7 +1052,7 @@ func TestThePhaseBriefingCarriesTheWhenCondition(t *testing.T) {
 	}
 }
 
-// TestTheGateBriefingCarriesTheCoverageFloors — `domains[].coverage` (plan §7).
+// TestTheGateBriefingCarriesTheCoverageFloors — `domains[].coverage` (plan_publicacion.md §7).
 //
 // A floor declared in batten.yaml that nothing downstream ever mentions is a promise to whoever
 // reads the spec and to nobody else. batten does not measure coverage and must not pretend to; it
@@ -1101,7 +1101,7 @@ func TestTheGateBriefingCarriesTheCoverageFloors(t *testing.T) {
 	}
 }
 
-// TestOnExceedWarnSaysSoInsteadOfPassingInSilence — `budget.on_exceed: warn` (plan §7).
+// TestOnExceedWarnSaysSoInsteadOfPassingInSilence — `budget.on_exceed: warn` (plan_publicacion.md §7).
 //
 // The loader accepted three values and only `block` was wired, so a spec that chose the softer one
 // behaved exactly like a spec with no ceiling at all. `batten init` writes `on_exceed: warn` by
@@ -1109,7 +1109,7 @@ func TestTheGateBriefingCarriesTheCoverageFloors(t *testing.T) {
 // nothing and nothing said so.
 //
 // The severity is decided by the SPEC, not by the model and not by the size of the overrun: the
-// user declared which one they wanted (plan §4.1 — wherever batten softens an enforcement, a rule
+// user declared which one they wanted (plan_publicacion.md §4.1 — wherever batten softens an enforcement, a rule
 // decides).
 func TestOnExceedWarnSaysSoInsteadOfPassingInSilence(t *testing.T) {
 	h, run := budgetFixture(t, nil, 1000)

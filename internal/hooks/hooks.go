@@ -351,7 +351,7 @@ func (h *Handler) preToolUse(in Input) (*Output, error) {
 		if out := h.destructionGuard(in, bi.Command); out != nil {
 			return withRule(out, store.RuleUnattended), nil
 		}
-		// The write-set guard's other half (plan §5.1): `Edit` on a claimed file is denied and the
+		// The write-set guard's other half: `Edit` on a claimed file is denied and the
 		// same write through `sed -i` used to go through in silence. Advisory for one cycle — see
 		// bashwrite.go. Checked before the verdict gate so a command that is both a commit and a
 		// trespass reports the trespass, which is the more specific fact.
@@ -743,7 +743,7 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	// This is reached whether or not the gate declares checks — an undeclared gate is a reason
 	// to warn, never a reason to stop counting tokens.
 	//
-	// `warn` was accepted by the loader and did nothing (plan §7). Only `block` was wired, so a
+	// `warn` was accepted by the loader and did nothing (plan_publicacion.md §7). Only `block` was wired, so a
 	// spec that chose the softer setting got the SAME behaviour as one that declared no ceiling
 	// at all — and `batten init` writes `on_exceed: warn` by default, which means every freshly
 	// adopted repo was in the dead branch. The mechanism was already here in full: it is
@@ -751,7 +751,7 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	//
 	// The severity is decided by the SPEC, not by the model and not by the size of the overrun —
 	// the user declared which one they wanted and that declaration is the whole answer. (Plan
-	// §4.1: wherever batten softens an enforcement, a rule decides, never a judgement.)
+	// plan_publicacion.md §4.1: wherever batten softens an enforcement, a rule decides, never a judgement.)
 	switch onExceed := h.Spec.Budget.OnExceed; {
 	case (onExceed == "block" || onExceed == "warn") && h.Spec.Budget.Set():
 		b := h.Spec.Budget
@@ -910,7 +910,7 @@ func (h *Handler) writeSetGuard(in Input, path string) (*Output, error) {
 // repoRel turns a path from a tool payload into the repo-relative, slash-normalised form the
 // write-set is keyed by, or reports that it is not this repository's business.
 //
-// The `cwd` fallback is plan §5.1 point 2, and it is what makes the Bash path work at all: `Edit`
+// The `cwd` fallback is what makes the Bash path work at all: `Edit`
 // hands over an absolute path, while a shell command says `sed -i s/a/b/ handler.go` and means
 // "relative to wherever this call is running". Resolving that against the repo root instead of the
 // payload's cwd would silently name the wrong file, and a guard that warns about the wrong file is
@@ -1114,7 +1114,7 @@ func phaseBriefing(sp *spec.Spec, st *store.Store, run *store.Run) string {
 	if len(p.Reads) > 0 {
 		fmt.Fprintf(&b, "- reads: %s\n", strings.Join(p.Reads, ", "))
 	}
-	// `phases[].when` (plan §7). Its whole declared contract is "free-form, advisory", and for
+	// `phases[].when` (plan_publicacion.md §7). Its whole declared contract is "free-form, advisory", and for
 	// once that makes it honest rather than hollow — batten cannot evaluate an arbitrary English
 	// condition and never claimed it would. What it CAN do is put the condition in front of the
 	// agent standing in the phase, which is the only reader such a field could ever have. Until
@@ -1173,7 +1173,7 @@ func phaseBriefing(sp *spec.Spec, st *store.Store, run *store.Run) string {
 }
 
 // coverageFloors puts `domains[].coverage` in front of the only agent that could act on it: the
-// one standing in a gate-bearing phase (plan §7).
+// one standing in a gate-bearing phase (plan_publicacion.md §7).
 //
 // It is advisory and says so. batten does not run coverage tools, does not parse their output, and
 // cannot tell a line-coverage percentage from a branch one — pretending otherwise would be a new
@@ -1381,7 +1381,7 @@ func (h *Handler) sessionStart(in Input) (*Output, error) {
 	switch {
 	case mine != "":
 		fmt.Fprintf(&b, "\n→ this session is working **%s**.\n", mine)
-		// §4.5: say what the ACTIVE PHASE requires, not just which unit is open. The spec was
+		// Say what the ACTIVE PHASE requires, not just which unit is open. The spec was
 		// always available on request; nothing about it ever changed with the phase, so an agent
 		// resuming mid-workflow got the same orientation whether it was about to fan out or
 		// about to face a gate. Everything below comes out of the user's batten.yaml — batten

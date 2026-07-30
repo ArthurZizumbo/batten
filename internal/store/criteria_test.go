@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// Ítem 21 (plan §7): "criteria" appeared ten times in the codebase's prose and zero times as
+// Ítem 21: "criteria" appeared ten times in the codebase's prose and zero times as
 // data — evidence was a flat []string and nothing could say WHICH criterion a piece of
 // evidence covered. These tests pin the data half: seeding from the plan document, and an
 // approving verdict covering exactly the criteria its evidence cites.

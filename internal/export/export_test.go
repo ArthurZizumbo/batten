@@ -346,7 +346,7 @@ func TestACheckOnlyRunSaysTheReviewerIsMissing(t *testing.T) {
 	}
 }
 
-// TestExportHonorsTheDeclaredList closes the guard's tenth instance (ítem 23, plan §8).
+// TestExportHonorsTheDeclaredList closes the declared-field guard's tenth instance.
 // `capabilities.obsidian.export` declared WHICH files the vault gets and nothing read it:
 // a user who wrote `export: [canvas]` received the note and the dashboards anyway. A field
 // the user writes believing it governs, and that does not govern, is worse than its absence.

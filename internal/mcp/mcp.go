@@ -759,7 +759,7 @@ func (q *queries) relPath(p string) (string, error) {
 
 // ---------- batten_spec ----------
 
-// specInput carries §4.5: answer for ONE phase instead of handing over the whole document.
+// specInput answers for ONE phase instead of handing over the whole document.
 //
 // What already existed was the spec being available; what was missing was any of it changing
 // with the phase. An agent in `verify` was handed every domain, every gate and every phase and

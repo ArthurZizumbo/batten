@@ -135,7 +135,7 @@ func TestTheSedBypassIsSeenAtLast(t *testing.T) {
 	}
 }
 
-// TestBashPathsResolveAgainstTheCallersCwd is plan §5.1 point 2, and without it the check names
+// TestBashPathsResolveAgainstTheCallersCwd: without it the check names
 // the wrong file. A shell command says `sed -i s/a/b/ train.py` and means "relative to where this
 // call is running"; resolving that against the repo root points at a file that does not exist,
 // and a guard that warns about the wrong file is worse than one that says nothing.

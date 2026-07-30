@@ -1097,7 +1097,7 @@ func cmdMeasure() error {
 	return nil
 }
 
-// printWriteSets is the block plan §4.2 exists for: does declaring a write-set by hand
+// printWriteSets is the block plan_publicacion.md §4.2 exists for: does declaring a write-set by hand
 // over-declare the way S-Bus (arXiv:2605.17076) measured automatically reconstructed read-sets
 // over-declaring, between 32% and 49%?
 //
@@ -1145,7 +1145,7 @@ func printWriteSets(st *store.Store, project string) {
 	// after seeing it. The bands and the actions are in plan_publicacion.md §4.2.
 	switch {
 	case ws.Runs < 10:
-		fmt.Printf("  (below the pre-registered N: the threshold in plan §4.2 needs ≥10 scanned runs.\n")
+		fmt.Printf("  (below the pre-registered N: the threshold in plan_publicacion.md §4.2 needs ≥10 scanned runs.\n")
 		fmt.Printf("   %d more to go. Read this as a direction, not a result.)\n", 10-ws.Runs)
 	case pct >= 32:
 		fmt.Println("  → at or above the 32% floor of the S-Bus band: over-declaration is real here.")
@@ -2054,7 +2054,7 @@ func checkSpecOnly(d *dx, sp *spec.Spec) {
 		if sp.Capabilities.Graph.Lessons {
 			fmt.Println("  ⚠ graph.lessons is on; it overlaps engram's job. Prefer lessons: false")
 		}
-		// Declaration crossed with reality (plan §5.3 step 2). `query_before_read: true` is an
+		// Declaration crossed with reality. `query_before_read: true` is an
 		// instruction batten now injects into the agent's orientation — and an instruction to
 		// consult a tool that is not installed is worse than no instruction: the agent either
 		// wastes a turn discovering it, or says it consulted something it could not.
@@ -2279,7 +2279,7 @@ func isGitRepo(dir string) bool {
 // checkStore reports the database, and then the thing that opening it does NOT prove: that
 // batten can take the write lock.
 //
-// This is the diagnosis behind §4.3's whole failure mode. When another process holds the write
+// This is the diagnosis behind the fail-open-but-loudly rule. When another process holds the write
 // lock past busy_timeout, the database still OPENS — so "✓ store" was printed while every hook
 // that needed to record something was quietly failing. The user sees a healthy doctor and a gate
 // with no opinions.
@@ -2454,7 +2454,7 @@ func graphHooks(sp *spec.Spec) {
 	if missingDriver && trackedInGit(sp.Root, filepath.Join("graphify-out", "graph.json")) {
 		fmt.Println("  ⚠ graph.json is committed but graphify's merge driver is NOT registered —")
 		fmt.Println("    two branches touching code will conflict on it. Fix once: graphify hook install")
-		// With worktrees in play this stops being a courtesy. §5.4 says to write this down before
+		// With worktrees in play this stops being a courtesy. It has to be written down before
 		// starting rather than after somebody hits it: "two branches touching code" is the RARE
 		// case in a single tree and the NORMAL case once every unit has its own, so the merge
 		// driver goes from nice-to-have to a requirement of the installation.
@@ -2577,7 +2577,7 @@ func cmdInit(args []string) error {
 // since before init could write it.
 const gitignoreEntry = "/.batten/"
 
-// ensureGitignored is finding #59 (plan §5): `batten init` wrote batten.yaml and said nothing
+// ensureGitignored is finding #59 (plan_publicacion.md §5): `batten init` wrote batten.yaml and said nothing
 // about .gitignore, so the adopter's very next `git add -A` committed batten's database —
 // a binary SQLite file that grows with every run, conflicts on every merge, and carries the
 // project's whole decision history into the repository. The first thing batten asks anyone to do

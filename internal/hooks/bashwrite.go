@@ -20,7 +20,7 @@ package hooks
 //
 // WHAT IT CANNOT SEE, said plainly rather than left for someone to discover: a python script, a
 // Makefile target, a `go run`, anything a third-party tool does. No shell parser reaches those.
-// That is not this check's failure, it is its boundary — and it is exactly why plan §5.1 puts
+// That is not this check's failure, it is its boundary — and it is exactly why the design puts
 // `scan-diff` (which compares the real git diff against the declared write-sets afterwards) first
 // in priority even though this one comes first in the list.
 

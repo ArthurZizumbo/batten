@@ -28,7 +28,7 @@ func contentOf(t *testing.T, res *sdk.CallToolResult) string {
 	return b.String()
 }
 
-// TestTheModelGetsProseAndTheClientGetsTheJSON is §4.4.
+// TestTheModelGetsProseAndTheClientGetsTheJSON.
 //
 // An MCP result has two halves for two readers: `content` reaches the MODEL, `structuredContent`
 // is for the CLIENT to render. batten returned a nil result from every handler, and the go-sdk
@@ -132,7 +132,7 @@ func TestTheVerdictSummaryKeepsTheAnswerAndTheRemedy(t *testing.T) {
 	}
 }
 
-// §4.5: batten_spec answers for ONE phase. The spec was always available; nothing about it ever
+// batten_spec answers for ONE phase. The spec was always available; nothing about it ever
 // changed with the phase, so an agent about to fan out and an agent about to face a gate got the
 // same document and had to orient themselves.
 func TestSpecNarrowsToOnePhase(t *testing.T) {

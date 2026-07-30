@@ -5,7 +5,7 @@ package main
 // The strongest argument for this is not the literature. It is that batten ALREADY prescribes it
 // and does not do it: three different denials tell the user to use a worktree per unit, and then
 // leave them to run the git by hand. Diagnosing a problem, naming the fix and refusing to perform
-// it is the same gap between declared and done that §8 is about, wearing different clothes.
+// it is the same gap between declared and done as a dead spec field, wearing different clothes.
 //
 // TWO SCOPE DECISIONS, both deliberate:
 //
@@ -187,7 +187,7 @@ func worktreeAdd(sp *spec.Spec, st *store.Store, unit, path, branch, from string
 		return err
 	}
 
-	// The warning §5.4 says to write down before starting, not after somebody hits it. graphify
+	// The warning has to be written down before starting, not after somebody hits it. graphify
 	// commits a graph.json of about a megabyte; two branches that touch code conflict on it every
 	// time, and worktrees turn "two branches touching code" from the rare case into the normal
 	// one. doctor already checks for the union merge driver — with this, that check stops being a
@@ -205,7 +205,7 @@ func worktreeAdd(sp *spec.Spec, st *store.Store, unit, path, branch, from string
 
 // registerWorktree binds the run to the tree, and anchors it where the tree branched.
 //
-// The anchor changing meaning is the second thing §5.4 says to write down: every worktree has its
+// The anchor changing meaning is the second thing to write down: every worktree has its
 // own HEAD, so `diff_from: anchor` becomes MORE correct in this model, not less — a unit's anchor
 // is the point its tree diverged, which is exactly the diff a reviewer should be looking at.
 func registerWorktree(sp *spec.Spec, st *store.Store, unit, tree, baseSHA string) error {

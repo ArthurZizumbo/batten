@@ -41,7 +41,7 @@ func runOK(t *testing.T, dir string, fn func() error) string {
 	return out
 }
 
-// TestTheMergeBackIsGatedLikeACommit is the half of §5.4 that is batten's business rather than
+// TestTheMergeBackIsGatedLikeACommit is the half of the worktree story that is batten's business rather than
 // git's. A worktree per unit is a git feature; refusing to integrate one whose unit has no
 // verdict is the commit gate applied at the other end of the same rope.
 func TestTheMergeBackIsGatedLikeACommit(t *testing.T) {
