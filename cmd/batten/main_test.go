@@ -132,6 +132,125 @@ func TestADirectoryClaimIsRefusedWithTheShapeThatWorks(t *testing.T) {
 	})
 }
 
+// TestAClaimOutsideTheRepoIsRefused is finding #7's sibling case (plan §5).
+//
+// The directory claim above is refused; a claim of an ABSOLUTE path outside the root was not. It
+// was stored verbatim and answered with the same success line, and the guard — which compares
+// repo-relative paths — could never match it. An imaginary fence, reported as protection, around
+// a file batten will never guard.
+func TestAClaimOutsideTheRepoIsRefused(t *testing.T) {
+	dir := gitRepoWithSpec(t, diffFromSpec)
+	db := filepath.Join(dir, "state.db")
+	t.Setenv("BATTEN_DB", db)
+
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := st.EnsureRun("p", "TASK-1", "sess-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	node := store.AgentNodeID(r.RunID, "ag-1")
+	if err := st.AddNode(store.Node{NodeID: node, RunID: r.RunID,
+		Kind: "subagent", Label: "api", AgentID: "ag-1"}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	outside := filepath.Join(t.TempDir(), "elsewhere.go")
+	if err := os.WriteFile(outside, []byte("package elsewhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	inDir(t, dir, func() {
+		var err error
+		out := captureStdout(t, func() { err = cmdClaim([]string{"ag-1", outside}) })
+		if err == nil {
+			t.Fatalf("a path outside the repo was claimed and reported as protected: %q", out)
+		}
+		if !strings.Contains(err.Error(), "outside this repository") {
+			t.Errorf("the refusal must name the reason, not just fail: %v", err)
+		}
+		// Nothing may be recorded — a half-written fence is the failure this refuses.
+		st, e := store.Open(db)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer st.Close()
+		ws, e := st.WriteSet(r.RunID, node)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if len(ws) != 0 {
+			t.Errorf("write-set = %v after a refused claim; a rejected claim must leave no row", ws)
+		}
+	})
+}
+
+// TestASecondRunCannotClaimAFileAnotherOpenRunOwns is finding #4 (plan §5).
+//
+// `claim` only ever looked inside its OWN run — the writesets primary key defends one run — so the
+// second run of a project claimed the same path, got *"any other agent writing them is now
+// denied"*, and then the guard denied BOTH owners at write time. batten handed out a fence it
+// could not honour and only said so once the work had started.
+//
+// Half the mechanism already existed and was never called: store.WriteSetOwnerAcrossOpenRuns is
+// the query the write guard and the Bash guard both use. This moves the discovery from
+// "mid-fan-out, to both agents" to "at claim time, to the one who can still change the plan".
+func TestASecondRunCannotClaimAFileAnotherOpenRunOwns(t *testing.T) {
+	dir := gitRepoWithSpec(t, diffFromSpec)
+	db := filepath.Join(dir, "state.db")
+	t.Setenv("BATTEN_DB", db)
+
+	st, err := store.Open(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := st.EnsureRun("p", "TASK-1", "sess-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeA := store.AgentNodeID(first.RunID, "ag-1")
+	if err := st.AddNode(store.Node{NodeID: nodeA, RunID: first.RunID, Kind: "subagent", AgentID: "ag-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.ClaimWriteSet(first.RunID, nodeA, []string{"api/handler.go"}); err != nil {
+		t.Fatal(err)
+	}
+	// A second, still-open run of the same project, in the same tree.
+	second, err := st.EnsureRun("p", "TASK-2", "sess-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodeB := store.AgentNodeID(second.RunID, "ag-2")
+	if err := st.AddNode(store.Node{NodeID: nodeB, RunID: second.RunID, Kind: "subagent", AgentID: "ag-2"}); err != nil {
+		t.Fatal(err)
+	}
+	st.Close()
+
+	inDir(t, dir, func() {
+		var err error
+		out := captureStdout(t, func() { err = cmdClaim([]string{"ag-2", "api/handler.go"}) })
+		if err == nil {
+			t.Fatalf("the second run claimed a file the first still owns, and was told "+
+				"\"any other agent writing them is now denied\": %q", out)
+		}
+		for _, want := range []string{"TASK-1", "batten worktree"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("the refusal must name the owner and the way out. Missing %q from: %v", want, err)
+			}
+		}
+		// The control: a path nobody owns is still claimable. A guard that refuses everything
+		// is not a guard.
+		var ok error
+		_ = captureStdout(t, func() { ok = cmdClaim([]string{"ag-2", "api/other.go"}) })
+		if ok != nil {
+			t.Errorf("an unclaimed path was refused too, so this is a wall and not a fence: %v", ok)
+		}
+	})
+}
+
 // TestCriteriaFlowFromPlanToPR is ítem 21 end to end: the unit's acceptance criteria leave
 // the markdown (fase A), become rows when the phase opens (fase B), get covered by the
 // verdict's `AC-n:` citations, and the PR then says "AC-1 covered by X" — which is a

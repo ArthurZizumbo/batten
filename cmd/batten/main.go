@@ -417,10 +417,28 @@ func cmdClaim(args []string) error {
 	}
 	files := make([]string, 0, len(args)-1)
 	for _, f := range args[1:] {
-		if rel, err := filepath.Rel(sp.Root, f); err == nil && !strings.HasPrefix(rel, "..") {
-			f = rel
+		// #7's sibling case, and the same failure as the directory claim below: the write-set
+		// guard compares REPO-RELATIVE paths, so a path outside the root can never match one. An
+		// absolute path elsewhere used to be stored verbatim and answered with the success line —
+		// an imaginary fence, reported as protection, around a file batten will never guard. A
+		// plan that trusts it is worse off than one with no claim at all.
+		//
+		// A relative argument is resolved against the ROOT, not the process cwd, because that is
+		// what the write-set is keyed by; `../..` escapes are caught by the same comparison.
+		orig := f
+		abs := f
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(sp.Root, abs)
 		}
-		f = filepath.ToSlash(f)
+		rel, relErr := filepath.Rel(sp.Root, abs)
+		if relErr != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("claim: %q is outside this repository (%s), and the write-set fence "+
+				"only matches paths INSIDE it — this claim would be recorded as protection and "+
+				"protect nothing.\n"+
+				"batten governs the repo it was invited into. Claim a path under %s.",
+				orig, sp.Root, sp.Root)
+		}
+		f = filepath.ToSlash(rel)
 		// A directory or glob claim is accepted by the fence and fences NOTHING: the guard
 		// compares exact repo-relative paths, so `src/**` was recorded, reported as protection,
 		// and protected no file at all (#7). Refusing is the honest option — a false fence is
@@ -431,6 +449,30 @@ func cmdClaim(args []string) error {
 				"pattern would be recorded as protection and protect nothing.\n"+
 				"List the files instead (your shell can expand a glob):\n"+
 				"  batten claim %s <file> <file> ...", f, why, agent)
+		}
+		// #4 — the half that existed and was never called.
+		//
+		// `claim` only ever looked inside its OWN run: the writesets primary key defends one run,
+		// so the second run of a project claimed the same path, got the success line *"any other
+		// agent writing them is now denied"*, and then the guard denied BOTH owners at write time.
+		// batten handed out a fence it could not honour and only said so after the work started.
+		//
+		// store.WriteSetOwnerAcrossOpenRuns is the exact query the guard already uses
+		// (hooks.go, bashwrite.go). Refusing here moves the discovery from "mid-fan-out, to both
+		// agents" to "at plan time, to the one who can still change the plan".
+		if cross, cerr := st.WriteSetOwnerAcrossOpenRuns(sp.Project, f, node.RunID); cerr == nil && cross != nil {
+			// The worktree carve-out the guard makes, made here too: two trees, two branches, two
+			// checkouts of the same repo-relative path is not a race — it is the arrangement
+			// batten's own messages recommend, and denying it would punish the fix.
+			if cross.Worktree == "" || gitx.SameTree(sp.Root, cross.Worktree) {
+				return fmt.Errorf("claim: %s is already claimed by %s in run %s (unit %s), which is "+
+					"still open.\n"+
+					"Claiming it here would hand the same file to two owners, and the guard then "+
+					"denies BOTH of them at write time.\n"+
+					"Close that run, drop this path from the plan, or give each unit its own tree: "+
+					"batten worktree %s", f, store.DisplayNodeID(cross.NodeID), cross.RunID,
+					cross.UnitID, cross.UnitID)
+			}
 		}
 		files = append(files, f)
 	}
