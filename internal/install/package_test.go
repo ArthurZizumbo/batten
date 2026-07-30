@@ -137,6 +137,60 @@ func TestEveryCommandRefusesToRunWithoutTheBinary(t *testing.T) {
 	}
 }
 
+// TestEveryDocumentThatDrivesAVerdictNamesBattenCheck is finding #16 (plan §5), as a rule rather
+// than a list — so the next command that learns to record a verdict inherits it.
+//
+// A gate that declares `checks:` needs TWO verdicts from two different producers: `batten check`
+// proves the declared checks were RUN, and the envelope proves somebody judged the work against
+// its acceptance criteria. `/batten-verify` walked the agent all the way to `batten verdict` and
+// told it to run the gate's checks *by hand* — which produces citations, not a batten-sourced
+// pass. The flow therefore ended where the field test found it: at a commit denied with "has no
+// batten-verified pass. The gate's checks must be RUN, not asserted. Run: batten check <unit>",
+// naming a command that appeared in none of these documents.
+//
+// The adopter cannot recover from that: they followed the instructions and the instructions do not
+// mention the way out. Which is why this is a BLOCKS-adoption finding and not a documentation
+// nicety.
+func TestEveryDocumentThatDrivesAVerdictNamesBattenCheck(t *testing.T) {
+	pkg := filepath.Join(repoRoot(t), "plugin", "claude-code")
+	var docs []string
+	for _, pat := range []string{
+		filepath.Join(pkg, "commands", "*.md"),
+		filepath.Join(pkg, "skills", "*", "SKILL.md"),
+	} {
+		found, err := filepath.Glob(pat)
+		if err != nil {
+			t.Fatal(err)
+		}
+		docs = append(docs, found...)
+	}
+	if len(docs) == 0 {
+		t.Fatal("no commands or skills found; this test is looking in the wrong place")
+	}
+
+	checked := 0
+	for _, doc := range docs {
+		b, err := os.ReadFile(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		if !strings.Contains(src, "batten verdict") {
+			continue // a document that never records a verdict cannot walk anyone into this deny
+		}
+		checked++
+		if !strings.Contains(src, "batten check") {
+			t.Errorf("%s tells the agent to record a verdict and never names `batten check`.\n"+
+				"With `checks:` declared, that path ends at a denied commit — \"has no "+
+				"batten-verified pass\" — naming a command this document does not contain, so the "+
+				"reader has nowhere to go.", filepath.Base(doc))
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no document drives a verdict at all; this test is asserting nothing")
+	}
+}
+
 // firstBashBlockCalling returns the first ```bash block whose body starts a line with cmd.
 func firstBashBlockCalling(src, cmd string) (string, bool) {
 	var body []string

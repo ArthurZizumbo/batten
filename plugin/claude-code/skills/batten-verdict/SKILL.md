@@ -52,6 +52,25 @@ This exists to kill one specific failure: **closing a work item because it *look
 cannot cite a command's output, a test count, or a criterion you actually checked against the diff,
 then you do not know that it is fine — and the honest result is `blocked`.
 
+## This envelope is only HALF of what the gate wants
+
+When the gate declares `checks:`, the commit needs **two** verdicts from **two different
+producers**, and this skill writes one of them. The other comes from:
+
+```bash
+batten check <unit>
+```
+
+which runs the declared checks itself and records a verdict whose source is `batten`. Running those
+same commands by hand and citing what they printed does **not** satisfy it — that is the claim the
+gate exists to stop taking on trust.
+
+Record both, in either order. With only this envelope the commit is denied with *"has no
+batten-verified pass. The gate's checks must be RUN, not asserted."*; with only `batten check` it is
+denied with *"has only batten's own check result"* — running the checks is not judging the work
+against its acceptance criteria. A gate with no `checks:` declared needs only this envelope, and
+says so out loud when the commit passes.
+
 ## What counts as evidence
 
 Each item must point at something that **happened**:

@@ -28,12 +28,29 @@ git diff --name-only <base-sha>     # `batten show <unit>` prints it
 interleaved work. Reviewing files outside the unit's diff wastes the budget and produces findings
 nobody asked for; missing files inside it is how a bug ships.
 
-## 2. Run the gate's checks
+## 2. Run the gate's checks — with `batten check`, not by hand
 
-Run every command in `gates[<name>].checks`, verbatim, and **keep the output**. You are going to
-cite it — a check you ran but did not record is a check you cannot use as evidence.
+```bash
+batten check <unit>
+```
 
-Then run every skill in `gates[<name>].skills` over the diff. Their findings are evidence too.
+That runs every command in `gates[<name>].checks` verbatim, keeps their output, and records a
+verdict whose source is **batten** rather than you. Running the same commands yourself and citing
+what they printed is not equivalent, and the difference is the whole design: when a gate declares
+`checks`, the close gate demands a pass batten produced by running them, because "I ran the tests
+and they passed" is exactly the claim batten exists to stop taking on trust.
+
+Skipping it does not fail here — it fails later, at the commit, with
+*"has no batten-verified pass. The gate's checks must be RUN, not asserted."* Two verdicts are
+required and they must come from two different producers: `batten check` proves the checks ran,
+and the envelope you write in step 4 proves somebody judged the work against its acceptance
+criteria. Neither substitutes for the other, and `batten check` alone does not close a unit.
+
+`batten check` exits non-zero when a check fails, so the failures are the finding: go to step 3
+with them, and the verdict is `blocked`.
+
+Read its output anyway — you are going to cite it. Then run every skill in `gates[<name>].skills`
+over the diff. Their findings are evidence too.
 
 Then, for each domain the diff touches, re-run its `check` commands and confirm its `coverage`
 floor is actually met. "The agent said it passed" is not evidence; the agent is not the gate.
