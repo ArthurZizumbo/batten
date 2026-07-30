@@ -261,7 +261,7 @@ que deja de coincidir.
 única "validación" post-descarga es que el binario conteste `version`, que un binario hostil
 contesta encantado.
 
-### 3.1 — Paso 1, para beta.1: el sha256 contra `checksums.txt`
+### 3.1 — Paso 1, para beta.1: el sha256 contra `checksums.txt` — **HECHO**
 
 - **mecanismo** — los dos bootstraps descargan `checksums.txt` **del mismo release** que el asset,
   extraen **la línea de SU asset** y comparan. No `sha256sum -c` a secas: el archivo lista los seis
@@ -278,15 +278,29 @@ contesta encantado.
   **cero releases publicados** y el primero ya lo trae (goreleaser lo genera desde antes del primer
   tag). El caso alcanzable es un `BATTEN_BOOTSTRAP_BASE_URL` apuntado a un mirror incompleto — y ahí
   fail-closed es exactamente lo que se quiere.
-- **criterio** — la matriz de manipulación en verde, en los DOS scripts.
-- **verificación** — cuatro tests sobre el seam existente (`BATTEN_BOOTSTRAP_BASE_URL` + el server
-  local que `internal/install/bootstrap_test.go` ya levanta), y los cuatro **fallan contra HEAD**:
+- **criterio** — la matriz de manipulación en verde, en los DOS scripts. ✅
+- **verificación** — **seis** tests sobre el seam existente (`BATTEN_BOOTSTRAP_BASE_URL` + el server
+  local que `internal/install/bootstrap_test.go` ya levanta), y los seis **fallan contra el commit
+  anterior** (`896c160`) con los scripts sin tocar. Son seis y no cuatro porque "en los DOS
+  scripts" es el criterio y `bootstrap.ps1` no hereda ningún test de `bootstrap.sh`:
   - `TestBootstrapRefusesATamperedArchive` — checksums con hash A, archive con hash B → no instala,
-    `$ROOT/bin` vacío, caché intacto, exit 0, stderr nombra el checksum
-  - `TestBootstrapInstallsWhenChecksumMatches` — el camino feliz sigue siendo el camino feliz
+    `$ROOT/bin` vacío, caché intacto, exit 0, stderr nombra url, esperado y obtenido
+  - `TestBootstrapInstallsWhenChecksumMatches` — el camino feliz sigue siendo el camino feliz **y
+    pidió `checksums.txt`**: sin esa aserción el test lo pasa un bootstrap que ignora el archivo, o
+    sea la verificación queda al lado del camino de instalación en vez de adentro
   - `TestBootstrapFailsClosedWithoutChecksums` — 404 del txt → mismo trato que el mismatch
-  - `TestCacheRestoreSurvivesABadDownload` — caché válido + descarga manipulada → **el gate queda
-    ACTIVO desde el caché** (control diferencial: el commit sin veredicto se deniega igual)
+  - `TestCacheRestoreSurvivesABadDownload` — en tres actos, porque el acto que falla contra el
+    commit anterior es el primero: (1) primera descarga manipulada ⇒ **no llega al caché**;
+    (2) con el caché sembrado por un install verificado y el servidor todavía envenenado, el update
+    de plugin restaura **sin red**; (3) control diferencial — el binario restaurado **deniega** un
+    commit sin veredicto. "Corre `version`" y "el gate volvió" son afirmaciones distintas y el
+    silencio del hook es lo que parece un ALLOW
+  - `TestBootstrapPS1RefusesATamperedArchive` y `TestBootstrapPS1FailsClosedWithoutChecksums` — los
+    mismos dos sobre el script que corre Windows, que es el target primario declarado
+- **lo que salió de ejecutarlo** — el 404 de `checksums.txt` en `.ps1` fallaba cerrado pero el
+  mensaje era el de `Invoke-WebRequest`: un `(404) No se encontró` **localizado**, que no dice cuál
+  de las dos URLs falló ni lo dice en inglés. El fetch del txt lleva su propio `try` para poder
+  nombrarlo. Un fail-closed que no se puede leer manda a la gente a borrar el plugin.
 - **costo** — M. **depende de** — nada para código y tests; de §2 para probarlo contra el release real.
 
 ### 3.2 — El caso que rompe el diseño, decidido y dicho
@@ -599,7 +613,7 @@ adjetivo indefinido.
 |---|---|---|
 | **C1** | ≥1 adopción externa completada con **M1 = sí** (protocolo §6 entero, artefactos archivados) | §6 |
 | **C2** | los **6 BLOQUEA** de §5 cerrados, cada uno con su test diferencial | §5 |
-| **C3** | verificación sha256 en los dos bootstraps con la matriz de manipulación en verde | §3.1 |
+| **C3** | ✅ verificación sha256 en los dos bootstraps con la matriz de manipulación en verde | §3.1 |
 | **C4** | la reversa §2.2 escrita **y el drill R2 ensayado una vez** con evidencia | §2.2 |
 | **C5** | la métrica §4.2 respondida: ≥10 runs, el número, y la decisión del umbral **anotada en este documento** | §4.2 |
 | **C6** | `declaredAsFuture` con **cero entradas** y `on_exceed` sin valores muertos | §7 |

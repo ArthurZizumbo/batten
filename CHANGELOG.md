@@ -8,6 +8,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); ver
 
 ## [Unreleased]
 
+### Security
+
+- **The bootstraps verify the release's sha256 before installing anything.** Both scripts
+  downloaded 14 MB and checked nothing but that the binary answered `version` — which a hostile
+  binary answers happily, and seven hooks plus the MCP server execute that file. GoReleaser has
+  published `checksums.txt` with every release since before the first tag, for nobody to read.
+  They now fetch it, pull out **their own asset's line** (a bare `sha256sum -c` fails every time:
+  the file lists all six assets and five are not on disk) and compare.
+
+  This is the one part of the bootstrap that **fails closed**, and the code says so in both files
+  so nobody "fixes" it later. A wrong hash, an unreachable `checksums.txt`, a sums file that does
+  not list this asset, and a machine with no sha256 tool are the same sentence — nobody can vouch
+  for these bytes — and they get the same answer: nothing is installed, the cache is not seeded,
+  stderr names the url, the expected hash and the one it got. The script still exits 0, because
+  `hooks.json` dispatches `bash bootstrap.sh || powershell bootstrap.ps1` and a non-zero exit
+  there means "there is no bash", not "the download was bad".
+
+  The accepted consequence, written down rather than discovered: a corrupt first download leaves
+  the machine with **no gate**. That is already what every failed download leaves behind, the
+  alternative is remote code execution by download, and it only ever applies to a first install —
+  from the first good one, the cache restores the last *verified* binary without network.
+
 ### Fixed
 
 - **The private field-test subject is no longer named outside `docs/field-test/`.** batten was
@@ -298,11 +320,11 @@ Beyond the field test:
   archive's name and magic bytes, and the suite drives the real `bootstrap.sh` and `bootstrap.ps1`
   against a real archive over a local server. What no local check can prove is that
   `releases/latest/download` resolves — that needs the tag.
-- **The bootstraps verify no checksum** on the binary they download, although GoReleaser publishes
-  `checksums.txt` in every release. That is a real supply-chain gap and the best argument for a
-  signed release; checksum verification, then minisign, is the next release's work — and it is the
-  one part of the bootstrap that must fail *closed*, because an unverified binary is worse than no
-  binary when the hooks are the thing that would run it.
+- **The bootstraps verify a checksum but no signature.** The sha256 half is closed (see
+  *Unreleased*): both scripts now read the `checksums.txt` GoReleaser already published and refuse
+  to install what does not match it. What a checksum cannot cover is a compromised release account
+  — the same hand that replaces the asset replaces its line in the sums file. That needs minisign
+  with a locally-held key, and it is 0.1.0's work, not this tag's.
 - **The transcript format batten parses is not a public API.** When it breaks, batten reports the
   count as unavailable rather than guessing — correct, but the ledger can go blind without notice.
 - **No GIF in the README.** The `.tape` scripts are written and verified in content; recording them

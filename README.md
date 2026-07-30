@@ -550,8 +550,10 @@ eliminate:
 What has **not** happened yet, stated plainly: **the plugin has never been installed from a
 release** — see the note at the top of *Install*, and the audit that found the download path does not
 deliver a working binary. batten has not been adopted by a project it does not belong to, with people
-who did not write it. `bootstrap.sh` verifies no signature on what it downloads, which is a real
-supply-chain gap. And there is no GIF in this README — the `.tape` scripts that generate one are
+who did not write it. The bootstraps verify the release's **sha256** before installing anything and
+refuse to install what does not match, but they verify no **signature** — a compromised release
+account replaces the asset and its checksum line together, so that half of the supply chain is still
+open. And there is no GIF in this README — the `.tape` scripts that generate one are
 written and verified ([`docs/tape/`](docs/tape/)), but the machine this was built on has no `vhs`
 installed, and `batten demo` is the live version anyway.
 

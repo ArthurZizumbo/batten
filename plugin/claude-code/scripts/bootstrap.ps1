@@ -66,7 +66,43 @@ Note "batten: fetching the binary for windows/$arch (first run)..."
 # exercise this exact code path against a real archive. Nothing in an install sets it.
 $base = $env:BATTEN_BOOTSTRAP_BASE_URL
 if (-not $base) { $base = "https://github.com/$repo/releases/latest/download" }
-$url = "$base/batten_windows_$arch.tar.gz"
+$asset = "batten_windows_$arch.tar.gz"
+$url = "$base/$asset"
+$sumsUrl = "$base/checksums.txt"
+
+# VerifyArchive is THE ONE PART OF THIS SCRIPT THAT FAILS CLOSED, and the mirror of
+# verify_archive in bootstrap.sh. Do not "fix" it into a warning.
+#
+# Everything else here is best-effort because a bootstrap must not break a session. This is not:
+# the file being checked is about to be executed by seven hooks and an MCP server, so installing
+# it unverified is remote code execution by download. A mismatched hash, an unreachable
+# checksums.txt and a checksums.txt that does not list this asset all get the SAME answer —
+# refuse — because they are the same statement: nobody can vouch for these bytes. The accepted
+# consequence is written down in plan_publicacion.md §3.2.
+#
+# It throws, which the caller's catch turns into $ok = $false and an exit code of 0. hooks.json
+# dispatches `bash bootstrap.sh || powershell bootstrap.ps1`, so the exit code carries "there is
+# no bash", never "the download was bad".
+#
+# Not a `-c`-style whole-file check: checksums.txt lists all six assets and five of them are not
+# on this disk. Only this asset's line is ever compared. Get-FileHash is in PowerShell 5.1.
+function VerifyArchive($path, $sumsPath) {
+    $got = (Get-FileHash -LiteralPath $path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower()
+    $want = ''
+    foreach ($line in (Get-Content -LiteralPath $sumsPath -ErrorAction Stop)) {
+        $parts = @($line -split '\s+' | Where-Object { $_ -ne '' })
+        if ($parts.Count -ge 2) {
+            $name = $parts[1] -replace '^\*', ''    # the BSD spelling writes `*name`
+            if ($name -eq $asset) { $want = $parts[0].ToLower(); break }
+        }
+    }
+    if (-not $want) {
+        throw "$sumsUrl does not list $asset - refusing to install a binary nothing can verify."
+    }
+    if ($want -ne $got) {
+        throw "CHECKSUM MISMATCH: expected $want, got $got - refusing to install it. Nothing was changed."
+    }
+}
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("batten-boot-" + [System.Guid]::NewGuid().ToString('N'))
 $ok = $false
@@ -75,6 +111,24 @@ try {
     New-Item -ItemType Directory -Force -Path $tmp -ErrorAction Stop | Out-Null
     $tgz = Join-Path $tmp 'b.tgz'
     Invoke-WebRequest -Uri $url -OutFile $tgz -UseBasicParsing -ErrorAction Stop
+
+    # Between the download and the unpack, and it may not move after them: extracting an
+    # unverified archive already runs attacker-chosen bytes through tar, and the cache seeding
+    # below is what would make one bad download outlive itself. A 404 on checksums.txt throws
+    # out of Invoke-WebRequest and lands in the same catch as a mismatch — deliberately the
+    # same answer.
+    #
+    # The fetch gets its own try so the refusal names checksums.txt. Left to Invoke-WebRequest,
+    # the message is a bare, LOCALISED "(404) Not Found" — it does not say which of the two URLs
+    # failed, and on a Spanish Windows it does not even say it in English. The person reading
+    # stderr has to be able to tell "this mirror has no sums" from "this asset was replaced".
+    $sums = Join-Path $tmp 'checksums.txt'
+    try {
+        Invoke-WebRequest -Uri $sumsUrl -OutFile $sums -UseBasicParsing -ErrorAction Stop
+    } catch {
+        throw "could not fetch $sumsUrl - refusing to install a binary nothing can verify."
+    }
+    VerifyArchive $tgz $sums
 
     # tar.exe by FULL PATH, and that is not fussiness. `tar` on PATH is very often MSYS2 or Git
     # Bash's GNU tar, which reads `C:\Users\...` as a remote host spec — it prints "Cannot connect
@@ -90,7 +144,8 @@ try {
     }
     if ($ok) {
         # Seed the cache so the next plugin update is a copy, not a download. A cache we cannot
-        # write is not a failure: the install already succeeded.
+        # write is not a failure: the install already succeeded. Only VERIFIED bytes reach this
+        # line — the cache restores without network and therefore without a second chance.
         try {
             New-Item -ItemType Directory -Force -Path $cacheDir -ErrorAction Stop | Out-Null
             Copy-Item -LiteralPath $target -Destination $cache -Force -ErrorAction Stop

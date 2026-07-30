@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -81,11 +83,39 @@ func repoRoot(t *testing.T) string {
 // in two files" check, executed instead of grepped.
 var assetName = regexp.MustCompile(`^/batten_(linux|darwin|windows)_(amd64|arm64)\.tar\.gz$`)
 
-// serveRelease stands in for releases/latest/download. It records what was asked for.
+// serveRelease stands in for releases/latest/download: the six assets plus the checksums.txt
+// GoReleaser publishes beside them. It records what was asked for.
 func serveRelease(t *testing.T, tgz []byte) (*httptest.Server, *string) {
 	t.Helper()
+	sums := checksumsFor(tgz)
+	srv, asked, _ := serveReleaseFiles(t, tgz, &sums)
+	return srv, asked
+}
+
+// serveReleaseFiles is serveRelease with the checksums.txt under test. A nil body 404s it, which
+// is the mirror-incomplete case: a BATTEN_BOOTSTRAP_BASE_URL pointed at somewhere that serves the
+// archive and not the sums.
+//
+// The second return value records every path requested, so a test can assert that bootstrap
+// actually FETCHED the checksums rather than merely surviving their presence.
+func serveReleaseFiles(t *testing.T, tgz []byte, sums *string) (*httptest.Server, *string, *[]string) {
+	t.Helper()
 	var asked string
+	var paths []string
+	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		paths = append(paths, r.URL.Path)
+		mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "/checksums.txt") {
+			if sums == nil {
+				http.Error(w, "no checksums here", http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte(*sums))
+			return
+		}
 		asked = r.URL.Path
 		if !assetName.MatchString(r.URL.Path) {
 			http.Error(w, "no such asset", http.StatusNotFound)
@@ -95,7 +125,36 @@ func serveRelease(t *testing.T, tgz []byte) (*httptest.Server, *string) {
 		_, _ = w.Write(tgz)
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &asked
+	return srv, &asked, &paths
+}
+
+// checksumsFor writes the file GoReleaser's `checksum:` block produces: one `<sha256>  <name>`
+// line per published asset. All six names are listed and only one of them is ever on disk, which
+// is precisely why bootstrap cannot use a bare `sha256sum -c`.
+func checksumsFor(body []byte) string {
+	sum := hex.EncodeToString(sha256Sum(body))
+	var b strings.Builder
+	for _, os := range []string{"linux", "darwin", "windows"} {
+		for _, arch := range []string{"amd64", "arm64"} {
+			fmt.Fprintf(&b, "%s  batten_%s_%s.tar.gz\n", sum, os, arch)
+		}
+	}
+	return b.String()
+}
+
+func sha256Sum(b []byte) []byte {
+	h := sha256.Sum256(b)
+	return h[:]
+}
+
+// requested reports whether the server was asked for a path ending in suffix.
+func requested(paths *[]string, suffix string) bool {
+	for _, p := range *paths {
+		if strings.HasSuffix(p, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // releaseArchive builds the GoReleaser-shaped archive: the binary at the root, alongside the
@@ -281,6 +340,187 @@ func TestBootstrapExitsZeroAndLeavesNothingBehindWhenTheDownloadFails(t *testing
 	}
 }
 
+// --- the tampering matrix (plan §3.1) ---
+//
+// bootstrap downloaded 14 MB and verified nothing. The only post-download check was that the
+// binary answers `version`, which a hostile binary answers happily — and seven hooks plus an MCP
+// server execute that file. `checksums.txt` was already published by every release
+// (.goreleaser.yaml `checksum:`) for nobody to read.
+//
+// These four are the whole contract, and each one is a different way for "nobody can vouch for
+// these bytes" to be true. They all get the same answer: refuse, change nothing, exit 0.
+
+// refusedAndLeftNothing asserts the fail-closed contract in the three places it has to hold.
+func refusedAndLeftNothing(t *testing.T, root, data, out string, code int) {
+	t.Helper()
+	// The exit code is a different sentence. hooks.json dispatches
+	// `bash bootstrap.sh || powershell bootstrap.ps1`, so a non-zero exit here means "there is
+	// no bash" and would fire the Windows fallback on macOS.
+	if code != 0 {
+		t.Errorf("bootstrap exited %d; that exit code means \"no bash\", not \"bad download\"\n%s", code, out)
+	}
+	if _, err := os.Stat(BinPath(root)); err == nil {
+		t.Error("an unverified binary was installed where seven hooks and the MCP server run it")
+	}
+	if _, err := os.Stat(filepath.Join(data, "bin", BinName())); err == nil {
+		t.Error("an unverified binary reached the cache. The cache restores WITHOUT network and " +
+			"therefore without a second chance to check: one bad download would outlive itself")
+	}
+	if !strings.Contains(out, "nothing is being gated") {
+		t.Errorf("a refused install must say so in plain words; output was:\n%s", out)
+	}
+}
+
+// Hash A published, bytes B served: the shape of an asset-replacement attack and of a plain
+// corrupt download, which are indistinguishable from here and deserve the same answer.
+func TestBootstrapRefusesATamperedArchive(t *testing.T) {
+	root, data := t.TempDir(), t.TempDir()
+	published := []byte("the archive this release actually published")
+	sums := checksumsFor(published)
+	srv, _, paths := serveReleaseFiles(t, releaseArchive(t), &sums)
+
+	out, code := runBootstrap(t, root, data, srv.URL)
+	refusedAndLeftNothing(t, root, data, out, code)
+
+	if !requested(paths, "/checksums.txt") {
+		t.Error("bootstrap never asked for checksums.txt at all")
+	}
+	// stderr has to name all three, because the person reading it has to be able to tell a
+	// tampered asset from a stale mirror without running anything themselves.
+	wantHash := hex.EncodeToString(sha256Sum(published))
+	gotHash := hex.EncodeToString(sha256Sum(releaseArchive(t)))
+	for _, want := range []string{"MISMATCH", srv.URL, wantHash, gotHash} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the refusal must name the url, the expected hash and the one it got. Missing %q from:\n%s", want, out)
+		}
+	}
+}
+
+// The camino feliz is still the camino feliz — and it verified. Asserting that checksums.txt was
+// FETCHED is what makes this differential: a bootstrap that ignores the file installs just as
+// happily, and every other assertion here would still pass.
+func TestBootstrapInstallsWhenChecksumMatches(t *testing.T) {
+	root, data := t.TempDir(), t.TempDir()
+	sums := checksumsFor(releaseArchive(t))
+	srv, asked, paths := serveReleaseFiles(t, releaseArchive(t), &sums)
+
+	out, code := runBootstrap(t, root, data, srv.URL)
+	if code != 0 {
+		t.Fatalf("bootstrap exited %d\n%s", code, out)
+	}
+	mustRun(t, BinPath(root))
+	if !assetName.MatchString(*asked) {
+		t.Errorf("bootstrap asked for %q, which is not a name .goreleaser.yaml builds", *asked)
+	}
+	if !requested(paths, "/checksums.txt") {
+		t.Error("the install succeeded without ever fetching checksums.txt: the verification is " +
+			"beside the install path, not in it")
+	}
+	if _, err := os.Stat(filepath.Join(data, "bin", BinName())); err != nil {
+		t.Errorf("verified bytes were not cached, so the next plugin update pays 14 MB again: %v", err)
+	}
+}
+
+// checksums.txt unreachable gets the SAME treatment as a mismatch, and the reason is written in
+// plan §3.1: for this project's own releases a 404 is counterfactual (GoReleaser has produced the
+// file since before the first tag), so the reachable case is a BATTEN_BOOTSTRAP_BASE_URL aimed at
+// an incomplete mirror — where "install it anyway" is precisely the wrong answer.
+func TestBootstrapFailsClosedWithoutChecksums(t *testing.T) {
+	root, data := t.TempDir(), t.TempDir()
+	srv, _, paths := serveReleaseFiles(t, releaseArchive(t), nil) // 404 on checksums.txt
+
+	out, code := runBootstrap(t, root, data, srv.URL)
+	refusedAndLeftNothing(t, root, data, out, code)
+
+	if !requested(paths, "/checksums.txt") {
+		t.Error("bootstrap never asked for checksums.txt at all")
+	}
+	if !strings.Contains(out, "checksums.txt") {
+		t.Errorf("the refusal must name the file it could not get:\n%s", out)
+	}
+}
+
+// The claim §3.2 rests its whole argument on: the ungated window is the FIRST install only.
+//
+// Act 1 is the differential half — a tampered first download must not reach the cache. Act 2 is
+// the payoff: with the cache holding what a verified install left, a plugin update restores it
+// without network while the server is still serving the bad archive. Act 3 is the control.
+func TestCacheRestoreSurvivesABadDownload(t *testing.T) {
+	root, data := t.TempDir(), t.TempDir()
+	sums := checksumsFor([]byte("a different release"))
+	srv, _, _ := serveReleaseFiles(t, releaseArchive(t), &sums)
+
+	out, code := runBootstrap(t, root, data, srv.URL)
+	refusedAndLeftNothing(t, root, data, out, code)
+
+	// Act 2. The cache is what a verified install leaves behind; ${CLAUDE_PLUGIN_ROOT}/bin ships
+	// empty, so an update has wiped the binary. The download is still poisoned.
+	cacheDir := filepath.Join(data, "bin")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	copyFile(t, realBinary(t), filepath.Join(cacheDir, BinName()))
+
+	out, code = runBootstrap(t, root, data, srv.URL)
+	if code != 0 {
+		t.Fatalf("bootstrap exited %d\n%s", code, out)
+	}
+	mustRun(t, BinPath(root))
+
+	gateDenies(t, BinPath(root))
+}
+
+// gateDenies proves the restored binary is GOVERNING, not merely executing.
+//
+// Every other assertion in this file is satisfied by anything that answers `version`, and a hook
+// that prints nothing is exactly what an ALLOW looks like — so "it runs" and "the gate is back"
+// are different claims and only one of them is being made here. The control is positive: a commit
+// that must be denied, denied in words.
+func gateDenies(t *testing.T, bin string) {
+	t.Helper()
+	repo := t.TempDir()
+	spec := "version: 1\nproject: p\nenforcement: enforce\n" +
+		"unit:\n  name: TASK\n  pattern: 'TASK-\\d+'\n" +
+		"phases:\n  - id: build\n  - id: close\n    gate: qa\n    requires_verdict: ok\n" +
+		"gates:\n  qa:\n    verdict: required\n    evidence: required\n"
+	if err := os.WriteFile(filepath.Join(repo, "batten.yaml"), []byte(spec), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A database in this test's own temp directory. The author's ~/.batten/batten.db is one
+	// unset variable away, and a test that writes real runs into it is a test that lies.
+	db := filepath.Join(t.TempDir(), "gate.db")
+	env := append(os.Environ(), "BATTEN_DB="+db)
+
+	open := exec.Command(bin, "phase", "TASK-001", "build")
+	open.Dir, open.Env = repo, env
+	if b, err := open.CombinedOutput(); err != nil {
+		t.Fatalf("could not open a run with the restored binary: %v\n%s", err, b)
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"session_id":      "s",
+		"cwd":             repo,
+		"hook_event_name": "PreToolUse",
+		"tool_name":       "Bash",
+		"tool_input":      map[string]string{"command": `git commit -m "TASK-001 x"`},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hook := exec.Command(bin, "hook", "PreToolUse")
+	hook.Dir, hook.Env, hook.Stdin = repo, env, bytes.NewReader(payload)
+	b, err := hook.CombinedOutput()
+	if err != nil {
+		t.Fatalf("hook PreToolUse: %v\n%s", err, b)
+	}
+	if !strings.Contains(string(b), `"permissionDecision":"deny"`) {
+		t.Errorf("the restored binary answers `version`, but a commit with no verdict was NOT "+
+			"denied. Silence from this hook is indistinguishable from approval, so a passing "+
+			"`version` proves nothing about the gate:\n%s", b)
+	}
+}
+
 // --- the Windows path, which had no script at all ---
 
 // runBootstrapPS runs bootstrap.ps1 the way hooks.json's fallback does. Windows is the declared
@@ -321,7 +561,8 @@ func runBootstrapPS(t *testing.T, root, data, baseURL string) (string, int) {
 
 func TestBootstrapPS1InstallsWhereEveryHookLooks(t *testing.T) {
 	root, data := t.TempDir(), t.TempDir()
-	srv, asked := serveRelease(t, releaseArchive(t))
+	sums := checksumsFor(releaseArchive(t))
+	srv, asked, paths := serveReleaseFiles(t, releaseArchive(t), &sums)
 
 	out, code := runBootstrapPS(t, root, data, srv.URL)
 	t.Cleanup(func() {
@@ -336,8 +577,50 @@ func TestBootstrapPS1InstallsWhereEveryHookLooks(t *testing.T) {
 	if !assetName.MatchString(*asked) {
 		t.Errorf("bootstrap.ps1 asked for %q, which is not a name .goreleaser.yaml builds", *asked)
 	}
+	if !requested(paths, "/checksums.txt") {
+		t.Error("bootstrap.ps1 installed without fetching checksums.txt; the two scripts are one " +
+			"contract in two files and this is the half a Windows user runs")
+	}
 	if _, err := os.Stat(filepath.Join(data, "bin", BinName())); err != nil {
 		t.Errorf("the download was not cached in %s: %v", data, err)
+	}
+}
+
+// The tampering matrix, on the script Windows actually runs. Same two failures, same refusal —
+// "green in BOTH scripts" is the acceptance criterion, and Windows is the declared primary target.
+func TestBootstrapPS1RefusesATamperedArchive(t *testing.T) {
+	root, data := t.TempDir(), t.TempDir()
+	published := []byte("the archive this release actually published")
+	sums := checksumsFor(published)
+	srv, _, paths := serveReleaseFiles(t, releaseArchive(t), &sums)
+
+	out, code := runBootstrapPS(t, root, data, srv.URL)
+	refusedAndLeftNothing(t, root, data, out, code)
+
+	if !requested(paths, "/checksums.txt") {
+		t.Error("bootstrap.ps1 never asked for checksums.txt at all")
+	}
+	wantHash := hex.EncodeToString(sha256Sum(published))
+	gotHash := hex.EncodeToString(sha256Sum(releaseArchive(t)))
+	for _, want := range []string{"MISMATCH", srv.URL, wantHash, gotHash} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the refusal must name the url, the expected hash and the one it got. Missing %q from:\n%s", want, out)
+		}
+	}
+}
+
+func TestBootstrapPS1FailsClosedWithoutChecksums(t *testing.T) {
+	root, data := t.TempDir(), t.TempDir()
+	srv, _, paths := serveReleaseFiles(t, releaseArchive(t), nil) // 404 on checksums.txt
+
+	out, code := runBootstrapPS(t, root, data, srv.URL)
+	refusedAndLeftNothing(t, root, data, out, code)
+
+	if !requested(paths, "/checksums.txt") {
+		t.Error("bootstrap.ps1 never asked for checksums.txt at all")
+	}
+	if !strings.Contains(out, "checksums.txt") {
+		t.Errorf("the refusal must name the file it could not get:\n%s", out)
 	}
 }
 

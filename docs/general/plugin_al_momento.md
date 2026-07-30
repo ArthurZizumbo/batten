@@ -1134,10 +1134,15 @@ Ninguna de esas se ve leyendo el código.
 2. **El push, el tag y el release** están en espera por lo mismo: el merge a `main` es parte de la
    decisión anterior, no un paso independiente.
 
-**Lo primero después de publicar:** la **verificación de la descarga**. Los bootstraps bajan 14 MB y
-no verifican nada, teniendo GoReleaser publicado un `checksums.txt` que nadie lee. Es la única parte
-del bootstrap que debe **fallar cerrado**: un binario no verificado es peor que ningún binario,
-porque los hooks lo invocarían.
+**La verificación de la descarga — media cerrada.** Los bootstraps bajaban 14 MB y no verificaban
+nada, teniendo GoReleaser publicado un `checksums.txt` que nadie leía. Los dos bajan ahora ese
+archivo, extraen **la línea de su propio asset** (no `sha256sum -c` a secas: el archivo lista los
+seis y cinco no están en disco) y comparan. Es la **única** parte del bootstrap que **falla
+cerrado** — hash distinto, `checksums.txt` inalcanzable, o una máquina sin herramienta de sha256
+son la misma frase: nadie puede responder por estos bytes. No se instala, el caché no se siembra, y
+el script igual sale 0 porque ese código de salida significa "no hay bash", no "falló la descarga".
+Lo que un checksum no cubre es la cuenta de release comprometida — la misma mano que reemplaza el
+asset reemplaza su línea. Eso es minisign, y es 0.1.0.
 
 **Lo que ningún trabajo interno cierra:**
 

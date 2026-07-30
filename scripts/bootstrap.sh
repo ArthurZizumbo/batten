@@ -77,22 +77,91 @@ echo "batten: fetching the binary for ${os}/${arch} (first run)..." >&2
 # The base is overridable for ONE reason: so the test suite can point this script at a local
 # server and exercise this exact code path against a real archive. Nothing in an install sets it.
 base="${BATTEN_BOOTSTRAP_BASE_URL:-https://github.com/${REPO}/releases/latest/download}"
-url="${base}/batten_${os}_${arch}.tar.gz"
+asset="batten_${os}_${arch}.tar.gz"
+url="${base}/${asset}"
+sums_url="${base}/checksums.txt"
 tmp="$(mktemp -d)"
+
+# sha256_of <file> — the digest, or nothing if this machine cannot compute one.
+#
+# Three tools because no one of them is everywhere: macOS ships `shasum` and NOT `sha256sum`,
+# most Linux ships `sha256sum`, Git Bash ships both, and openssl is the last resort. "Nothing"
+# is a real answer and the caller treats it as a failure — see verify_archive.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" 2>/dev/null | cut -d' ' -f1
+  elif command -v openssl >/dev/null 2>&1; then
+    openssl dgst -sha256 "$1" 2>/dev/null | sed 's/.*= *//'
+  fi
+}
+
+# verify_archive <file> — THE ONE PART OF THIS SCRIPT THAT FAILS CLOSED. Do not "fix" it.
+#
+# Everything else here is best-effort because a bootstrap must not break a session. This is not:
+# the file being checked is about to be executed by seven hooks and an MCP server, so installing
+# it unverified is remote code execution by download. A mismatched hash, an unreachable
+# checksums.txt, a checksums.txt that does not list this asset, and a machine with no sha256 tool
+# all get the SAME answer — refuse — because they are the same statement: nobody can vouch for
+# these bytes. The failure mode is documented and accepted in plan_publicacion.md §3.2: the
+# machine is left WITHOUT a gate, which is already what every failed download leaves behind, and
+# the cache path above means it only ever applies to a first install.
+#
+# Refusing still exits 0. hooks.json dispatches `bash bootstrap.sh || powershell bootstrap.ps1`,
+# so a non-zero exit here means "there is no bash", not "the download was bad" — and would fire
+# the Windows fallback on macOS.
+#
+# Not `sha256sum -c`: checksums.txt lists all six assets and five of them are not on this disk,
+# so a bare -c fails every single time. Only this asset's line is ever compared.
+verify_archive() {
+  got="$(sha256_of "$1")"
+  if [ -z "$got" ]; then
+    echo "batten: no sha256 tool here (sha256sum, shasum or openssl)" >&2
+    echo "batten: refusing to install a binary nothing can verify." >&2
+    return 1
+  fi
+  if ! curl -fsSL "$sums_url" -o "$tmp/checksums.txt" 2>/dev/null; then
+    echo "batten: could not fetch $sums_url" >&2
+    echo "batten: refusing to install a binary nothing can verify." >&2
+    return 1
+  fi
+  # `$2 == "*"f` covers the BSD spelling; GoReleaser writes `<hash>  <name>`.
+  want="$(awk -v f="$asset" '$2 == f || $2 == "*"f {print $1; exit}' "$tmp/checksums.txt" 2>/dev/null)"
+  if [ -z "$want" ]; then
+    echo "batten: $sums_url does not list $asset" >&2
+    echo "batten: refusing to install a binary nothing can verify." >&2
+    return 1
+  fi
+  if [ "$want" != "$got" ]; then
+    echo "batten: CHECKSUM MISMATCH for $url" >&2
+    echo "batten:   expected $want" >&2
+    echo "batten:   got      $got" >&2
+    echo "batten: refusing to install it. Nothing was changed." >&2
+    return 1
+  fi
+  return 0
+}
 
 # `cd` instead of `tar -C "$tmp"`, and no absolute path in the tar arguments. Whether `tar` here is
 # GNU tar or bsdtar depends on the machine, and the two disagree about paths that carry a drive
 # letter: GNU tar reads `C:\Users\...` as a remote host spec ("Cannot connect to C: resolve
 # failed") and unpacks nothing. A relative name in the process's own working directory is the one
 # form both read the same way. bootstrap.ps1 hit exactly this and has the mirror-image fix.
+#
+# verify_archive sits between the download and the unpack, and nothing may move it after them:
+# `tar -xzf` on an unverified archive is already running attacker-chosen bytes through tar, and
+# the cache seeding below is what would make one bad download outlive itself.
 ok=0
 if curl -fsSL "$url" -o "$tmp/b.tgz" 2>/dev/null &&
+   verify_archive "$tmp/b.tgz" &&
    ( cd "$tmp" && tar -xzf b.tgz ) 2>/dev/null &&
    [ -f "$tmp/batten${ext}" ] &&
    install_from "$tmp/batten${ext}"; then
   ok=1
   # Seed the cache so the next plugin update is a copy, not a download. A cache we cannot write
-  # is not a failure: the install already succeeded.
+  # is not a failure: the install already succeeded. Only VERIFIED bytes reach this line — the
+  # cache restores without network and therefore without a second chance to check.
   mkdir -p "$DATA/bin" 2>/dev/null && cp "$target" "$cache" 2>/dev/null
 fi
 
