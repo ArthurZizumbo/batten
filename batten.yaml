@@ -27,12 +27,14 @@ phases:
 domains:
   cmd:
     path: cmd/
+    rules: AGENTS.md          # el contexto mínimo viable: fronteras, no proceso (el proceso es este archivo)
     check: ['go build ./...', 'go vet ./...']
     invariants:
       - never write state under CLAUDE_PLUGIN_ROOT (wiped on update); state lives in ~/.batten
       - a hook must degrade, never break a session
   internal:
     path: internal/
+    rules: AGENTS.md          # un solo archivo para los dos dominios: comparten convenciones, y dos copias divergen
     check: ['go build ./...', 'go test ./...']
     invariants:
       - never invent a number; unmeasurable reports as unavailable, not zero

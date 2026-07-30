@@ -252,3 +252,51 @@ func TestWriteSetsByRunKeepsNilDistinct(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryMigrationIsAdditive holds the expand-only rule declared above `migrations`.
+//
+// The scenario it protects is not hypothetical: the binary the plugin installed and the binary on
+// your PATH share one ~/.batten/batten.db, and `batten doctor` warns about version skew between
+// them because skew is the normal case. A DROP or a RENAME would break the older one against a file
+// the newer one already migrated — inside a hook, which fails open, so the gate would stop
+// governing and say nothing.
+func TestEveryMigrationIsAdditive(t *testing.T) {
+	// The loop in migrate() indexes migrations by version. If these disagree, either the newest
+	// migration never runs on an existing database, or migrate() panics on an index out of range —
+	// in a hook process, where a panic and silence look the same from the outside.
+	if len(migrations) != schemaVersion {
+		t.Fatalf("schemaVersion is %d but there are %d migrations: migrate() indexes the slice by "+
+			"version, so this either skips a migration or panics out of range",
+			schemaVersion, len(migrations))
+	}
+
+	// Sub-strings, not a parser: this needs to be obvious to a reader adding migration 12.
+	forbidden := []string{"DROP TABLE", "DROP COLUMN", "DROP INDEX", "RENAME TO", "RENAME COLUMN", "DELETE FROM"}
+	for i, m := range migrations {
+		up := strings.ToUpper(strings.Join(strings.Fields(m), " "))
+		for _, f := range forbidden {
+			if strings.Contains(up, f) {
+				t.Errorf("migration v%d contains %s:\n  %s\n"+
+					"    Migrations are expand-only. An older batten sharing this database would "+
+					"break against a file a newer one had already changed, in a hook, in silence.\n"+
+					"    Contract in a later release, once nothing reads it.", i+1, f, m)
+			}
+		}
+		switch {
+		case strings.HasPrefix(up, "ALTER TABLE ") && strings.Contains(up, " ADD COLUMN "):
+			// Adding a NOT NULL column with no default fails on a table that already has rows —
+			// on the user's database, not on a fresh one, so tests built from scratch never see it.
+			if strings.Contains(up, "NOT NULL") && !strings.Contains(up, "DEFAULT") {
+				t.Errorf("migration v%d adds a NOT NULL column with no DEFAULT:\n  %s\n"+
+					"    It succeeds on an empty database and fails on one with rows.", i+1, m)
+			}
+		case strings.HasPrefix(up, "CREATE TABLE IF NOT EXISTS "),
+			strings.HasPrefix(up, "CREATE INDEX IF NOT EXISTS "),
+			strings.HasPrefix(up, "CREATE UNIQUE INDEX IF NOT EXISTS "):
+			// Fine, and idempotent — migrate() replays the base schema on every open.
+		default:
+			t.Errorf("migration v%d is neither an ADD COLUMN nor a CREATE ... IF NOT EXISTS:\n  %s\n"+
+				"    If it really is additive, widen this test deliberately and say why.", i+1, m)
+		}
+	}
+}
