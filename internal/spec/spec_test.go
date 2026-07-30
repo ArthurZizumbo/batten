@@ -387,3 +387,62 @@ func TestMalformedYAMLNamesTheFile(t *testing.T) {
 		t.Errorf("the error must name the file that failed; got %v", err)
 	}
 }
+
+// A key the struct does not have must LOAD (a spec written for a newer batten has to work on an
+// older one) and must be REPORTED (a key that is declared and never read is the failure this tool
+// exists to eliminate).
+func TestUnknownKeysLoadAndAreReported(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, Filename)
+	stale := valid + "\nprovenance:\n  format: '{id} @ {git_sha7}'\nmodels:\n  tiers:\n    moderate: sonnet\n"
+	if err := os.WriteFile(path, []byte(stale), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Load(path); err != nil {
+		t.Fatalf("an unknown key must not stop the spec from loading: %v", err)
+	}
+	got := UnknownKeys(path)
+	want := []string{"models", "provenance"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("UnknownKeys = %v, want %v (sorted, so doctor's output is diffable)", got, want)
+	}
+
+	clean := filepath.Join(dir, "clean.yaml")
+	if err := os.WriteFile(clean, []byte(valid), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := UnknownKeys(clean); len(got) > 0 {
+		t.Errorf("a clean spec must report nothing; got %v", got)
+	}
+	if got := UnknownKeys(filepath.Join(dir, "does-not-exist.yaml")); got != nil {
+		t.Errorf("a missing file is not an unknown key; got %v", got)
+	}
+}
+
+// Every spec THIS repo ships. `provenance.format` and `models.*` were removed from the struct and
+// from batten.schema.json in one commit and left behind in batten.yaml and two of the examples —
+// so the schema rejected the project's own spec, CI's schema job went red, and `batten doctor`
+// said everything was fine. The published schema and the shipped examples are the first thing a
+// new user meets; they cannot disagree.
+func TestTheSpecsThisRepoShipsHaveNoDeadKeys(t *testing.T) {
+	root := repoRoot(t)
+	paths := []string{filepath.Join(root, Filename)}
+	found, err := filepath.Glob(filepath.Join(root, "examples", "*", Filename))
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths = append(paths, found...)
+	if len(paths) < 2 {
+		t.Fatal("no examples found; this test is looking in the wrong place")
+	}
+
+	for _, p := range paths {
+		if unknown := UnknownKeys(p); len(unknown) > 0 {
+			rel, _ := filepath.Rel(root, p)
+			t.Errorf("%s declares keys batten does not read: %s — batten.schema.json rejects them, "+
+				"so an editor calls this file invalid while `batten doctor` calls it valid",
+				filepath.ToSlash(rel), strings.Join(unknown, ", "))
+		}
+	}
+}

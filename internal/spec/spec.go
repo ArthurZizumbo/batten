@@ -5,10 +5,12 @@
 package spec
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -197,6 +199,52 @@ func Load(path string) (*Spec, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	return &s, nil
+}
+
+// UnknownKeys lists the keys in a spec file that this batten does not read.
+//
+// It is deliberately NOT an error. A spec written for a newer batten must still load on an older
+// one, and refusing the whole file over one key would turn a cosmetic mismatch into a machine
+// where nothing is gated. But it cannot be silence either: a key that is declared and never read
+// is the exact failure this tool exists to eliminate, and it happened here. `provenance.format`
+// and `models.*` were removed from the struct and the published schema in one commit and left in
+// this repo's own batten.yaml and two of its examples — so an editor validating against
+// batten.schema.json called the file invalid while `batten doctor` called it perfect, and CI's
+// schema job went red without anyone reading it.
+//
+// Returned sorted, because doctor's output has to be diffable between runs.
+func UnknownKeys(path string) []string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(b))
+	dec.KnownFields(true)
+	var s Spec
+	if err := dec.Decode(&s); err == nil {
+		return nil
+	} else {
+		// yaml.v3 reports every unknown field as one line of a TypeError:
+		//   line 47: field provenance not found in type spec.Spec
+		var out []string
+		seen := map[string]bool{}
+		for _, line := range strings.Split(err.Error(), "\n") {
+			const marker = "field "
+			i := strings.Index(line, marker)
+			if i < 0 {
+				continue
+			}
+			rest := line[i+len(marker):]
+			name, _, ok := strings.Cut(rest, " not found in type")
+			if !ok || name == "" || seen[name] {
+				continue
+			}
+			seen[name] = true
+			out = append(out, name)
+		}
+		sort.Strings(out)
+		return out
+	}
 }
 
 // LoadFrom finds and loads the spec governing dir.

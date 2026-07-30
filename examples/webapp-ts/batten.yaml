@@ -63,9 +63,6 @@ gates:
     verdict: required
     evidence: required
 
-provenance:
-  format: '{id} @ {git_sha7}'
-
 budget:
   # On a subscription the marginal cost of a token is zero, so "dollars" is the wrong ceiling.
   # These three are honest. Any one batten cannot measure reports NOT MEASURABLE, never zero.

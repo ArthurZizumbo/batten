@@ -44,9 +44,6 @@ gates:
     verdict: required
     evidence: required
 
-provenance:
-  format: '{id} @ {git_sha7}'
-
 budget:
   tokens_per_run: 5000000
   on_exceed: warn

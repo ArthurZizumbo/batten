@@ -1779,6 +1779,18 @@ func cmdDoctor() error {
 	d.ok("%s — project %q, unit %q, %d phases, %d domains",
 		path, sp.Project, sp.Unit.Name, len(sp.Phases), len(sp.Domains))
 
+	// Keys this batten does not read. Loading ignores them so a spec written for a newer batten
+	// still works, but silence is the wrong answer: batten.schema.json REJECTS them, so an editor
+	// and this command disagree about whether the file is valid — and the author, reading only the
+	// green tick, ships a repo whose CI is red on its own spec. That is exactly what happened.
+	if unknown := spec.UnknownKeys(path); len(unknown) > 0 {
+		d.warn("keys batten does not read: %s\n"+
+			"    They load without error, and they do nothing. batten.schema.json rejects them, so "+
+			"your editor calls this file invalid while the line above calls it fine.\n"+
+			"    Delete them, or check the CHANGELOG — some were removed on purpose.",
+			strings.Join(unknown, ", "))
+	}
+
 	if c, ok := sp.ClosingPhase(); ok {
 		// An empty Gate is not a nameless gate — the store reads it as "any gate"
 		// (`?='' OR gate=?`). Printing `on gate ""` made a real, working config look like a

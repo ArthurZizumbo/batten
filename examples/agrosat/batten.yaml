@@ -166,9 +166,6 @@ gates:
     verdict: required
     evidence: required # la regla de oro, mecanizada. evidence[] vacío -> blocked.
 
-provenance:
-  format: '{id} @ {git_sha7} + mlflow:{mlflow_run} + dvc:{dvc_rev}'
-
 # El tripwire que hoy no existe: el modo nocturno gira toda la noche sin tope.
 #
 # Con suscripción el costo marginal de un token es CERO, así que "dólares gastados" es el techo
@@ -188,19 +185,6 @@ budget:
   max_iterations: 3         # vueltas de fix -> reverify antes de parar. Sin esto, un run nocturno
                             # muele el mismo check rojo hasta que se acaba la ventana.
   on_exceed: block          # block | warn | downgrade_effort
-
-# Ruteo de modelos por dificultad: planear merece Opus, cambiar un color no. batten no puede
-# cambiar el modelo del loop principal (eso es el /model del usuario), pero SÍ rutea subagentes
-# y verifica que el ruteo pasó (el ledger guarda el modelo real de cada nodo).
-models:
-  tiers:
-    mechanical: haiku   # renombres, i18n, config, un color
-    moderate: sonnet    # una feature normal
-    complex: opus       # arquitectura, debugging duro, ML/FarSLIP
-  phases:
-    plan: opus          # el juicio de descomposición merece el modelo fuerte
-    verify: opus        # el gate razona sobre criterios de aceptación
-
 capabilities:
   graph:
     provider: graphify
