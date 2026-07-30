@@ -1423,7 +1423,7 @@ func cmdMCP() error {
 		return err
 	}
 	defer st.Close()
-	return mcp.Serve(sp, st)
+	return mcp.Serve(sp, st, version)
 }
 
 func cmdTUI() error {

@@ -39,19 +39,28 @@ import (
 	"github.com/ArthurZizumbo/batten/internal/store"
 )
 
-const version = "0.1.0"
+// fallbackVersion is used only when a caller passes no version — a dev build, or a test. It is
+// deliberately not a number: this package used to hold a hand-written `const version = "0.1.0"`
+// that nothing compared to anything, so the MCP server introduced itself to the model as 0.1.0
+// no matter which build it was. The release workflow gates the two JSON manifests against the
+// tag for exactly that reason, and this was the third hand-written version it did not cover.
+// The real version arrives from main, where GoReleaser stamps it via ldflags.
+const fallbackVersion = "dev"
 
 // Serve runs the MCP server on stdio until the client disconnects.
 //
 // sp or st may be nil (no batten.yaml, or no database yet). That is deliberately not an
 // error: the server still starts and every tool answers "batten does not govern this repo".
 // A server that refuses to boot teaches the model nothing.
-func Serve(sp *spec.Spec, st *store.Store) error {
-	return newServer(sp, st).Run(context.Background(), &sdk.StdioTransport{})
+func Serve(sp *spec.Spec, st *store.Store, version string) error {
+	return newServer(sp, st, version).Run(context.Background(), &sdk.StdioTransport{})
 }
 
-func newServer(sp *spec.Spec, st *store.Store) *sdk.Server {
+func newServer(sp *spec.Spec, st *store.Store, version string) *sdk.Server {
 	q := &queries{sp: sp, st: st}
+	if version == "" {
+		version = fallbackVersion
+	}
 
 	s := sdk.NewServer(&sdk.Implementation{
 		Name:    "batten",

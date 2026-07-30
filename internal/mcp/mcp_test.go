@@ -154,7 +154,7 @@ func TestToolsRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := newServer(q.sp, q.st)
+	srv := newServer(q.sp, q.st, "test")
 	st1, st2 := sdk.NewInMemoryTransports()
 	if _, err := srv.Connect(ctx(), st1, nil); err != nil {
 		t.Fatal(err)

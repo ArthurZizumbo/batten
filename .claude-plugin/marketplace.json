@@ -8,7 +8,7 @@
       "name": "batten",
       "source": "./plugin/claude-code",
       "description": "Declare your workflow in batten.yaml. batten enforces it: no commit without cited evidence, no two fanned-out agents writing the same file, a dollar budget ceiling, and the run graph as a JSON Canvas you open in Obsidian.",
-      "version": "0.1.0",
+      "version": "0.1.0-beta.1",
       "author": { "name": "Arthur Zizumbo" },
       "category": "workflow",
       "keywords": ["workflow", "verdict-gate", "fan-out", "obsidian", "budget"]

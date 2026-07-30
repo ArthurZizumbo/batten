@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "batten",
   "displayName": "batten",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "description": "Procedural memory as data. Declare your workflow in batten.yaml; batten enforces it: no commit without cited evidence, no two agents writing the same file, and the run graph as a JSON Canvas you can open in Obsidian.",
   "author": { "name": "Arthur Zizumbo" },
   "repository": "https://github.com/ArthurZizumbo/batten",
