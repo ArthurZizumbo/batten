@@ -17,6 +17,7 @@ layer rules and the fan-out policy.
 ## 1. Get the facts before forming an opinion
 
 ```bash
+command -v batten >/dev/null 2>&1 || { echo "batten: the binary is not installed — nothing is being gated. Start a new session (SessionStart installs it), or run \$CLAUDE_PLUGIN_ROOT/scripts/bootstrap.sh (Windows: bootstrap.cmd)." >&2; exit 1; }
 batten init --scan-json
 ```
 

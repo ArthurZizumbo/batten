@@ -11,6 +11,7 @@ Read `batten.yaml` first. Find the phase carrying a `gate:` and the gate it name
 `checks`, `skills`, and evidence rule are your job description.
 
 ```bash
+command -v batten >/dev/null 2>&1 || { echo "batten: the binary is not installed — nothing is being gated. Start a new session (SessionStart installs it), or run \$CLAUDE_PLUGIN_ROOT/scripts/bootstrap.sh (Windows: bootstrap.cmd)." >&2; exit 1; }
 batten phase <unit> <verify-phase-id>
 batten show <unit>          # phase, write-sets, base SHA, budget
 ```

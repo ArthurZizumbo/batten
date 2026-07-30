@@ -14,6 +14,7 @@ their check commands, their agents, and the scarce resources they contend for. R
 Find the phase in `phases[]` with `fanout: true` and enter it:
 
 ```bash
+command -v batten >/dev/null 2>&1 || { echo "batten: the binary is not installed — nothing is being gated. Start a new session (SessionStart installs it), or run \$CLAUDE_PLUGIN_ROOT/scripts/bootstrap.sh (Windows: bootstrap.cmd)." >&2; exit 1; }
 batten phase <unit> <build-phase-id>
 ```
 

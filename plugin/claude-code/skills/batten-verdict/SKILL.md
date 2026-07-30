@@ -30,6 +30,7 @@ there; this skill is the shape of the answer, not the content.
 Record it:
 
 ```bash
+command -v batten >/dev/null 2>&1 || { echo "batten: the binary is not installed — nothing is being gated. Start a new session (SessionStart installs it), or run \$CLAUDE_PLUGIN_ROOT/scripts/bootstrap.sh (Windows: bootstrap.cmd)." >&2; exit 1; }
 batten verdict --unit <unit> --file verdict.json
 # or pipe it:
 echo '{...}' | batten verdict --unit <unit>

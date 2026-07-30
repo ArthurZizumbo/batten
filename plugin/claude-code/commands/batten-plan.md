@@ -8,6 +8,7 @@ Everything project-specific comes from `batten.yaml`. Read it first — it names
 document, the artifacts, the domains and their rules. Do not assume a workflow it does not declare.
 
 ```bash
+command -v batten >/dev/null 2>&1 || { echo "batten: the binary is not installed — nothing is being gated. Start a new session (SessionStart installs it), or run \$CLAUDE_PLUGIN_ROOT/scripts/bootstrap.sh (Windows: bootstrap.cmd)." >&2; exit 1; }
 batten doctor          # is there a spec? which capabilities are actually live?
 batten show <unit>     # has this unit been through phases already?
 ```

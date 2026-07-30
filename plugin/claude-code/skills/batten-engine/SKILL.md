@@ -10,6 +10,7 @@ phases, the domains, the checks, the invariants, and what gates a close. **Do no
 that is not in it, and do not skip what is.**
 
 ```bash
+command -v batten >/dev/null 2>&1 || { echo "batten: the binary is not installed — nothing is being gated. Start a new session (SessionStart installs it), or run \$CLAUDE_PLUGIN_ROOT/scripts/bootstrap.sh (Windows: bootstrap.cmd)." >&2; exit 1; }
 batten doctor          # is there a spec? what capabilities are live?
 batten runs            # what is in flight
 batten show <unit>     # where one unit stands: phase, write-sets, verdict, budget

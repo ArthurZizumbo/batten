@@ -51,6 +51,68 @@ func TestTrackedShellScriptsAreExecutable(t *testing.T) {
 	}
 }
 
+// Every /batten-* command and every skill opens with a bash block that runs a bare `batten`. That
+// resolves only because Claude Code puts the plugin's bin/ on PATH — so when the binary is missing
+// the model gets `command not found` from a block it was told to run, and carries on: it plans, it
+// fans out, it writes the artifact, and nothing was ever gated. The failure has to be loud at the
+// first line, because everything after it is worthless.
+func TestEveryCommandRefusesToRunWithoutTheBinary(t *testing.T) {
+	pkg := filepath.Join(repoRoot(t), "plugin", "claude-code")
+	var docs []string
+	for _, pat := range []string{
+		filepath.Join(pkg, "commands", "*.md"),
+		filepath.Join(pkg, "skills", "*", "SKILL.md"),
+	} {
+		found, err := filepath.Glob(pat)
+		if err != nil {
+			t.Fatal(err)
+		}
+		docs = append(docs, found...)
+	}
+	if len(docs) == 0 {
+		t.Fatal("no commands or skills found; this test is looking in the wrong place")
+	}
+
+	for _, doc := range docs {
+		b, err := os.ReadFile(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		block, ok := firstBashBlockCalling(string(b), "batten")
+		if !ok {
+			continue // a document that never runs batten needs no preflight
+		}
+		if !strings.Contains(block, "command -v batten") {
+			t.Errorf("%s runs batten in its first bash block with no preflight:\n%s\n"+
+				"Without `command -v batten || exit 1` the block is a command-not-found the model "+
+				"reads and moves past, and the whole phase runs ungated.",
+				filepath.Base(doc), block)
+		}
+	}
+}
+
+// firstBashBlockCalling returns the first ```bash block whose body starts a line with cmd.
+func firstBashBlockCalling(src, cmd string) (string, bool) {
+	var body []string
+	in := false
+	for _, line := range strings.Split(src, "\n") {
+		switch {
+		case !in && strings.TrimSpace(line) == "```bash":
+			in, body = true, nil
+		case in && strings.TrimSpace(line) == "```":
+			in = false
+			for _, l := range body {
+				if strings.HasPrefix(strings.TrimSpace(l), cmd+" ") {
+					return strings.Join(body, "\n"), true
+				}
+			}
+		case in:
+			body = append(body, line)
+		}
+	}
+	return "", false
+}
+
 // The mode is the fix; invoking through an interpreter is the belt. An archive that loses the bit
 // (a zip round-trip, a `cp` on a filesystem with no exec bit, an extraction as a different user)
 // would otherwise take the gate down with it.
