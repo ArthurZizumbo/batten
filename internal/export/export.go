@@ -15,9 +15,31 @@ import (
 	"github.com/ArthurZizumbo/batten/internal/vault"
 )
 
-// VaultWriter builds a vault writer for a spec, expanding a leading ~ in the vault path.
+// VaultPath is the effective Obsidian vault: BATTEN_VAULT wins over the spec, and a leading ~
+// expands to the home directory.
+//
+// The override exists for the same reason BATTEN_DB does. `batten.yaml` is committed, and in a
+// public repo it is also the canonical example — so a vault path in it publishes one person's
+// folder layout to everyone who reads the project, and hands every cloner a spec that writes into
+// a directory they do not have. The personal path belongs in the environment; the spec carries the
+// shape.
+//
+// Every surface resolves through here. Six call sites used to read spec.Capabilities.Obsidian.Vault
+// directly, which is how `doctor` and the Stop hook end up disagreeing about whether a vault is
+// configured at all.
+func VaultPath(sp *spec.Spec) string {
+	if sp == nil {
+		return ""
+	}
+	if v := strings.TrimSpace(os.Getenv("BATTEN_VAULT")); v != "" {
+		return expandHome(v)
+	}
+	return expandHome(sp.Capabilities.Obsidian.Vault)
+}
+
+// VaultWriter builds a vault writer for a spec.
 func VaultWriter(sp *spec.Spec) *vault.Writer {
-	return vault.New(expandHome(sp.Capabilities.Obsidian.Vault), sp.Project)
+	return vault.New(VaultPath(sp), sp.Project)
 }
 
 func expandHome(p string) string {
@@ -68,7 +90,7 @@ func Run(sp *spec.Spec, st *store.Store, unitID string) (*Result, error) {
 	c := canvas.Render(run, nodes, edges, rv, bv, ov)
 	res.Nodes, res.Edges = len(c.Nodes), len(c.Edges)
 
-	if vlt := sp.Capabilities.Obsidian.Vault; vlt != "" {
+	if vlt := VaultPath(sp); vlt != "" {
 		// `export:` chooses WHICH files land in the vault. An empty list keeps the historical
 		// default — everything — but a user who wrote `export: [canvas]` was, until now, getting
 		// all three anyway: the field was the guard's tenth instance, declared and never read.

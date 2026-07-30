@@ -715,22 +715,6 @@ func TestRunCheckReportsTheRealExitCode(t *testing.T) {
 	}
 }
 
-func TestExpandHome(t *testing.T) {
-	if got := expandHome("/abs/path"); got != "/abs/path" {
-		t.Errorf("an absolute path must survive unchanged; got %q", got)
-	}
-	if got := expandHome(""); got != "" {
-		t.Errorf("empty stays empty; got %q", got)
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("no home directory")
-	}
-	if got := expandHome("~/vault"); !strings.HasPrefix(got, home) || strings.Contains(got, "~") {
-		t.Errorf("~ did not expand: %q", got)
-	}
-}
-
 // runHook drives the real hook entry point end to end — stdin in, stdout captured — because the
 // thing under test IS the entry point's silence, and a test that called Dispatch directly would
 // step over every path that produces it.

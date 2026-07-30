@@ -6,6 +6,12 @@
 /plugin/claude-code/bin/*
 !/plugin/claude-code/bin/.gitkeep
 
+# GoReleaser's output. Six platforms x a 14 MB static binary, plus the archives: ~130 MB that
+# regenerates from a tag in two minutes. `goreleaser release --snapshot` is the ONLY way to check
+# a release without publishing one, so this directory appears on any machine that does the
+# checking — and until now nothing stopped it from being committed by a wide `git add`.
+/dist/
+
 # Local state. batten's database lives in ~/.batten; these are strays from tests and
 # from BATTEN_DB overrides.
 *.db

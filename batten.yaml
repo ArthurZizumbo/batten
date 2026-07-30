@@ -58,7 +58,12 @@ capabilities:
     provider: graphify   # el grafo del CÓDIGO; los agentes preguntan antes de escribir
     lessons: false       # engram es dueño de lo episódico
   obsidian:
-    # A leading ~ expands to your home directory. Absolute paths work too, but this file is
-    # public — an absolute path here would publish a username and someone's folder layout.
-    vault: '~/OneDrive/Documents/Obsidian Vault'
+    # Your vault goes in the ENVIRONMENT, not here: `export BATTEN_VAULT=~/path/to/vault`
+    # (setx on Windows). BATTEN_VAULT wins over this key, for the same reason BATTEN_DB exists.
+    #
+    # This file is committed, and in a public repo it is also the example everybody reads. A real
+    # vault path here publishes one person's folder layout — down to which cloud drive they sync
+    # it through — and hands every cloner a spec that writes into a directory they do not have.
+    # A leading ~ expands; an absolute path is worse, and CI rejects it outright.
+    vault: '~/vaults/batten'
     export: [runs, verdicts, canvas]

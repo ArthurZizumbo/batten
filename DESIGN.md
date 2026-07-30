@@ -1,5 +1,23 @@
 # loom — memoria procedural como dato
 
+> ## ⚠️ Documento histórico. La herramienta se llama **batten**.
+>
+> Este archivo es el documento de diseño **v3, del 2026-07-14**, escrito antes del rename. Se
+> conserva sin reescribir porque es un registro fechado: reescribirlo hacia atrás lo volvería una
+> falsificación. Al leerlo, traducí:
+>
+> | dice | es |
+> |---|---|
+> | `loom` | `batten` |
+> | `loom.yaml` | `batten.yaml` |
+> | AgroSat, FarSLIP, US-0NN | el proyecto privado sobre el que se dogfoodeó |
+>
+> **Esto no es documentación de uso y puede estar desactualizado.** Lo que la herramienta hace hoy
+> está en [README.md](README.md); cómo instalarla, en [docs/INSTALL.md](docs/INSTALL.md); qué
+> cambió y cuándo, en [CHANGELOG.md](CHANGELOG.md); y lo que sigue abierto, en
+> [ROADMAP.md](ROADMAP.md). Las decisiones de §1 y la tesis de §0 siguen siendo la razón de ser del
+> proyecto — eso es lo que vale la pena leer acá.
+
 > **v3** del linaje `ecosistema-agentico-2026`. El v2 preguntaba "¿cómo generalizo mi harness en un producto?".
 > El v3 responde con una tesis más estrecha y más defendible: **el hueco no es observabilidad, es memoria procedural.**
 >

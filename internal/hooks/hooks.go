@@ -1002,7 +1002,7 @@ func (h *Handler) stop(in Input) (*Output, error) {
 		h.ingest(in, run.RunID)
 		// The vault fills itself here — a run note appears without anyone running `batten canvas`.
 		// Best-effort: a vault write must never be able to break the session.
-		if h.Spec.Capabilities.Obsidian.Vault != "" {
+		if export.VaultPath(h.Spec) != "" {
 			_, _ = export.Run(h.Spec, h.Store, unit)
 		}
 	}

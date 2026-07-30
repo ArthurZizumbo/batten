@@ -390,7 +390,7 @@ func cmdVerdict(args []string) error {
 		fmt.Printf("the close gate will deny a commit while this stands at %q\n", v.Result)
 	}
 	// The moment the vault most wants to reflect reality: the gate state just changed.
-	if sp.Capabilities.Obsidian.Vault != "" {
+	if export.VaultPath(sp) != "" {
 		if res, err := export.Run(sp, st, unit); err == nil && res.RunNotePath != "" {
 			fmt.Printf("updated run note %s\n", res.RunNotePath)
 		}
@@ -1119,7 +1119,7 @@ func cmdClose(args []string) error {
 			"  integrate it: batten worktree %s --merge   (from the tree you are merging into)\n",
 			wt.Branch, wt.Path, unit)
 	}
-	if sp.Capabilities.Obsidian.Vault != "" {
+	if export.VaultPath(sp) != "" {
 		_, _ = export.Run(sp, st, unit) // note now reflects the final state
 	}
 	return nil
@@ -1896,8 +1896,7 @@ func checkSpecOnly(d *dx, sp *spec.Spec) {
 			fmt.Println("  ⚠ compression.measure is off; you are trusting the README instead of your own numbers")
 		}
 	}
-	if v := sp.Capabilities.Obsidian.Vault; v != "" {
-		p := expandHome(v)
+	if p := export.VaultPath(sp); p != "" {
 		if _, err := os.Stat(p); err == nil {
 			d.ok("obsidian vault: %s", p)
 		} else {
@@ -2373,13 +2372,4 @@ func gitSHA() (string, error) {
 func gitBranch() (string, error) {
 	out, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output()
 	return strings.TrimSpace(string(out)), err
-}
-
-func expandHome(p string) string {
-	if strings.HasPrefix(p, "~") {
-		if home, err := os.UserHomeDir(); err == nil {
-			return filepath.Join(home, p[1:])
-		}
-	}
-	return p
 }

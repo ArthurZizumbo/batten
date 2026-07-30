@@ -409,6 +409,43 @@ func TestExportHonorsTheDeclaredList(t *testing.T) {
 	}
 }
 
+// The vault path is personal and batten.yaml is public — and in this repo batten.yaml is also the
+// example everybody reads. So the spec carries the shape and the environment carries the path,
+// exactly like BATTEN_DB. Every surface has to agree about it: `doctor` reading the spec directly
+// while the Stop hook reads the override is how one of them starts lying.
+func TestBattenVaultOverridesTheSpec(t *testing.T) {
+	sp := &spec.Spec{Project: "acme"}
+	sp.Capabilities.Obsidian.Vault = "/spec/vault"
+
+	if got := VaultPath(sp); got != "/spec/vault" {
+		t.Errorf("with no override the spec decides; got %q", got)
+	}
+
+	t.Setenv("BATTEN_VAULT", "/env/vault")
+	if got := VaultPath(sp); got != "/env/vault" {
+		t.Errorf("BATTEN_VAULT must win over the spec; got %q", got)
+	}
+	if w := VaultWriter(sp); w == nil {
+		t.Fatal("VaultWriter returned nil for a configured vault")
+	}
+
+	// A spec with no vault at all still honours the override — that is the whole point for
+	// somebody who cloned a repo whose batten.yaml names a directory they do not have.
+	empty := &spec.Spec{Project: "acme"}
+	if got := VaultPath(empty); got != "/env/vault" {
+		t.Errorf("the override must work with no vault in the spec; got %q", got)
+	}
+
+	t.Setenv("BATTEN_VAULT", "  ")
+	if got := VaultPath(sp); got != "/spec/vault" {
+		t.Errorf("a blank override is not an override; got %q", got)
+	}
+
+	if got := VaultPath(nil); got != "" {
+		t.Errorf("no spec, no vault; got %q", got)
+	}
+}
+
 func TestExpandHomeLeavesAbsolutePathsAlone(t *testing.T) {
 	if got := expandHome("/var/vaults/acme"); got != "/var/vaults/acme" {
 		t.Errorf("an absolute path must not be rewritten; got %q", got)
