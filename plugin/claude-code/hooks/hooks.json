@@ -1,5 +1,5 @@
 {
-  "description": "batten — enforces the workflow declared in batten.yaml. Exec form: the binary reads the hook JSON on stdin, so there is no dependency on bash, jq or curl (which is what makes engram's hooks fragile on Windows).",
+  "description": "batten — enforces the workflow declared in batten.yaml. Exec form: the binary reads the hook JSON on stdin, so there is no dependency on bash, jq or curl (which is what makes engram's hooks fragile on Windows). The bootstrap is the one shell-form entry, and the `||` is the cross-platform dispatch: bootstrap.sh always exits 0 even when the download fails, so the fallback fires on exactly one condition — bash is not on this machine, which is the Windows-without-Git-Bash case.",
   "hooks": {
     "SessionStart": [
       {
@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.sh\"",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.sh\" || powershell -NoProfile -ExecutionPolicy Bypass -File \"${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.ps1\"",
             "timeout": 30,
             "statusMessage": "batten: checking binary..."
           },

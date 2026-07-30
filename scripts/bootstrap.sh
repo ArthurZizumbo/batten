@@ -80,9 +80,14 @@ base="${BATTEN_BOOTSTRAP_BASE_URL:-https://github.com/${REPO}/releases/latest/do
 url="${base}/batten_${os}_${arch}.tar.gz"
 tmp="$(mktemp -d)"
 
+# `cd` instead of `tar -C "$tmp"`, and no absolute path in the tar arguments. Whether `tar` here is
+# GNU tar or bsdtar depends on the machine, and the two disagree about paths that carry a drive
+# letter: GNU tar reads `C:\Users\...` as a remote host spec ("Cannot connect to C: resolve
+# failed") and unpacks nothing. A relative name in the process's own working directory is the one
+# form both read the same way. bootstrap.ps1 hit exactly this and has the mirror-image fix.
 ok=0
 if curl -fsSL "$url" -o "$tmp/b.tgz" 2>/dev/null &&
-   tar -xzf "$tmp/b.tgz" -C "$tmp" 2>/dev/null &&
+   ( cd "$tmp" && tar -xzf b.tgz ) 2>/dev/null &&
    [ -f "$tmp/batten${ext}" ] &&
    install_from "$tmp/batten${ext}"; then
   ok=1

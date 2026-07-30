@@ -1,13 +1,33 @@
 # Instalar batten en un proyecto
 
 batten se instala como plugin de Claude Code, y **el binario llega solo**: un hook `SessionStart`
-corre `bootstrap.sh`, que en el primer arranque descarga el binario estático de tu plataforma
-desde el GitHub Release a `${CLAUDE_PLUGIN_DATA}/bin` (una ruta que sobrevive a las
-actualizaciones del plugin). Si compilaste en local, el binario ya está en el `bin/` del plugin —
-Claude Code añade ese directorio al PATH — y bootstrap lo detecta y no descarga nada.
+corre el bootstrap, que en el primer arranque descarga el binario estático de tu plataforma desde
+el GitHub Release a **`${CLAUDE_PLUGIN_ROOT}/bin/batten`**. Esa ruta no es una preferencia: es la
+única que los ocho hooks y el servidor MCP nombran, y es el directorio que Claude Code agrega al
+PATH — que es lo que hace que el `batten` pelado de los comandos `/batten-*` resuelva.
+
+Se guarda además una copia en `${CLAUDE_PLUGIN_DATA}/bin`. Eso es **caché**: `${CLAUDE_PLUGIN_ROOT}`
+se borra en cada actualización del plugin, así que después de un update el bootstrap restaura desde
+la copia en vez de volver a bajar 14 MB.
+
+Si compilaste en local, el binario ya está en el `bin/` del plugin y bootstrap no descarga nada.
 
 Si la descarga falla, lo dice y los hooks no-opean: **nada queda gobernado**, y batten prefiere
 avisarlo a fingir que te está protegiendo.
+
+### Windows sin Git Bash
+
+El hook intenta `bash bootstrap.sh` y, si esta máquina no tiene bash, cae a
+`bootstrap.ps1` — PowerShell 5.1, el que viene en la caja. No hay que instalar nada. Para correrlo
+a mano (o si querés ver la salida completa):
+
+```
+<ruta-del-plugin>\scripts\bootstrap.cmd
+```
+
+Requiere `System32\tar.exe`, que Windows trae desde 10 1803. El script lo invoca por ruta completa
+a propósito: el `tar` del PATH suele ser el GNU tar de Git Bash, que lee `C:\Users\...` como un host
+remoto y no desempaca nada.
 
 ## Instalación (5 pasos)
 
@@ -70,8 +90,9 @@ así que una ruta que dependa del entorno parte el estado en dos bases de datos 
 hay runs" mientras los hooks escriben runs felizmente en otro lado. Y `${CLAUDE_PLUGIN_ROOT}`
 queda prohibido en cualquier caso: se borra en cada actualización del plugin.
 
-El binario descargado sí vive en `${CLAUDE_PLUGIN_DATA}/bin` — eso es caché, no estado, y
-perderlo solo cuesta una descarga.
+El binario vive en `${CLAUDE_PLUGIN_ROOT}/bin` porque es el único lugar donde los hooks lo
+invocan, y su copia en `${CLAUDE_PLUGIN_DATA}/bin` es caché, no estado: perderla solo cuesta una
+descarga.
 
 ## Desinstalar
 

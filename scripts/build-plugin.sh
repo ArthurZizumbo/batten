@@ -9,10 +9,12 @@ case "$(go env GOOS)" in windows) ext=".exe" ;; esac
 out="plugin/claude-code/bin/batten${ext}"
 echo "building $out ..."
 CGO_ENABLED=0 go build -ldflags "-s -w" -o "$out" ./cmd/batten
-# hooks.json declares ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.sh — it must SHIP inside the
-# package, or every session greets the user with "No such file or directory" (E0 finding).
+# hooks.json declares ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.{sh,ps1} — they must SHIP inside
+# the package, or every session greets the user with "No such file or directory" (E0 finding).
 mkdir -p plugin/claude-code/scripts
-cp scripts/bootstrap.sh plugin/claude-code/scripts/bootstrap.sh
+for s in bootstrap.sh bootstrap.ps1 bootstrap.cmd; do
+  cp "scripts/$s" "plugin/claude-code/scripts/$s"
+done
 # The bit, explicitly. `cp` onto an existing file keeps the DESTINATION's mode, so a copy that
 # once landed without +x stays without it — and a bootstrap that cannot execute is the silent
 # failure this whole script exists to avoid.

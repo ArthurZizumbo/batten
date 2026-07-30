@@ -90,12 +90,15 @@ jobs:
           go mod tidy
           git diff --exit-code go.mod go.sum
 
-      # plugin/claude-code/scripts/bootstrap.sh is a COPY that build-plugin.sh makes, and it is
-      # committed because a marketplace install needs it present. That makes it possible to edit
-      # the source and ship the stale copy, which is how the bootstrap came to be missing from
-      # the package once already.
-      - name: the plugin's bootstrap copy is in sync
-        run: diff scripts/bootstrap.sh plugin/claude-code/scripts/bootstrap.sh
+      # plugin/claude-code/scripts/* are COPIES that build-plugin.sh makes, and they are committed
+      # because a marketplace install needs them present. That makes it possible to edit the
+      # source and ship the stale copy, which is how the bootstrap came to be missing from the
+      # package once already.
+      - name: the plugin's bootstrap copies are in sync
+        run: |
+          for s in bootstrap.sh bootstrap.ps1 bootstrap.cmd; do
+            diff "scripts/$s" "plugin/claude-code/scripts/$s" || exit 1
+          done
 
       - name: shell scripts parse
         run: |

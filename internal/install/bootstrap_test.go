@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -280,6 +281,124 @@ func TestBootstrapExitsZeroAndLeavesNothingBehindWhenTheDownloadFails(t *testing
 	}
 }
 
+// --- the Windows path, which had no script at all ---
+
+// runBootstrapPS runs bootstrap.ps1 the way hooks.json's fallback does. Windows is the declared
+// primary target, and until this script existed the only way to install there was through a bash
+// a Windows machine is not required to have.
+func runBootstrapPS(t *testing.T, root, data, baseURL string) (string, int) {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		t.Skip("bootstrap.ps1 is the Windows path")
+	}
+	ps, err := exec.LookPath("powershell")
+	if err != nil {
+		if ps, err = exec.LookPath("pwsh"); err != nil {
+			t.Skip("no powershell on PATH")
+		}
+	}
+	script := filepath.Join(repoRoot(t), "scripts", "bootstrap.ps1")
+
+	home := t.TempDir()
+	cmd := exec.Command(ps, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script)
+	cmd.Env = append(os.Environ(),
+		"CLAUDE_PLUGIN_ROOT="+root,
+		"CLAUDE_PLUGIN_DATA="+data,
+		"BATTEN_BOOTSTRAP_BASE_URL="+baseURL,
+		"USERPROFILE="+home,
+		"BATTEN_DB="+filepath.Join(home, "test.db"),
+	)
+	cmd.Dir = t.TempDir()
+	out, err := cmd.CombinedOutput()
+	code := 0
+	if ee, ok := err.(*exec.ExitError); ok {
+		code = ee.ExitCode()
+	} else if err != nil {
+		t.Fatalf("running %s: %v", script, err)
+	}
+	return string(out), code
+}
+
+func TestBootstrapPS1InstallsWhereEveryHookLooks(t *testing.T) {
+	root, data := t.TempDir(), t.TempDir()
+	srv, asked := serveRelease(t, releaseArchive(t))
+
+	out, code := runBootstrapPS(t, root, data, srv.URL)
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("bootstrap.ps1 said:\n%s", out)
+		}
+	})
+	if code != 0 {
+		t.Fatalf("bootstrap.ps1 exited %d; a bootstrap must never break a session\n%s", code, out)
+	}
+	mustRun(t, BinPath(root))
+	if !assetName.MatchString(*asked) {
+		t.Errorf("bootstrap.ps1 asked for %q, which is not a name .goreleaser.yaml builds", *asked)
+	}
+	if _, err := os.Stat(filepath.Join(data, "bin", BinName())); err != nil {
+		t.Errorf("the download was not cached in %s: %v", data, err)
+	}
+}
+
+func TestBootstrapPS1RestoresFromTheCacheAfterAPluginUpdate(t *testing.T) {
+	root, data := t.TempDir(), t.TempDir()
+	cacheDir := filepath.Join(data, "bin")
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	copyFile(t, realBinary(t), filepath.Join(cacheDir, BinName()))
+
+	out, code := runBootstrapPS(t, root, data, "http://127.0.0.1:1/unreachable")
+	if code != 0 {
+		t.Fatalf("bootstrap.ps1 exited %d\n%s", code, out)
+	}
+	mustRun(t, BinPath(root))
+}
+
+func TestBootstrapPS1ExitsZeroWhenTheDownloadFails(t *testing.T) {
+	root, data := t.TempDir(), t.TempDir()
+	srv, _ := serveRelease(t, []byte("404 not a tarball"))
+
+	out, code := runBootstrapPS(t, root, data, srv.URL+"/wrong-prefix")
+	if code != 0 {
+		t.Fatalf("bootstrap.ps1 exited %d; a failed download must not break the session\n%s", code, out)
+	}
+	if _, err := os.Stat(BinPath(root)); err == nil {
+		t.Error("a half-installed binary was left in the plugin root; the hooks would run it")
+	}
+	if !strings.Contains(out, "nothing is being gated") {
+		t.Errorf("a failed install must say so in plain words; output was:\n%s", out)
+	}
+}
+
+// hooks.json dispatches with `||`, which only works because bootstrap.sh exits 0 on a failed
+// DOWNLOAD. If that ever changes, the Windows fallback starts firing on Unix.
+func TestTheHookFallbackFiresOnlyWhenBashIsAbsent(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(repoRoot(t), "plugin", "claude-code", "hooks", "hooks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, line := range strings.Split(string(b), "\n") {
+		// `"command"`, not just the file name: the file's own description mentions it too.
+		if !strings.Contains(line, "bootstrap.sh") || !strings.Contains(line, `"command"`) {
+			continue
+		}
+		found = true
+		if !strings.Contains(line, "||") || !strings.Contains(line, "bootstrap.ps1") {
+			t.Errorf("the bootstrap hook does not fall back to PowerShell:\n  %s\n"+
+				"Windows without Git Bash has no other way to install the binary.",
+				strings.TrimSpace(line))
+		}
+	}
+	if !found {
+		t.Fatal("hooks.json never invokes bootstrap.sh")
+	}
+	// Both scripts end in `exit 0` for this reason. Guarded by
+	// TestBootstrap{,PS1}ExitsZero...WhenTheDownloadFails above; this is the note that says why.
+}
+
 func copyFile(t *testing.T, src, dst string) {
 	t.Helper()
 	b, err := os.ReadFile(src)
@@ -356,7 +475,7 @@ func TestBootstrapHookRunsAScriptThatShips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"bootstrap.sh"} {
+	for _, name := range []string{"bootstrap.sh", "bootstrap.ps1"} {
 		if !strings.Contains(string(b), name) {
 			t.Errorf("hooks.json never invokes %s, so nothing installs the binary on that platform", name)
 			continue

@@ -10,11 +10,13 @@ try {
     go build -ldflags "-s -w" -o $out ./cmd/batten
     if ($LASTEXITCODE -ne 0) { throw "go build failed" }
     Write-Host "ok: $((Get-Item $out).Length) bytes"
-    # hooks.json declares ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.sh — it must SHIP inside the
-    # package, or every session greets the user with "No such file or directory" (E0 finding).
+    # hooks.json declares ${CLAUDE_PLUGIN_ROOT}/scripts/bootstrap.{sh,ps1} — they must SHIP inside
+    # the package, or every session greets the user with "No such file or directory" (E0 finding).
     $scripts = Join-Path $root "plugin/claude-code/scripts"
     New-Item -ItemType Directory -Force $scripts | Out-Null
-    Copy-Item (Join-Path $root "scripts/bootstrap.sh") $scripts -Force
+    foreach ($s in @("bootstrap.sh", "bootstrap.ps1", "bootstrap.cmd")) {
+        Copy-Item (Join-Path $root "scripts/$s") $scripts -Force
+    }
     Write-Host ""
     Write-Host "Next: in Claude Code run"
     Write-Host "  /plugin marketplace add $root"
