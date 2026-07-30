@@ -316,6 +316,112 @@ func TestAWrongFieldTypeNamesThatField(t *testing.T) {
 	}
 }
 
+// TestInitIgnoresBattensOwnDatabase is finding #59 (plan §5).
+//
+// `batten init` wrote batten.yaml and said nothing about .gitignore, so the adopter's very next
+// `git add -A` committed batten's database: a binary SQLite file that grows with every run,
+// conflicts on every merge, and carries the project's whole decision history into the repository.
+// The first thing batten asks anyone to do created the mess.
+func TestInitIgnoresBattensOwnDatabase(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BATTEN_DB", filepath.Join(t.TempDir(), "batten.db"))
+
+	var out string
+	inDir(t, dir, func() {
+		out = captureStdout(t, func() {
+			if err := cmdInit(nil); err != nil {
+				t.Fatalf("init: %v", err)
+			}
+		})
+	})
+
+	b, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatalf("init wrote no .gitignore, so `git add -A` commits the database: %v", err)
+	}
+	if !strings.Contains(string(b), "/.batten/") {
+		t.Errorf(".gitignore does not cover batten's own state:\n%s", b)
+	}
+	// It has to SAY it did. A command that edits a file the user did not ask about and stays
+	// quiet about it is the behaviour batten exists to remove from other tools.
+	if !strings.Contains(out, ".gitignore") {
+		t.Errorf("init edited .gitignore without telling anyone:\n%s", out)
+	}
+}
+
+// The other half, and the reason this is an append and not a rewrite: `init` is a first-contact
+// command in somebody else's repo. It must leave every line it did not come for exactly as it
+// found it, and it must not argue with a rule the user already wrote in another spelling.
+func TestInitLeavesAnExistingGitignoreAlone(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const original = "node_modules/\n.env\n.batten/\n"
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BATTEN_DB", filepath.Join(t.TempDir(), "batten.db"))
+
+	inDir(t, dir, func() {
+		_ = captureStdout(t, func() {
+			if err := cmdInit(nil); err != nil {
+				t.Fatalf("init: %v", err)
+			}
+		})
+	})
+
+	b, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != original {
+		t.Errorf(".gitignore already covered .batten/ and init rewrote it anyway:\nwant %q\ngot  %q", original, b)
+	}
+}
+
+// And the append case: an existing .gitignore that does NOT cover it keeps every line it had.
+func TestInitAppendsToAnExistingGitignore(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module x\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const original = "node_modules/\n.env" // deliberately no trailing newline
+	if err := os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(original), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("BATTEN_DB", filepath.Join(t.TempDir(), "batten.db"))
+
+	inDir(t, dir, func() {
+		_ = captureStdout(t, func() {
+			if err := cmdInit(nil); err != nil {
+				t.Fatalf("init: %v", err)
+			}
+		})
+	})
+
+	b, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	for _, keep := range []string{"node_modules/", ".env"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("init dropped %q from somebody else's .gitignore:\n%s", keep, got)
+		}
+	}
+	if !strings.Contains(got, "/.batten/") {
+		t.Errorf("the entry was not appended:\n%s", got)
+	}
+	// The original had no trailing newline — the append must not glue itself onto `.env`.
+	if strings.Contains(got, ".env/.batten/") || strings.Contains(got, ".env#") {
+		t.Errorf("the append ran into the last line of the existing file:\n%s", got)
+	}
+}
+
 // TestCriteriaFlowFromPlanToPR is ítem 21 end to end: the unit's acceptance criteria leave
 // the markdown (fase A), become rows when the phase opens (fase B), get covered by the
 // verdict's `AC-n:` citations, and the PR then says "AC-1 covered by X" — which is a

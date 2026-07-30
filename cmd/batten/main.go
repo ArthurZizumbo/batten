@@ -2550,6 +2550,15 @@ func cmdInit(args []string) error {
 		fmt.Print(", engram found")
 	}
 	fmt.Println()
+	if line, err := ensureGitignored(cwd); err != nil {
+		// Never fatal. `init` succeeded; a .gitignore batten could not write is a nuisance, and
+		// failing the on-ramp over it would be worse than the problem.
+		fmt.Printf("could not update .gitignore (%v) — add %q by hand before your first `git add -A`.\n",
+			err, gitignoreEntry)
+	} else if line != "" {
+		fmt.Printf("added %q to .gitignore — %s\n", line,
+			"without it the first `git add -A` commits batten's database")
+	}
 	fmt.Println("Next:")
 	fmt.Println("  1. fill the invariants (the TODOs) — the highest-value part of the file")
 	if from != "" {
@@ -2560,6 +2569,54 @@ func cmdInit(args []string) error {
 	fmt.Println("For a richer draft (invariants mined from AGENTS.md, migration from a prose doc),")
 	fmt.Println("run /batten-init inside Claude Code instead — it uses `batten init --scan-json`.")
 	return nil
+}
+
+// gitignoreEntry is what `.batten/` needs to be, and the leading slash is the point: it anchors
+// the rule at the repo root, so a source directory somebody legitimately names `.batten` deeper in
+// the tree is not silently ignored too. This repo's own .gitignore has carried this exact line
+// since before init could write it.
+const gitignoreEntry = "/.batten/"
+
+// ensureGitignored is finding #59 (plan §5): `batten init` wrote batten.yaml and said nothing
+// about .gitignore, so the adopter's very next `git add -A` committed batten's database —
+// a binary SQLite file that grows with every run, conflicts on every merge, and carries the
+// project's whole decision history into the repository. The first thing batten asks anyone to do
+// created the mess.
+//
+// It returns the line it added, or "" when the file already covered the directory. Additive only:
+// appending to a .gitignore is safe, rewriting somebody's is not, and `init` is a first-contact
+// command that has to leave everything it did not come for exactly as it found it.
+func ensureGitignored(root string) (string, error) {
+	path := filepath.Join(root, ".gitignore")
+	b, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return "", err
+	}
+	existing := string(b)
+	// Any spelling that already covers the directory counts. Re-adding a rule the user wrote
+	// differently would be batten arguing with a file it does not own.
+	for _, line := range strings.Split(existing, "\n") {
+		switch strings.TrimSpace(line) {
+		case gitignoreEntry, ".batten/", ".batten", "/.batten":
+			return "", nil
+		}
+	}
+
+	var sb strings.Builder
+	sb.WriteString(existing)
+	if existing != "" && !strings.HasSuffix(existing, "\n") {
+		sb.WriteString("\n")
+	}
+	if existing != "" {
+		sb.WriteString("\n")
+	}
+	sb.WriteString("# batten's local state: a SQLite database that grows with every run.\n")
+	sb.WriteString("# It is per-machine and per-checkout; committing it conflicts on every merge.\n")
+	sb.WriteString(gitignoreEntry + "\n")
+	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
+		return "", err
+	}
+	return gitignoreEntry, nil
 }
 
 // ---------- helpers ----------
