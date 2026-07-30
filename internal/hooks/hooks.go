@@ -743,7 +743,7 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	// This is reached whether or not the gate declares checks — an undeclared gate is a reason
 	// to warn, never a reason to stop counting tokens.
 	//
-	// `warn` was accepted by the loader and did nothing (plan_publicacion.md §7). Only `block` was wired, so a
+	// `warn` was accepted by the loader and did nothing. Only `block` was wired, so a
 	// spec that chose the softer setting got the SAME behaviour as one that declared no ceiling
 	// at all — and `batten init` writes `on_exceed: warn` by default, which means every freshly
 	// adopted repo was in the dead branch. The mechanism was already here in full: it is
@@ -751,7 +751,7 @@ func (h *Handler) verdictGate(in Input, cmd string) (*Output, error) {
 	//
 	// The severity is decided by the SPEC, not by the model and not by the size of the overrun —
 	// the user declared which one they wanted and that declaration is the whole answer. (Plan
-	// plan_publicacion.md §4.1: wherever batten softens an enforcement, a rule decides, never a judgement.)
+	// Wherever batten softens an enforcement, a rule decides, never a judgement.)
 	switch onExceed := h.Spec.Budget.OnExceed; {
 	case (onExceed == "block" || onExceed == "warn") && h.Spec.Budget.Set():
 		b := h.Spec.Budget
@@ -1115,7 +1115,7 @@ func phaseBriefing(sp *spec.Spec, st *store.Store, run *store.Run) string {
 	if len(p.Reads) > 0 {
 		fmt.Fprintf(&b, "- reads: %s\n", strings.Join(p.Reads, ", "))
 	}
-	// `phases[].when` (plan_publicacion.md §7). Its whole declared contract is "free-form, advisory", and for
+	// `phases[].when`. Its whole declared contract is "free-form, advisory", and for
 	// once that makes it honest rather than hollow — batten cannot evaluate an arbitrary English
 	// condition and never claimed it would. What it CAN do is put the condition in front of the
 	// agent standing in the phase, which is the only reader such a field could ever have. Until
@@ -1174,7 +1174,7 @@ func phaseBriefing(sp *spec.Spec, st *store.Store, run *store.Run) string {
 }
 
 // coverageFloors puts `domains[].coverage` in front of the only agent that could act on it: the
-// one standing in a gate-bearing phase (plan_publicacion.md §7).
+// one standing in a gate-bearing phase.
 //
 // It is advisory and says so. batten does not run coverage tools, does not parse their output, and
 // cannot tell a line-coverage percentage from a branch one — pretending otherwise would be a new

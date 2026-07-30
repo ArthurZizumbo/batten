@@ -93,7 +93,7 @@ func cmdScanDiff(args []string) error {
 	rep := contrastDiff(changed, ws)
 	printScanDiff(run, rep)
 
-	// Keep it. This one line is the whole of plan_publicacion.md §4.2's numerator: everything above was already
+	// Keep it. This one line is the whole numerator: everything above was already
 	// computed and then written to stdout, so the over-declaration question could be answered
 	// about one run at a time and never about the project.
 	//

@@ -1121,7 +1121,7 @@ func cmdMeasure() error {
 	return nil
 }
 
-// printWriteSets is the block plan_publicacion.md §4.2 exists for: does declaring a write-set by hand
+// printWriteSets answers one question: does declaring a write-set by hand
 // over-declare the way S-Bus (arXiv:2605.17076) measured automatically reconstructed read-sets
 // over-declaring, between 32% and 49%?
 //
@@ -1166,10 +1166,12 @@ func printWriteSets(st *store.Store, project string) {
 		fmt.Printf("  %d file(s) changed across those runs that no write-set claimed.\n", ws.Undeclared)
 	}
 	// The pre-registered reading, printed with the number so the threshold cannot be chosen
-	// after seeing it. The bands and the actions are in plan_publicacion.md §4.2.
+	// after seeing it. The bands: ≥32% (the S-Bus floor) means over-declaration is real and advise()
+// should extend to low-severity collisions, with the severity decided BY A RULE; ≤15% with ≥5 runs
+// in enforce and zero write_set denials means the problem was invented and the line closes.
 	switch {
 	case ws.Runs < 10:
-		fmt.Printf("  (below the pre-registered N: the threshold in plan_publicacion.md §4.2 needs ≥10 scanned runs.\n")
+		fmt.Printf("  (below the pre-registered N: the threshold needs ≥10 scanned runs.\n")
 		fmt.Printf("   %d more to go. Read this as a direction, not a result.)\n", 10-ws.Runs)
 	case pct >= 32:
 		fmt.Println("  → at or above the 32% floor of the S-Bus band: over-declaration is real here.")
@@ -2601,7 +2603,7 @@ func cmdInit(args []string) error {
 // since before init could write it.
 const gitignoreEntry = "/.batten/"
 
-// ensureGitignored is finding #59 (plan_publicacion.md §5): `batten init` wrote batten.yaml and said nothing
+// ensureGitignored is field-test finding #59: `batten init` wrote batten.yaml and said nothing
 // about .gitignore, so the adopter's very next `git add -A` committed batten's database —
 // a binary SQLite file that grows with every run, conflicts on every merge, and carries the
 // project's whole decision history into the repository. The first thing batten asks anyone to do

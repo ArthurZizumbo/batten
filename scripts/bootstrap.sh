@@ -144,7 +144,7 @@ sha256_of() {
 # it unverified is remote code execution by download. A mismatched hash, an unreachable
 # checksums.txt, a checksums.txt that does not list this asset, and a machine with no sha256 tool
 # all get the SAME answer — refuse — because they are the same statement: nobody can vouch for
-# these bytes. The failure mode is documented and accepted in plan_publicacion.md §3.2: the
+# these bytes. The failure mode is deliberate and accepted: the
 # machine is left WITHOUT a gate, which is already what every failed download leaves behind, and
 # the cache path above means it only ever applies to a first install.
 #

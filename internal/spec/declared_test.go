@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -335,44 +336,36 @@ func repoRoot(t *testing.T) string {
 
 // ---------- the third half: pointers into documents ----------
 
-// TestEveryPlanReferenceNamesTheDocumentAndResolves — C7 of plan_publicacion.md §8, as a
-// mechanism instead of a sweep.
+// TestNoCommentPointsAtADocumentThatIsNotHere.
 //
-// Twenty-one comments cited bare section numbers — "plan, section 5.1", "section 4.3",
-// "section 10" and so on. All of them pointed at `plan_mejora.md`, which was retired from the
-// tree, so at best the reader had nowhere to go.
+// The rule, and it is one line: a tracked file may not cite a section of a document a clone does
+// not receive.
 //
-// At worst, and this is what makes it a defect rather than untidiness: the surviving plan has its
-// OWN sections 7, 4.1, 4.3 and 9, about completely different things. A bare number silently
-// re-pointed itself at unrelated prose, and a reader who followed it would be confidently
-// misinformed rather than merely stuck. That is strictly worse than a dead link.
+// It exists because this project has now made the same mistake four times. Comments cited bare
+// section numbers of a planning document; that document was retired; the numbers stayed. At best
+// the reader had nowhere to go. At worst — and this is what makes it a defect rather than
+// untidiness — the document that REPLACED it had its own sections 7, 4.1 and 9 about completely
+// different things, so a bare number silently re-pointed itself at unrelated prose and whoever
+// followed it came away confidently misinformed. A dead link stops you; a live wrong one does not.
 //
-// So the rule is two-part and both parts are checkable: a reference must NAME its document, and
-// the section must exist in it.
+// The fourth time was the working documents leaving the tree: thirty-five comments cited them by
+// section, and every one had to become the reason it was standing in for. That is the honest end
+// state anyway. A comment that says WHY needs no pointer; one that only points is not a comment.
 //
-// The examples above are spelled "section N" rather than with the sigil, and that is the same
+// Deliberately not a whitelist of known documents. The check is whether the cited file is in the
+// tree, so a document added tomorrow is citable the moment it is committed and stops being citable
+// the moment it is not — which is the property that keeps rotting, and the only one worth
+// mechanising.
+//
+// The examples in this comment are spelled "section N" rather than with the sigil, the same
 // discipline as the masked pattern in TestNoPrivateProjectTokensAreTracked: a guard whose own
 // prose trips it teaches whoever hits that failure to add an exclusion, and the exclusion is what
 // blinds it. This file is IN scope, like every other.
-func TestEveryPlanReferenceNamesTheDocumentAndResolves(t *testing.T) {
+func TestNoCommentPointsAtADocumentThatIsNotHere(t *testing.T) {
 	root := repoRoot(t)
-	const planPath = "docs/general/plan_publicacion.md"
-	b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(planPath)))
-	if err != nil {
-		t.Skipf("the plan is not in this tree: %v", err)
-	}
-	sections := map[string]bool{}
-	for _, m := range planHeadingRe.FindAllStringSubmatch(string(b), -1) {
-		sections[m[1]] = true
-	}
-	if len(sections) == 0 {
-		t.Fatalf("parsed no numbered sections out of %s; this guard would pass vacuously", planPath)
-	}
+	checked := 0
 
-	// The basename is enough to disambiguate and short enough to live in a comment without
-	// pushing the sentence off the line. The path is only for the error message.
-	const want = "plan_publicacion.md "
-	err = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
 		}
@@ -383,32 +376,32 @@ func TestEveryPlanReferenceNamesTheDocumentAndResolves(t *testing.T) {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(p, ".go") {
+		switch {
+		case strings.HasSuffix(p, ".go"), strings.HasSuffix(p, ".sh"), strings.HasSuffix(p, ".ps1"):
+		default:
 			return nil
 		}
 		src, rerr := os.ReadFile(p)
 		if rerr != nil {
 			return nil
 		}
+		checked++
 		rel, _ := filepath.Rel(root, p)
 		rel = filepath.ToSlash(rel)
-		for _, loc := range sectionRefRe.FindAllStringSubmatchIndex(string(src), -1) {
-			ref := string(src[loc[0]:loc[1]])
-			num := string(src[loc[2]:loc[3]])
+
+		for _, loc := range docRefRe.FindAllStringSubmatchIndex(string(src), -1) {
+			doc := string(src[loc[2]:loc[3]])
+			sec := string(src[loc[4]:loc[5]])
 			line := 1 + strings.Count(string(src[:loc[0]]), "\n")
-			start := loc[0] - len(want)
-			if start < 0 || string(src[start:loc[0]]) != want {
-				t.Errorf("%s:%d cites %q without naming the document.\n"+
-					"    Write `%s%s`, or drop the pointer and state the reason inline. A bare "+
-					"section number re-points itself the day a plan is superseded — and the "+
-					"surviving plan has its own §%s, about something else.",
-					rel, line, ref, want, ref, num)
-				continue
-			}
-			if !sections[num] {
-				t.Errorf("%s:%d cites %s%s, and %s has no section %s.\n"+
-					"    Re-point it or state the reason inline; a pointer nobody can follow is "+
-					"prose pretending to be a citation.", rel, line, want, ref, planPath, num)
+
+			// Anywhere in the tree, because a doc can legitimately live in docs/, at the root, or
+			// beside the code it describes. What matters is that a clone receives it.
+			if !fileIsTracked(root, doc) {
+				t.Errorf("%s:%d cites %s section %s, and git does not track %s.\n"+
+					"    A clone does not get that document, so the pointer is dead on arrival — or\n"+
+					"    worse, re-points itself at whatever takes that section number next.\n"+
+					"    State the reason inline instead: a comment that says WHY needs no pointer.",
+					rel, line, doc, sec, doc)
 			}
 		}
 		return nil
@@ -416,7 +409,41 @@ func TestEveryPlanReferenceNamesTheDocumentAndResolves(t *testing.T) {
 	if err != nil {
 		t.Fatalf("walking %s: %v", root, err)
 	}
+	if checked == 0 {
+		t.Fatal("read no source files at all; this guard would pass vacuously")
+	}
 }
+
+// fileIsTracked reports whether git tracks a file with this base name anywhere in the repository.
+//
+// git, not the filesystem, and that distinction is the entire guard. The first version walked the
+// working tree and passed happily on the author's machine, where the retired documents are still
+// sitting on disk — untracked, invisible to every clone, and therefore exactly the dead pointers
+// this test exists to catch. It reported green while the property was false for everyone else.
+//
+// The question a reference has to answer is "does a clone receive this", and only the index knows.
+func fileIsTracked(root, name string) bool {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		return true // cannot tell; do not invent a failure
+	}
+	out, err := exec.Command(git, "-C", root, "ls-files", "--", "*/"+name, name).Output()
+	if err != nil {
+		return true
+	}
+	return strings.TrimSpace(string(out)) != ""
+}
+
+// docRefRe matches a citation of a named markdown document by section: the file name, a space,
+// the section sigil, the number. Both halves are required — a bare section number has nothing to
+// check, and a bare filename is a mention rather than a pointer.
+//
+// No literal example is written above, and that is not fussiness: the first version spelled one
+// out and this guard failed on its own documentation, which is the third time a guard in this
+// repository has tripped over its own prose. The other two masked their pattern; this one omits
+// it. The lesson each time is the same — the fix a reader reaches for when a guard fails on
+// itself is an exclusion, and the exclusion is what blinds it.
+var docRefRe = regexp.MustCompile(`([A-Za-z0-9_.-]+\.md) §(\d+(?:\.\d+)?)`)
 
 // planHeadingRe matches the plan's numbered headings: `## 4. ...` and `### 4.2 — ...`.
 var planHeadingRe = regexp.MustCompile(`(?m)^#{2,3} (\d+(?:\.\d+)?)[ .]`)

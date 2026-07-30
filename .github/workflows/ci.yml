@@ -167,10 +167,9 @@ jobs:
       # the "fix" would be an exclusion that blinds it. The `\b` is not decoration either: without
       # a word boundary the second token matches inside ordinary Spanish words.
       #
-      # NOTHING is excluded. `docs/field-test/` was, while decision 1.1 of
-      # docs/general/plan_publicacion.md was open; that directory has been retired from the tree
-      # (option A2), so the exclusion went with it rather than staying as a hole nobody remembered.
-      # Code, tests, scripts, docs and the generated graph are all in scope.
+      # NOTHING is excluded. `docs/field-test/` was, while the decision about it was open; that
+      # directory has been retired from the tree, so the exclusion went with it rather than staying
+      # as a hole nobody remembered. Code, tests, scripts, docs and the generated graph are in scope.
       #
       # There is no `-I`, and that is the second half of the same lesson. Dropping `:!graphify-out`
       # was not enough: `.gitattributes` marks the three generated artifacts `-diff` so a rebuild

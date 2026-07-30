@@ -114,7 +114,7 @@ $sumsUrl = "$base/checksums.txt"
 # it unverified is remote code execution by download. A mismatched hash, an unreachable
 # checksums.txt and a checksums.txt that does not list this asset all get the SAME answer —
 # refuse — because they are the same statement: nobody can vouch for these bytes. The accepted
-# consequence is written down in plan_publicacion.md §3.2.
+# consequence is deliberate and accepted; see the same block in bootstrap.sh.
 #
 # It throws, which the caller's catch turns into $ok = $false and an exit code of 0. hooks.json
 # dispatches `bash bootstrap.sh || powershell bootstrap.ps1`, so the exit code carries "there is

@@ -169,7 +169,7 @@ func TestScanDiffSeesWhatNoShellParserCan(t *testing.T) {
 	}
 }
 
-// TestScanDiffPersistsTheContrast — plan_publicacion.md §4.2's numerator.
+// TestScanDiffPersistsTheContrast — the numerator that was computed and thrown away.
 //
 // The contrast was computed and printed. Nothing kept it, so the one question S-Bus raises about
 // batten (do hand-declared write-sets over-declare the way automatically reconstructed read-sets
@@ -283,7 +283,7 @@ func TestAnUnscannedRunIsNotZeroPercent(t *testing.T) {
 	}
 }
 
-// TestMeasureReportsWriteSetUtilization — the surface where plan_publicacion.md §4.2's number is read.
+// TestMeasureReportsWriteSetUtilization — the surface where that number is read.
 //
 // A number in a table nobody prints is not an answer. This asserts the three things that stop the
 // block being read as more than it is: the median with its N, the unscanned runs called NOT
@@ -346,7 +346,7 @@ func TestMeasureReportsWriteSetUtilization(t *testing.T) {
 	})
 
 	if !strings.Contains(out, "write-sets") {
-		t.Fatalf("`batten measure` has no write-set block, so plan_publicacion.md §4.2's number exists in the database "+
+		t.Fatalf("`batten measure` has no write-set block, so the number exists in the database "+
 			"and nowhere a human reads:\n%s", out)
 	}
 	// 1 of 2 claims never touched.
@@ -365,7 +365,7 @@ func TestMeasureReportsWriteSetUtilization(t *testing.T) {
 		t.Errorf("`unused` mixes over-claiming with files that legitimately needed no change; "+
 			"the block must say so wherever it prints the number:\n%s", out)
 	}
-	// The threshold is pre-registered in plan_publicacion.md §4.2 and has to travel WITH the number, or it can
+	// The threshold is pre-registered and has to travel WITH the number, or it can
 	// be chosen after the fact — which is the failure mode the pre-registration exists to stop.
 	if !strings.Contains(out, "≥10") && !strings.Contains(out, "32%") {
 		t.Errorf("the pre-registered threshold is not quoted with the number:\n%s", out)

@@ -46,3 +46,19 @@ graphify-out/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]/
 # statusline for every cloner. `.claude/settings.local.json` is the documented per-user file;
 # a project-wide setting belongs in a committed file that has no absolute path in it.
 /.claude/settings.json
+
+# Derivable, and a third of the repository. graph.html embeds its data rather than loading
+# graph.json, so `graphify cluster-only` regenerates it byte for byte from the graph that IS
+# versioned. Nothing links it. Keeping it tracked cost 1.6 MB — twenty times the size of the
+# plugin that actually ships — to version a rendering.
+graphify-out/graph.html
+
+# The author's working documents. They are real and they are current; they are just not part of
+# what a clone needs, and a reader who finds them has to work out that they are not documentation.
+# They live on the author's machine and in git history up to this commit.
+#
+# The rule that comes with this, learned the hard way and then again: NOTHING TRACKED MAY CITE
+# THEM. A comment pointing at a document that is not in the tree is a dead reference at best, and
+# at worst it re-points itself at an unrelated section of whatever replaces it.
+# TestEveryPlanReferenceNamesTheDocumentAndResolves enforces that.
+docs/general/

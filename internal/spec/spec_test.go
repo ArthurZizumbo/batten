@@ -148,7 +148,7 @@ func TestReferentialIntegrity(t *testing.T) {
 			`unknown gate "typo"`,
 		},
 		{
-			// `resources:` and `domains[].resources` were REMOVED (plan_publicacion.md §7), so the referential
+			// `resources:` and `domains[].resources` were REMOVED, so the referential
 			// check that used to live here went with them. What replaced it is the unknown-key
 			// report: a spec still carrying the block is told the key is not read, rather than
 			// being validated against a promise batten never kept. See
@@ -410,7 +410,7 @@ func TestUnknownKeysLoadAndAreReported(t *testing.T) {
 		t.Errorf("UnknownKeys = %v, want %v (sorted, so doctor's output is diffable)", got, want)
 	}
 
-	// The migration path for `resources:`, removed in plan_publicacion.md §7. A spec that still carries it must
+	// The migration path for `resources:`, removed from the spec. A spec that still carries it must
 	// keep LOADING — batten does not brick a repo over a key it stopped reading — and must be told
 	// the key is dead. Silence here would be the removal's own version of the failure the removal
 	// was for: the user goes on believing the block does something.

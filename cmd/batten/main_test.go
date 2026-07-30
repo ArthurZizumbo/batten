@@ -132,7 +132,7 @@ func TestADirectoryClaimIsRefusedWithTheShapeThatWorks(t *testing.T) {
 	})
 }
 
-// TestAClaimOutsideTheRepoIsRefused is finding #7's sibling case (plan_publicacion.md §5).
+// TestAClaimOutsideTheRepoIsRefused is field-test finding #7's sibling case.
 //
 // The directory claim above is refused; a claim of an ABSOLUTE path outside the root was not. It
 // was stored verbatim and answered with the same success line, and the guard — which compares
@@ -188,7 +188,7 @@ func TestAClaimOutsideTheRepoIsRefused(t *testing.T) {
 	})
 }
 
-// TestASecondRunCannotClaimAFileAnotherOpenRunOwns is finding #4 (plan_publicacion.md §5).
+// TestASecondRunCannotClaimAFileAnotherOpenRunOwns is field-test finding #4.
 //
 // `claim` only ever looked inside its OWN run — the writesets primary key defends one run — so the
 // second run of a project claimed the same path, got *"any other agent writing them is now
@@ -251,7 +251,7 @@ func TestASecondRunCannotClaimAFileAnotherOpenRunOwns(t *testing.T) {
 	})
 }
 
-// TestEvidenceOfObjectsIsRefusedByName is finding #27 (plan_publicacion.md §5).
+// TestEvidenceOfObjectsIsRefusedByName is field-test finding #27.
 //
 // A model asked for evidence naturally emits a list of objects. evidence[] is a list of strings on
 // purpose, and what came back was the Go decoder's own sentence — `json: cannot unmarshal object
@@ -316,7 +316,7 @@ func TestAWrongFieldTypeNamesThatField(t *testing.T) {
 	}
 }
 
-// TestInitIgnoresBattensOwnDatabase is finding #59 (plan_publicacion.md §5).
+// TestInitIgnoresBattensOwnDatabase is field-test finding #59.
 //
 // `batten init` wrote batten.yaml and said nothing about .gitignore, so the adopter's very next
 // `git add -A` committed batten's database: a binary SQLite file that grows with every run,

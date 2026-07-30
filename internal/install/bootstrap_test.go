@@ -340,7 +340,7 @@ func TestBootstrapExitsZeroAndLeavesNothingBehindWhenTheDownloadFails(t *testing
 	}
 }
 
-// --- the tampering matrix (plan_publicacion.md §3.1) ---
+// --- the tampering matrix ---
 //
 // bootstrap downloaded 14 MB and verified nothing. The only post-download check was that the
 // binary answers `version`, which a hostile binary answers happily — and seven hooks plus an MCP
@@ -422,7 +422,7 @@ func TestBootstrapInstallsWhenChecksumMatches(t *testing.T) {
 }
 
 // checksums.txt unreachable gets the SAME treatment as a mismatch, and the reason is written in
-// plan_publicacion.md §3.1: for this project's own releases a 404 is counterfactual (GoReleaser has produced the
+// For this project's own releases a 404 is counterfactual (GoReleaser has produced the
 // file since before the first tag), so the reachable case is a BATTEN_BOOTSTRAP_BASE_URL aimed at
 // an incomplete mirror — where "install it anyway" is precisely the wrong answer.
 func TestBootstrapFailsClosedWithoutChecksums(t *testing.T) {
@@ -440,7 +440,7 @@ func TestBootstrapFailsClosedWithoutChecksums(t *testing.T) {
 	}
 }
 
-// The claim plan_publicacion.md §3.2 rests its whole argument on: the ungated window is the FIRST install only.
+// The claim the whole fail-closed argument rests on: the ungated window is the FIRST install only.
 //
 // Act 1 is the differential half — a tampered first download must not reach the cache. Act 2 is
 // the payoff: with the cache holding what a verified install left, a plugin update restores it

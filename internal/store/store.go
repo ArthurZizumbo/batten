@@ -363,7 +363,7 @@ var migrations = []string{
 		  evidence TEXT,
 		  PRIMARY KEY (run_id, idx)
 	)`,
-	// v12: the write-set contrast, kept instead of printed (plan_publicacion.md §4.2).
+	// v12: the write-set contrast, kept instead of printed.
 	//
 	// `batten scan-diff` already computed the one number nobody else in this ecosystem reports
 	// — how far a hand-declared write-set over-declares — and wrote it to stdout. Nothing kept
@@ -1736,7 +1736,7 @@ func (s *Store) MeasureByCodeGraph(project string) ([]MeasureGroup, error) {
 	return s.measureByFlag(project, "code_graph", "code graph")
 }
 
-// ---------- the write-set contrast (plan_publicacion.md §4.2) ----------
+// ---------- the write-set contrast ----------
 
 // Scan is one recorded contrast between what a run's write-sets CLAIMED and what its diff did.
 // Counts only: the paths themselves are already in `writesets` and in git, and a copy of them

@@ -43,7 +43,7 @@ type Spec struct {
 	// Domain.Model, which `batten show` DOES verify against the ledger.
 	//
 	// `resources` and `domains[].resources` went the same way, for the same reason and with the
-	// same argument (plan_publicacion.md §7). The schema said, in as many words, that "the orchestrator runs
+	// same argument. The schema said, in as many words, that "the orchestrator runs
 	// [the probe] BEFORE launching and queues" — and there is no orchestrator. The block had a
 	// `kind`, a `probe`, a `unit` and a `priority`, none of them ever read; the only thing that
 	// touched them was this file's own referential check, which is declaring, not consuming.
@@ -124,7 +124,7 @@ type Budget struct {
 	MaxIterations    int     `yaml:"max_iterations"`
 	// OnExceed is block | warn, and both are wired: block denies the commit, warn says so on the
 	// commit and lets it through. `downgrade_effort` was a third value the loader accepted and
-	// nothing honoured; it is gone (plan_publicacion.md §7), and Validate names the removal rather than calling
+	// nothing honoured; it is gone, and Validate names the removal rather than calling
 	// it a typo.
 	OnExceed string `yaml:"on_exceed"`
 }
@@ -337,7 +337,7 @@ func (s *Spec) Validate() error {
 		}
 	}
 
-	// `downgrade_effort` was accepted here and wired nowhere (plan_publicacion.md §7). Lowering the model's
+	// `downgrade_effort` was accepted here and wired nowhere. Lowering the model's
 	// effort is orchestration, and batten does not orchestrate — the same argument that removed
 	// `models.tiers`/`models.phases` from the spec. A value the loader blesses and no code
 	// honours is the failure this project exists to remove, so it is gone rather than deferred,
