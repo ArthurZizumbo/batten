@@ -46,7 +46,7 @@ builds:
     # -trimpath, and it is a PRIVACY fix before it is a reproducibility one. Measured on this
     # tree, 2026-07-31: a `-s -w` binary built WITHOUT it embeds the absolute source paths —
     #
-    #   C:/Users/arthu/Proyectos/Public/LoopWorkFlow/cmd/batten/main.go
+    #   C:/Users/<user>/<...>/cmd/batten/main.go
     #
     # — the author's username and directory layout, in all six published binaries. With -trimpath:
     # zero matches. `-s -w` does NOT remove them; only -trimpath does.
