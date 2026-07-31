@@ -1,5 +1,7 @@
 # batten
 
+> **English** · Español: pendiente
+
 > **78% of agent failures are silent.** They do not raise an error — the agent reports success and
 > the work is wrong. In the same measurements, **deterministic gates tripled reliability**, and they
 > did it by refusing things rather than by asking an agent to be careful.
@@ -321,7 +323,7 @@ dashboard cannot.
 /plugin install batten
 ```
 
-**The full install guide is [`docs/INSTALL.md`](docs/INSTALL.md)** — Windows without Git Bash,
+**The full install guide is [`docs/INSTALL.md`](docs/INSTALL.md)** ([es](docs/INSTALL.es.md)) — Windows without Git Bash,
 building it yourself instead of downloading (`go install` included), where the state lives and why,
 adopting mid-sprint, and running two sessions in parallel.
 

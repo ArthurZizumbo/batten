@@ -1,165 +1,169 @@
-# Instalar batten en un proyecto
+# Installing batten in a project
 
-batten se instala como plugin de Claude Code, y **el binario llega solo**: un hook `SessionStart`
-corre el bootstrap, que en el primer arranque descarga el binario estático de tu plataforma desde
-el GitHub Release a **`${CLAUDE_PLUGIN_ROOT}/bin/batten`**. Esa ruta no es una preferencia: es la
-única que los hooks y el servidor MCP nombran, y es el directorio que Claude Code agrega al PATH —
-que es lo que hace que el `batten` pelado de los comandos `/batten-*` resuelva.
+> **English** · [Español](INSTALL.es.md)
 
-> *(Regla de conteo, porque este repo publicó "7 hooks" y "8 hooks" a la vez: `hooks.json` declara
-> **8 entradas** sobre **6 eventos**. Siete invocan el binario; la octava es el bootstrap, que es
-> forma shell porque tiene que correr cuando el binario todavía no existe.)*
+batten installs as a Claude Code plugin, and **the binary arrives on its own**: a `SessionStart`
+hook runs the bootstrap, which on first run downloads the static binary for your platform from the
+GitHub Release into **`${CLAUDE_PLUGIN_ROOT}/bin/batten`**. That path is not a preference: it is
+the only one the hooks and the MCP server name, and it is the directory Claude Code puts on PATH —
+which is what makes the bare `batten` in the `/batten-*` commands resolve.
 
-**Qué verifica antes de instalar nada.** El bootstrap baja también el `checksums.txt` del mismo
-release, saca **la línea de su propio asset** y compara. Es la única parte del bootstrap que
-**falla cerrado**: hash distinto, `checksums.txt` inalcanzable, o una máquina sin herramienta de
-sha256 son la misma frase —nadie puede responder por estos bytes— y reciben la misma respuesta: no
-se instala nada, el caché no se siembra, y stderr nombra la url, el hash esperado y el obtenido.
+> *(Counting rule, because this repo published both "7 hooks" and "8 hooks": `hooks.json` declares
+> **8 entries** across **6 events**. Seven invoke the binary; the eighth is the bootstrap, which is
+> shell form because it has to run when the binary does not exist yet.)*
 
-Se guarda además una copia en `${CLAUDE_PLUGIN_DATA}/bin`. Eso es **caché**: `${CLAUDE_PLUGIN_ROOT}`
-se borra en cada actualización del plugin, así que después de un update el bootstrap restaura desde
-la copia en vez de volver a bajar 14 MB.
+**What it verifies before installing anything.** The bootstrap also downloads the `checksums.txt`
+from the same release, pulls out **its own asset's line** and compares. This is the one part of the
+bootstrap that **fails closed**: a wrong hash, an unreachable `checksums.txt`, or a machine with no
+sha256 tool are the same sentence — nobody can vouch for these bytes — and get the same answer:
+nothing is installed, the cache is not seeded, and stderr names the url, the expected hash and the
+one it got.
 
-Si compilaste en local, el binario ya está en el `bin/` del plugin y bootstrap no descarga nada.
+A copy is kept in `${CLAUDE_PLUGIN_DATA}/bin`. That is a **cache**, nothing more:
+`${CLAUDE_PLUGIN_ROOT}` is wiped on every plugin update, so after one the bootstrap restores from
+the copy instead of spending 14 MB again.
 
-Si la descarga falla, lo dice y los hooks no-opean: **nada queda gobernado**, y batten prefiere
-avisarlo a fingir que te está protegiendo.
+If you built locally, the binary is already in the plugin's own `bin/` and the bootstrap downloads
+nothing.
 
-### Windows sin Git Bash
+If the download fails, it says so and the hooks no-op: **nothing is being gated**, and batten would
+rather tell you than pretend it is protecting you.
 
-El hook intenta `bash bootstrap.sh` y, si esta máquina no tiene bash, cae a
-`bootstrap.ps1` — PowerShell 5.1, el que viene en la caja. No hay que instalar nada. Para correrlo
-a mano (o si querés ver la salida completa):
+### Windows without Git Bash
+
+The hook tries `bash bootstrap.sh` and, if this machine has no bash, falls back to `bootstrap.ps1`
+— PowerShell 5.1, the one that ships in the box. Nothing to install. To run it by hand (or to see
+the full output):
 
 ```
-<ruta-del-plugin>\scripts\bootstrap.cmd
+<plugin-path>\scripts\bootstrap.cmd
 ```
 
-Requiere `System32\tar.exe`, que Windows trae desde 10 1803. El script lo invoca por ruta completa
-a propósito: el `tar` del PATH suele ser el GNU tar de Git Bash, que lee `C:\Users\...` como un host
-remoto y no desempaca nada.
+It needs `System32\tar.exe`, which Windows has shipped since 10 1803. The script invokes it by full
+path on purpose: the `tar` on PATH is usually Git Bash's GNU tar, which reads `C:\Users\...` as a
+remote host and unpacks nothing.
 
-### Windows y el antivirus
+### Windows and your antivirus
 
-**Es esperable que Defender se queje al menos una vez, y no es que batten esté infectado.**
-Windows Defender clasifica binarios de Go recién compilados y **sin firmar** como
-`Trojan:Win32/*!ml`. El sufijo `!ml` es un veredicto de un modelo de machine learning, no una
-firma, y se comporta como tal: le pasó al binario de este proyecto, con dos builds del **mismo**
-código dando respuestas distintas y un re-escaneo explícito de esos mismos bytes volviendo limpio.
-Eso es la forma de un falso positivo. batten todavía no está firmado con Authenticode.
+**Expect Defender to complain at least once, and it does not mean batten is infected.** Windows
+Defender classifies freshly built, **unsigned** Go binaries as `Trojan:Win32/*!ml`. The `!ml`
+suffix is a machine-learning verdict rather than a signature, and it behaves like one: it happened
+to this project's own binary, with two builds of the **same** code getting different answers and an
+explicit rescan of those same bytes coming back clean. That is the shape of a false positive.
+batten is not signed with an Authenticode certificate yet.
 
-Importa más que un cartel feo. Si el binario cae en cuarentena **después** de instalarse, cada
-hook queda apuntando a un archivo que ya no existe, mueren en silencio, y `batten doctor` no puede
-avisarte porque doctor **es** el binario que falta. El bootstrap detecta el patrón —una segunda
-restauración desde el caché dentro del mismo día— y lo dice en `SessionStart`. Si ves ese mensaje,
-mirá la cuarentena de tu antivirus.
+It matters more than an ugly dialog. If the binary is quarantined **after** it installs, every hook
+is pointed at a file that no longer exists, they die in silence, and `batten doctor` cannot tell you
+because doctor **is** the missing binary. The bootstrap detects the pattern — a second restore from
+cache inside a day — and says so at `SessionStart`. If you see that message, check your antivirus
+quarantine.
 
-Qué podés hacer:
+What you can do:
 
-- **Reportar el falso positivo** en <https://www.microsoft.com/en-us/wdsi/filesubmission>. Es
-  gratis y sirve para ese binario; cada release es uno nuevo.
-- **Compilarlo vos** — ver abajo. Un binario que produce tu propio toolchain no viaja por la red.
+- **Report the false positive** at <https://www.microsoft.com/en-us/wdsi/filesubmission>. It is
+  free and it clears that binary; every release is a new one.
+- **Build it yourself** — see below. A binary your own toolchain produced never crossed the network.
 
-## Compilarlo vos, sin descargar nada
+## Building it yourself, downloading nothing
 
-Tres caminos, y ninguno reemplaza al bootstrap: los tres terminan en el mismo lugar, porque
-`${CLAUDE_PLUGIN_ROOT}/bin/batten` es la única ruta que los hooks invocan.
+Three routes, and none of them replaces the bootstrap: all three end in the same place, because
+`${CLAUDE_PLUGIN_ROOT}/bin/batten` is the only path the hooks invoke.
 
 ```bash
-# a) desde un checkout — el camino de desarrollo, deja el binario donde va
+# a) from a checkout — the development path; puts the binary where it belongs
 scripts/build-plugin.sh          # macOS/Linux
 scripts/build-plugin.ps1         # Windows
 
-# b) go install, sin clonar nada
+# b) go install, without cloning anything
 go install github.com/ArthurZizumbo/batten/cmd/batten@latest
-#    deja el binario en $(go env GOPATH)/bin. Eso NO alcanza por sí solo: hay que ponerlo
-#    donde los hooks miran.
-cp "$(go env GOPATH)/bin/batten" "$CLAUDE_PLUGIN_ROOT/bin/batten"       # .exe en Windows
+#    leaves the binary in $(go env GOPATH)/bin. That alone is NOT enough: it has to go
+#    where the hooks look.
+cp "$(go env GOPATH)/bin/batten" "$CLAUDE_PLUGIN_ROOT/bin/batten"       # .exe on Windows
 
-# c) desde el checkout, a mano
+# c) from the checkout, by hand
 go build -o "$CLAUDE_PLUGIN_ROOT/bin/batten" ./cmd/batten
 ```
 
-Con el binario ya en su lugar, el bootstrap lo ve y **no descarga nada** — es un `stat` y sale.
+With the binary already in place the bootstrap sees it and **downloads nothing** — one stat and it
+exits.
 
-> **Por qué el paso de copiar no se puede saltear**, aunque engram sí lo permita: el `.mcp.json` de
-> engram invoca `engram` pelado y resuelve por PATH. batten deliberadamente no hace eso, y la razón
-> tiene nombre — un `batten` cualquiera en el PATH satisfacía `command -v batten` mientras el
-> archivo que los hooks nombran no existía, así que el bootstrap cantaba victoria sobre un `bin/`
-> vacío y nada quedaba gobernado. Los hooks nombran un archivo, no un comando.
+> **Why the copy step cannot be skipped**, even though engram allows it: engram's `.mcp.json`
+> invokes a bare `engram` and resolves through PATH. batten deliberately does not, and the reason
+> has a name — some `batten` on PATH satisfied `command -v batten` while the file the hooks name did
+> not exist, so the bootstrap declared victory over an empty `bin/` and nothing was being gated.
+> The hooks name a file, not a command.
 
-> **Un detalle honesto de `v0.1.0-beta.1`:** un binario hecho con `go install` reporta
-> `batten 0.1.0` en vez de `0.1.0-beta.1`, porque la versión la inyecta GoReleaser por ldflags y
-> ese tag todavía no traía el fallback que la lee del módulo. `batten doctor` va a decir que el
-> plugin y el binario no coinciden. Está arreglado para el próximo tag; mientras tanto, usá (a) o
-> (c), o ignorá ese aviso puntual.
+> **An honest wart of `v0.1.0-beta.1`:** a binary built with `go install` reports `batten 0.1.0`
+> instead of `0.1.0-beta.1`, because GoReleaser injects the version through ldflags and that tag did
+> not yet carry the fallback that reads it from the module. `batten doctor` will say the plugin and
+> the binary disagree. It is fixed for the next tag; until then use (a) or (c), or ignore that one
+> warning.
 
-## Instalación (5 pasos)
+## Installing (5 steps)
 
 ```
-# 1. registrar el marketplace (una vez por máquina)
-#    - desde un release publicado:
+# 1. register the marketplace (once per machine)
+#    - from a published release:
 /plugin marketplace add ArthurZizumbo/batten
-#    - o desde un checkout local (dev): primero compila el binario, luego:
+#    - or from a local checkout (dev): build the binary first, then:
 scripts/build-plugin.ps1            # Windows
 scripts/build-plugin.sh             # macOS/Linux
-/plugin marketplace add <ruta-al-repo>
+/plugin marketplace add <path-to-repo>
 
-# 2. instalar
+# 2. install
 /plugin install batten@batten
 
-# 3. generar el spec entrevistando el repo
-/batten-init                        # o en terminal: batten init
+# 3. generate the spec by interviewing the repo
+/batten-init                        # or in a terminal: batten init
 
-# 4. (opcional) habilitar el techo de cuota de suscripción
+# 4. (optional) enable the subscription-quota ceiling
 batten statusline --install
 
-# 5. verificar
-batten doctor                       # verde -> listo
+# 5. verify
+batten doctor                       # green -> ready
 ```
 
-## Adoptar en un proyecto que YA está en desarrollo
+## Adopting in a project that is ALREADY under way
 
-Este es el caso normal, y batten está hecho para no estorbar:
+This is the normal case, and batten is built not to get in the way:
 
-- **`batten init` arranca en `enforcement: report`.** Los gates ADVIERTEN, no bloquean. Puedes
-  adoptar batten a mitad de un sprint sin que nadie choque contra un `deny` el día uno.
-- Cuando el equipo confía en los gates, cambia una línea del `batten.yaml`:
-  `enforcement: enforce` (o borra la línea; enforce es el default).
-- **Ramas ya abiertas**: si tu rama nombra la unidad (`feature/US-034-...`), batten la liga sola.
-  Si no, corre `batten phase <unit> <fase>` una vez para ligar esta sesión a su unidad.
-- **Migrar tu flujo en prosa**: si ya tienes el proceso escrito (un `prompts.md`, un
-  `CONTRIBUTING.md`), pásalo: `/batten-init --from docs/tu-flujo.md`. El agente reconcilia tu
-  prosa contra el borrador que el escaneo generó.
+- **`batten init` starts at `enforcement: report`.** Gates WARN, they do not block. You can adopt
+  batten mid-sprint without anyone hitting a `deny` on day one.
+- When the team trusts the gates, change one line of `batten.yaml`: `enforcement: enforce` (or
+  delete the line; enforce is the default).
+- **Branches already open**: if your branch names the unit (`feature/US-034-...`), batten binds it
+  on its own. If not, run `batten phase <unit> <phase>` once to bind this session to its unit.
+- **Migrating a prose workflow**: if your process is already written down (a `prompts.md`, a
+  `CONTRIBUTING.md`), bring it: `/batten-init --from docs/your-flow.md`. The agent reconciles your
+  prose against the draft the scan produced.
 
-## Dos o más sesiones en paralelo
+## Two or more sessions in parallel
 
-batten no se rompe con dos Claude Code trabajando el mismo repo:
+batten does not break with two Claude Codes working the same repo:
 
-- Cada sesión queda ligada a **su** unidad (por sesión, no por rama compartida).
-- Si la sesión B intenta escribir un archivo que un agente de la sesión A reclamó, batten lo
-  detiene nombrando la unidad en conflicto.
-- Si una sesión no está ligada a ninguna unidad (ambiguo), el `SessionStart` lo dice — y avisa
-  que los gates no pueden actuar hasta que la ligues.
-- **Recomendado para trabajo paralelo pesado**: un git worktree por unidad. Cada worktree tiene
-  su rama → la atribución por rama vuelve a ser automática, y el ledger + el guard entre runs
-  se comparten porque la DB de batten es global a la máquina.
+- Each session is bound to **its** unit (per session, not per shared branch).
+- If session B tries to write a file an agent of session A claimed, batten stops it and names the
+  conflicting unit.
+- If a session is bound to no unit (ambiguous), `SessionStart` says so — and warns that the gates
+  cannot act until you bind it.
+- **Recommended for heavy parallel work**: one git worktree per unit. Each worktree has its own
+  branch, so branch attribution becomes automatic again, and the ledger and the cross-run guard are
+  shared because batten's database is machine-global.
 
-## Dónde vive el estado
+## Where the state lives
 
-**`~/.batten/batten.db`**, siempre. Override con `BATTEN_DB`.
+**`~/.batten/batten.db`**, always. Override with `BATTEN_DB`.
 
-Esa ruta es deliberada y vale la pena explicarla, porque costó dos bugs en el dogfood. El estado
-NO vive en `${CLAUDE_PLUGIN_DATA}`: los procesos de hook tienen esa variable, pero tu terminal no,
-así que una ruta que dependa del entorno parte el estado en dos bases de datos — la TUI dice "no
-hay runs" mientras los hooks escriben runs felizmente en otro lado. Y `${CLAUDE_PLUGIN_ROOT}`
-queda prohibido en cualquier caso: se borra en cada actualización del plugin.
+That path is deliberate and worth explaining, because it cost two bugs in the dogfood. The state
+does NOT live in `${CLAUDE_PLUGIN_DATA}`: hook processes have that variable and your terminal does
+not, so a path that depends on the environment splits the state into two databases — the TUI says
+"no runs" while the hooks happily write runs somewhere else. And `${CLAUDE_PLUGIN_ROOT}` is
+forbidden in any case: it is wiped on every plugin update.
 
-El binario vive en `${CLAUDE_PLUGIN_ROOT}/bin` porque es el único lugar donde los hooks lo
-invocan, y su copia en `${CLAUDE_PLUGIN_DATA}/bin` es caché, no estado: perderla solo cuesta una
-descarga.
+The binary lives in `${CLAUDE_PLUGIN_ROOT}/bin` because that is the only place the hooks invoke it,
+and its copy in `${CLAUDE_PLUGIN_DATA}/bin` is cache, not state: losing it costs one download.
 
-## Desinstalar
+## Uninstalling
 
-`/plugin uninstall batten@batten`. La DB sobrevive: está en `~/.batten`, fuera del plugin. Bórrala
-a mano si de verdad quieres empezar de cero.
+`/plugin uninstall batten@batten`. The database survives: it is in `~/.batten`, outside the plugin.
+Delete it by hand if you really want to start over.

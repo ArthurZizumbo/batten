@@ -1,5 +1,7 @@
 # Quickstart — adopting batten in a repo that has none
 
+> **English** · Español: pendiente
+
 > Every command and every block of output below was captured from a real run on a real repo
 > built from an empty directory. Nothing here is illustrative.
 

@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -235,3 +236,60 @@ func TestTheBootstrapHookNamesAnInterpreter(t *testing.T) {
 	}
 	t.Error("hooks.json never invokes bootstrap.sh")
 }
+
+// TestEveryRelativeLinkResolves.
+//
+// Written the minute after adding a language switch that pointed at a translation which did not
+// exist yet. A broken link in a README is the same defect as a comment citing a retired document —
+// a pointer that survives the thing it points at — and this project has now produced that defect
+// four separate ways. Two of them are mechanised; this is the third.
+//
+// Only relative links are checked. An http(s) URL needs the network to verify and a guard that
+// needs the network is a guard that goes red on a train.
+func TestEveryRelativeLinkResolves(t *testing.T) {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git on PATH")
+	}
+	root := repoRoot(t)
+	out, err := exec.Command(git, "-C", root, "ls-files", "*.md").Output()
+	if err != nil {
+		t.Skipf("not a git checkout: %v", err)
+	}
+	docs := strings.Fields(strings.TrimSpace(string(out)))
+	if len(docs) == 0 {
+		t.Fatal("git tracks no markdown at all; this guard is looking in the wrong place")
+	}
+
+	for _, doc := range docs {
+		b, rerr := os.ReadFile(filepath.Join(root, filepath.FromSlash(doc)))
+		if rerr != nil {
+			continue
+		}
+		for _, m := range mdLinkRe.FindAllStringSubmatch(string(b), -1) {
+			target := m[1]
+			switch {
+			case strings.HasPrefix(target, "http://"), strings.HasPrefix(target, "https://"),
+				strings.HasPrefix(target, "#"), strings.HasPrefix(target, "mailto:"):
+				continue
+			}
+			// Drop an anchor; the file is what has to exist.
+			if i := strings.IndexByte(target, '#'); i >= 0 {
+				target = target[:i]
+			}
+			if target == "" {
+				continue
+			}
+			abs := filepath.Join(root, filepath.Dir(filepath.FromSlash(doc)), filepath.FromSlash(target))
+			if _, serr := os.Stat(abs); serr != nil {
+				t.Errorf("%s links to %q, which does not exist.\n"+
+					"    A link that outlives its target is the same defect as a comment citing a "+
+					"retired document: the reader follows it and finds nothing.", doc, m[1])
+			}
+		}
+	}
+}
+
+// mdLinkRe matches an inline markdown link's target. Reference-style links are not used in this
+// repository; if they ever are, this guard has to learn them rather than be relaxed.
+var mdLinkRe = regexp.MustCompile(`\]\(([^)\s]+)\)`)
