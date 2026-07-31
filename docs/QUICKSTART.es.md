@@ -1,17 +1,17 @@
-# Quickstart — adopting batten in a repo that has none
+# Quickstart — adoptar batten en un repo que no lo tiene
 
-> **English** · [Español](QUICKSTART.es.md)
+> [English](QUICKSTART.md) · **Español**
 
-> Every command and every block of output below was captured from a real run on a real repo
-> built from an empty directory. Nothing here is illustrative.
+> Cada comando y cada bloque de salida de abajo fue capturado de una corrida real sobre un repo
+> real construido desde un directorio vacío. Nada de acá es ilustrativo.
 
-The demo repo is `taskly`: a small Go project with two domains (`api/`, `store/`), an
-`AGENTS.md` per domain stating one invariant each, a `Makefile`, and a backlog in
-`docs/backlog.md` listing `US-001`..`US-005`. One invariant matters for what follows:
+El repo de demo es `taskly`: un proyecto Go chico con dos dominios (`api/`, `store/`), un
+`AGENTS.md` por dominio declarando un invariante cada uno, un `Makefile`, y un backlog en
+`docs/backlog.md` que lista `US-001`..`US-005`. Un invariante importa para lo que sigue:
 
-> `store.ErrNotFound` maps to 404, never to 500.
+> `store.ErrNotFound` mapea a 404, nunca a 500.
 
-## 1. `batten init` — read the repo, propose a spec
+## 1. `batten init` — leer el repo, proponer un spec
 
 ```
 $ batten init
@@ -23,8 +23,8 @@ Next:
   3. flip enforcement: enforce when you trust the gates
 ```
 
-It got `unit: US` from the backlog's headings, not from a branch name — the repo is on `main`
-and has never had a feature branch. The spec it wrote says where that came from:
+Sacó `unit: US` de los encabezados del backlog, no de un nombre de rama — el repo está en `main` y
+nunca tuvo una rama de feature. El spec que escribió dice de dónde salió:
 
 ```yaml
 unit:
@@ -34,8 +34,8 @@ unit:
   locator: '### {id}'
 ```
 
-The check commands were lifted verbatim from the `Makefile`, and the spec says so in a header
-comment rather than pretending it invented them:
+Los comandos de check se tomaron verbatim del `Makefile`, y el spec lo dice en un comentario de
+encabezado en vez de fingir que los inventó:
 
 ```yaml
 # This repo ALREADY has a process. The spec below should agree with it, not replace it:
@@ -44,8 +44,8 @@ comment rather than pretending it invented them:
 #   store/AGENTS.md (agent-rules) — per-directory rules — this boundary is probably a fan-out axis
 ```
 
-It also starts in **report mode** — gates warn, they do not block — and ends the file with the
-decisions it could not make for you:
+Además arranca en **modo report** —los gates avisan, no bloquean— y termina el archivo con las
+decisiones que no pudo tomar por vos:
 
 ```
 # - invariants are empty — fill each domain's invariants with the rules a reviewer would catch
@@ -53,10 +53,10 @@ decisions it could not make for you:
 # - enforcement starts at 'report' (gates warn, don't block) — flip to 'enforce' when trusted
 ```
 
-**Do the TODOs before going further.** Fill each domain's `invariants` from its `AGENTS.md`, then
-flip `enforcement: enforce`. The rest of this walkthrough assumes both.
+**Hacé los TODOs antes de seguir.** Llená los `invariants` de cada dominio desde su `AGENTS.md`, y
+después pasá a `enforcement: enforce`. El resto de este recorrido asume las dos cosas.
 
-## 2. `batten doctor` — is this repo actually governed?
+## 2. `batten doctor` — ¿este repo está gobernado de verdad?
 
 ```
 $ batten doctor
@@ -71,7 +71,7 @@ $ echo $?
 0
 ```
 
-`doctor` exits non-zero on a spec it calls invalid, so it is safe to put in CI:
+`doctor` sale distinto de cero ante un spec que considera inválido, así que es seguro ponerlo en CI:
 
 ```
 $ batten doctor
@@ -82,9 +82,9 @@ $ echo $?
 1
 ```
 
-## 3. Commit before opening a run — batten says it is not governing you
+## 3. Commitear antes de abrir una corrida — batten dice que no te está gobernando
 
-This is the state a newcomer is in for their whole first day, and it used to be silent.
+Este es el estado en el que un recién llegado está todo su primer día, y antes era silencioso.
 
 ```
 $ git checkout -b feature/US-002-missing-task-404
@@ -95,11 +95,11 @@ record, so there is no verdict to check and nothing was verified.
 Open one with `batten phase US-002 build` — the gate starts governing from there.
 ```
 
-It warns rather than denies, on purpose: batten cannot verify what was never declared, and
-refusing every commit in a repo that has not started a run would just get it uninstalled. But it
-never lets you believe a gate is running when it is not.
+Avisa en vez de denegar, a propósito: batten no puede verificar lo que nunca se declaró, y negar
+todo commit en un repo que no arrancó ninguna corrida solo lograría que lo desinstalen. Pero nunca
+te deja creer que hay un gate corriendo cuando no lo hay.
 
-## 4. `batten phase` — open the run, record the anchor
+## 4. `batten phase` — abrir la corrida, grabar el ancla
 
 ```
 $ batten phase US-002 build
@@ -107,13 +107,14 @@ anchor: US-002 base SHA = ca015de
 US-002 -> phase build
 ```
 
-The anchor is the point every later phase diffs from. Not `HEAD~1`, not "the last few commits" —
-a recorded SHA, so a review three days and nine commits later still scopes to this unit's work.
+El ancla es el punto desde el que diffea toda fase posterior. No `HEAD~1`, no "los últimos commits"
+— un SHA grabado, para que una revisión tres días y nueve commits después siga acotada al trabajo de
+este unit.
 
-Now write the code. In the demo: `api/handler.go` maps `store.ErrNotFound` to 404, plus a test
-that asserts it.
+Ahora escribí el código. En el demo: `api/handler.go` mapea `store.ErrNotFound` a 404, más un test
+que lo verifica.
 
-## 5. Commit with no verdict — denied
+## 5. Commit sin veredicto — denegado
 
 ```
 $ git commit -m "feat(US-002): 404 for a missing task"
@@ -122,9 +123,9 @@ DENY: batten: US-002 has no verdict envelope. Run the "verify" phase before comm
 To proceed anyway (recorded in the audit log): batten override US-002 --reason "..."
 ```
 
-There is always an escape. It is on the record.
+Siempre hay una salida. Queda registrada.
 
-## 6. The reviewer's verdict alone — still denied
+## 6. Solo el veredicto del revisor — sigue denegado
 
 ```
 $ batten phase US-002 verify
@@ -137,10 +138,10 @@ DENY: batten: US-002 has no batten-verified pass. The gate's checks must be RUN,
 Run: batten check US-002
 ```
 
-This is the whole point of the tool. An agent — or a person — writing "tests pass" in an
-envelope is a claim. The gate wants the claim *and* the run.
+Este es el punto entero de la herramienta. Un agente —o una persona— escribiendo "los tests pasan"
+en un sobre está haciendo una afirmación. El gate quiere la afirmación *y* la corrida.
 
-## 7. `batten check` — batten runs the gate's own checks
+## 7. `batten check` — batten corre los checks del propio gate
 
 ```
 $ batten check US-002
@@ -151,19 +152,19 @@ $ batten check US-002
 US-002: OK (batten-verified). all gate checks passed (batten ran them)
 ```
 
-Now the same commit goes through — silently, because an allowed commit is an ordinary commit.
+Ahora el mismo commit pasa — en silencio, porque un commit permitido es un commit común.
 
 ```
 $ git commit -m "feat(US-002): a missing task returns 404, not 500"
 [feature/US-002-missing-task-404 3a1c9f2] feat(US-002): a missing task returns 404, not 500
 ```
 
-**Both verdicts are required, and they must come from different producers.** `batten check`
-proves the declared checks ran. The verdict envelope proves somebody judged the work against its
-acceptance criteria. Neither substitutes for the other:
+**Los dos veredictos son obligatorios, y tienen que venir de productores distintos.**
+`batten check` prueba que los checks declarados corrieron. El sobre del veredicto prueba que alguien
+juzgó el trabajo contra sus criterios de aceptación. Ninguno reemplaza al otro:
 
 ```
-$ batten check US-003          # only batten's verdict exists
+$ batten check US-003          # solo existe el veredicto de batten
 $ git commit -m "feat(US-003): mark a task done"
 
 DENY: batten: US-003 has only batten's own check result. `batten check` proves the checks ran;
@@ -171,7 +172,7 @@ it does not judge whether the work meets its acceptance criteria.
 Record a verdict from the verify phase: batten verdict --file v.json
 ```
 
-## 8. `batten close` — and what the record looks like
+## 8. `batten close` — y cómo se ve el registro
 
 ```
 $ batten phase US-002 close
@@ -194,13 +195,13 @@ verdict qa=ok (batten): all gate checks passed (batten ran them)
   - go test ./...: PASS (exit 0, 637ms)
 ```
 
-Two verdicts, labelled by who produced them. The reviewer's cites the acceptance criteria;
-batten's cites its own exit codes and timings.
+Dos veredictos, rotulados por quién los produjo. El del revisor cita los criterios de aceptación; el
+de batten cita sus propios códigos de salida y tiempos.
 
-## The negative control — watch it actually deny
+## El control negativo — verlo denegar de verdad
 
-A walkthrough where everything passes proves nothing. Break the invariant on purpose: make the
-handler return 500 where the domain's `AGENTS.md` says 404.
+Un recorrido donde todo pasa no prueba nada. Rompé el invariante a propósito: hacé que el handler
+devuelva 500 donde el `AGENTS.md` del dominio dice 404.
 
 ```
 $ batten phase US-003 verify
@@ -218,8 +219,8 @@ $ echo $?
 1
 ```
 
-`batten check` exits **1** when the unit is blocked, so `batten check && ...` stops and CI fails.
-And the commit is refused with the reason and the next step:
+`batten check` sale **1** cuando el unit está bloqueado, así que `batten check && ...` se corta y CI
+falla. Y el commit se rechaza con la razón y el siguiente paso:
 
 ```
 $ git commit -m "feat(US-003): mark a task done"
@@ -228,7 +229,7 @@ DENY: batten: US-003 verdict is "blocked", not "ok". one or more gate checks fai
 safe_next_step: fix the failures, then run batten check again
 ```
 
-Fix the handler, re-check, and it clears:
+Arreglá el handler, re-chequeá, y se despeja:
 
 ```
 $ batten check US-003
@@ -239,7 +240,7 @@ $ echo $?
 0
 ```
 
-## What the ledger says when nobody measured it
+## Qué dice el ledger cuando nadie lo midió
 
 ```
 $ batten budget
@@ -248,19 +249,19 @@ US-005  usage NOT MEASURED (not zero — nothing has been ingested for this run)
                  run `batten ingest <unit> --transcript <path>`
 ```
 
-Not `0 tokens, $0.00`. A run nobody has priced has not spent nothing; it is unmeasured, and
-those two need opposite responses from whoever is reading. This is the first principle of the
-whole tool: **never report a number you do not have.**
+No `0 tokens, $0.00`. Una corrida que nadie tarifó no gastó nada; está *sin medir*, y esas dos cosas
+necesitan respuestas opuestas de quien esté leyendo. Este es el primer principio de toda la
+herramienta: **nunca reportes un número que no tenés.**
 
-## Where to go next
+## A dónde ir después
 
-- [`README.md`](../README.md) — what batten is and why the gate is a hook rather than a document.
-- [`FIELD-TEST.md`](FIELD-TEST.md) — batten run against a real project by agents that had never
-  seen it, and the 52 confirmed defects that came back.
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) — how it is put together inside, and where to start reading
-  the code.
-- `batten tui` — the same records, reviewable without leaving the terminal.
-- `batten canvas <unit>` — the run graph as a JSON Canvas, which Obsidian renders.
+- [`README.es.md`](../README.es.md) — qué es batten y por qué el gate es un hook y no un documento.
+- [`FIELD-TEST.md`](FIELD-TEST.md) — batten corrido contra un proyecto real por agentes que nunca lo
+  habían visto, y los 52 defectos confirmados que volvieron. *(en inglés)*
+- [`ARCHITECTURE.es.md`](ARCHITECTURE.es.md) — cómo está armado por dentro, y por dónde empezar a
+  leer el código.
+- `batten tui` — los mismos registros, revisables sin salir de la terminal.
+- `batten canvas <unit>` — el run graph como JSON Canvas, que Obsidian renderiza.
 
-**One rule if you are scripting against batten:** export `BATTEN_DB` before every command when
-you are working in a sandbox. It falls back to your real database the moment it is unset.
+**Una regla si vas a scriptear contra batten:** exportá `BATTEN_DB` antes de cada comando cuando
+trabajes en un sandbox. Cae a tu base de datos real en el momento en que no está seteada.

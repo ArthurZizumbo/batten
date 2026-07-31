@@ -1,6 +1,6 @@
 # batten
 
-> **English** · Español: pendiente
+> **English** · [Español](README.es.md)
 
 > **78% of agent failures are silent.** They do not raise an error — the agent reports success and
 > the work is wrong. In the same measurements, **deterministic gates tripled reliability**, and they
@@ -309,9 +309,10 @@ dashboard cannot.
 > nothing. That is fixed, along with four more install blockers the same audit surfaced, and the
 > suite now RUNS both bootstrap scripts against a real archive instead of reading them.
 >
-> What is still true, and is a different sentence: **no release has been published yet**, so the
-> download half of this path has not been exercised against a real tag. Building from source
-> remains a supported route and is what this repo runs on:
+> `v0.1.0-beta.1` is published, and the download half has now been exercised against it: six assets
+> and a `checksums.txt`, six 200s through `releases/latest/download`, every hash verified, and the
+> real `bootstrap.sh` installing from it into a plugin root where `batten version` answers with the
+> tag. Building from source remains a supported route and is what this repo runs on:
 >
 > ```console
 > $ git clone https://github.com/ArthurZizumbo/batten && cd batten
@@ -570,17 +571,25 @@ a typo in a top-level `batten.yaml` key used to be ignored in silence while `doc
 so two concurrent runs in one checkout were each told they owned the same file, after which the
 guard denied both.
 
-What has **not** happened yet, stated plainly: **the plugin has never been installed from a
-release**, because no release has been published — see the note at the top of *Install*. batten has
-not been adopted by a project it does not belong to, with people who did not write it. The bootstraps verify the release's **sha256** before installing anything and
-refuse to install what does not match, but they verify no **signature** — a compromised release
-account replaces the asset and its checksum line together, so that half of the supply chain is still
-open. And there is no GIF in this README — the `.tape` scripts that generate one are
+What has **not** happened yet, stated plainly: **batten has not been adopted by a project it does
+not belong to, with people who did not write it.** That is the whole reason the version says beta,
+and it is the one gap no amount of internal work closes. The binary now installs from a published
+release — verified end to end — but "it installs" and "somebody else uses it" are different claims
+and only the first one is proven.
+
+The bootstraps verify the release's **sha256** before installing anything and refuse to install what
+does not match, but they verify no **signature** — a compromised release account replaces the asset
+and its checksum line together, so that half of the supply chain is still open. On Windows the
+binary is also unsigned for Authenticode, which is why an antivirus can flag it (see *Install*). And there is no GIF in this README — the `.tape` scripts that generate one are
 written and verified ([`docs/tape/`](docs/tape/)), but the machine this was built on has no `vhs`
 installed, and `batten demo` is the live version anyway.
 
 The transcript format batten reads for token accounting is **not a public API** and can change
 without notice; if parsing breaks, batten reports the count as unavailable rather than guessing.
+
+How batten is put together inside — the packages, the data model, the guards that hold the code
+honest, and where to start reading — is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+([es](docs/ARCHITECTURE.es.md)).
 
 The full inventory — what is proven, what is merely built, what is missing, and the naming decisions
 still open — is in [ROADMAP.md](ROADMAP.md). What has landed so far is in
