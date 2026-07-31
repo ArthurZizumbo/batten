@@ -256,7 +256,7 @@ herramienta: **nunca reportes un número que no tenés.**
 ## A dónde ir después
 
 - [`README.es.md`](../README.es.md) — qué es batten y por qué el gate es un hook y no un documento.
-- [`FIELD-TEST.md`](FIELD-TEST.md) — batten corrido contra un proyecto real por agentes que nunca lo
+- [`FIELD-TEST.es.md`](FIELD-TEST.es.md) — batten corrido contra un proyecto real por agentes que nunca lo
   habían visto, y los 52 defectos confirmados que volvieron. *(en inglés)*
 - [`ARCHITECTURE.es.md`](ARCHITECTURE.es.md) — cómo está armado por dentro, y por dónde empezar a
   leer el código.

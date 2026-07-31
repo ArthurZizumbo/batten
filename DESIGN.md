@@ -1,109 +1,111 @@
-# loom — memoria procedural como dato
+# loom — procedural memory as data
 
-> ## ⚠️ Documento histórico. La herramienta se llama **batten**.
+> **English** · [Español](DESIGN.es.md)
+
+> ## ⚠️ Historical document. The tool is called **batten**.
 >
-> Este archivo es el documento de diseño **v3, del 2026-07-14**, escrito antes del rename. Se
-> conserva sin reescribir porque es un registro fechado: reescribirlo hacia atrás lo volvería una
-> falsificación. Al leerlo, traducí:
+> This file is the **v3 design document, dated 2026-07-14**, written before the rename. It is kept
+> unrewritten because it is a dated record: rewriting it backwards would turn it into a forgery.
+> While reading, translate:
 >
-> | dice | es |
+> | says | means |
 > |---|---|
 > | `loom` | `batten` |
 > | `loom.yaml` | `batten.yaml` |
-> | AgroSat, FarSLIP, US-0NN | el proyecto privado sobre el que se dogfoodeó |
+> | AgroSat, FarSLIP, US-0NN | the private project it was dogfooded on |
 >
-> **Esto no es documentación de uso y puede estar desactualizado.** Lo que la herramienta hace hoy
-> está en [README.md](README.md); cómo instalarla, en [docs/INSTALL.md](docs/INSTALL.md); qué
-> cambió y cuándo, en [CHANGELOG.md](CHANGELOG.md); y lo que sigue abierto, en
-> [ROADMAP.md](ROADMAP.md). Las decisiones de §1 y la tesis de §0 siguen siendo la razón de ser del
-> proyecto — eso es lo que vale la pena leer acá.
+> **This is not usage documentation and it may be out of date.** What the tool does today is in
+> [README.md](README.md); how to install it, in [docs/INSTALL.md](docs/INSTALL.md); what changed
+> and when, in [CHANGELOG.md](CHANGELOG.md); and what remains open, in [ROADMAP.md](ROADMAP.md).
+> The decisions in §1 and the thesis in §0 are still the project's reason to exist — that is what
+> is worth reading here.
 
-> **v3** del linaje `ecosistema-agentico-2026`. El v2 preguntaba "¿cómo generalizo mi harness en un producto?".
-> El v3 responde con una tesis más estrecha y más defendible: **el hueco no es observabilidad, es memoria procedural.**
+> **v3** of the `ecosistema-agentico-2026` lineage. v2 asked "how do I generalize my harness into a product?".
+> v3 answers with a narrower, more defensible thesis: **the gap is not observability, it is procedural memory.**
 >
-> **Fecha**: 2026-07-14. Basado en investigación verificada de `kepano/obsidian-skills`, `Graphify-Labs/graphify`,
-> `headroomlabs-ai/headroom`, los docs de plugins/hooks de Claude Code, y el código real de `Gentleman-Programming/engram`.
-> **Corrige seis cosas del v2** (§1) y **mata el ítem más caro de su roadmap** (§7).
+> **Date**: 2026-07-14. Based on verified research into `kepano/obsidian-skills`, `Graphify-Labs/graphify`,
+> `headroomlabs-ai/headroom`, the Claude Code plugins/hooks docs, and the actual code of `Gentleman-Programming/engram`.
+> **Corrects six things from v2** (§1) and **kills the most expensive item on its roadmap** (§7).
 
 ---
 
 ## 0. TL;DR
 
-Un agente de coding tiene tres memorias. Dos ya están resueltas. La tercera no existe.
+A coding agent has three memories. Two are already solved. The third does not exist.
 
-| Plano | Qué recuerda | Cómo se forma | Quién lo tiene |
+| Plane | What it remembers | How it forms | Who has it |
 |-------|--------------|---------------|----------------|
-| **Estructural** | qué **ES** el código, ahora | se **reconstruye** (AST, determinista) | graphify |
-| **Episódico** | qué **DECIDIMOS**, a lo largo del tiempo | se **acumula** (observaciones) | engram, claude-mem |
-| **Procedural** | **CÓMO TRABAJAMOS** | se **declara** | **nadie** |
+| **Structural** | what the code **IS**, right now | it is **rebuilt** (AST, deterministic) | graphify |
+| **Episodic** | what **WE DECIDED**, over time | it **accumulates** (observations) | engram, claude-mem |
+| **Procedural** | **HOW WE WORK** | it is **declared** | **nobody** |
 
-El artículo de Medium que originó esto (Graphify + Obsidian, "70x menos tokens") arma el plano 1 y lo llama memoria.
-Es media foto. Un agente que sabe perfectamente qué es tu código y qué decidiste ayer **sigue sin saber cómo trabajas**:
-qué fases corre, qué se paraleliza, qué es un write-set disjunto, qué cuenta como evidencia, qué bloquea un cierre.
+The Medium article that started this (Graphify + Obsidian, "70x fewer tokens") builds plane 1 and calls it memory.
+That is half the picture. An agent that knows perfectly what your code is and what you decided yesterday **still does not know how you work**:
+which phases it runs, what parallelizes, what a disjoint write-set is, what counts as evidence, what blocks a close.
 
-Hoy eso vive en prosa (`prompts_optimizers_v2.local.md`, 700 líneas, clavado a un proyecto), se pega a mano en cada
-sesión, y **no se puede hacer cumplir**: "prohibido `APPROVE` con `evidence[]` vacío" es una regla que el agente puede
-ignorar sin consecuencia.
+Today that lives in prose (`prompts_optimizers_v2.local.md`, 700 lines, pinned to one project), gets pasted by hand into every
+session, and **cannot be enforced**: "no `APPROVE` with an empty `evidence[]`" is a rule the agent can
+ignore without consequence.
 
-**`loom` convierte esa prosa en un spec declarativo (`loom.yaml`) + un motor que lo ejecuta y lo hace cumplir por hooks.**
+**`loom` turns that prose into a declarative spec (`loom.yaml`) + an engine that executes it and enforces it through hooks.**
 
-Un binario Go puro + un plugin delgado de Claude Code. No re-orquesta al agente: **le pone los rieles**.
+A pure Go binary + a thin Claude Code plugin. It does not re-orchestrate the agent: **it lays down the rails**.
 
 ---
 
-## 1. Correcciones al v2 (`ecosistema-agentico-2026`)
+## 1. Corrections to v2 (`ecosistema-agentico-2026`)
 
-La investigación de julio forzó seis correcciones. Documentarlas evita repetir la imprecisión.
+The July research forced six corrections. Documenting them avoids repeating the imprecision.
 
-| # | Sección v2 | Lo que decía | Corrección verificada (jul-2026) |
+| # | v2 section | What it said | Verified correction (Jul 2026) |
 |---|-----------|--------------|----------------------------------|
-| 1 | §8 TUI | "no existe librería Go que haga layout Sugiyama→ASCII; construir la TUI de grafo (~semanas) es el wedge" | **Cierto, e irrelevante.** El spec **JSON Canvas 1.0** está completo y es trivial (nodos `id/type/x/y/width/height/color`, edges `fromNode/toNode/fromSide/toEnd/label`). Emitir el run-DAG como `.canvas` son ~200 LOC y **Obsidian lo renderiza gratis**, navegable y git-diffable. **La TUI deja de ser el MVP y pasa a ser fase opcional.** El wedge no era dibujar el grafo — era *tener* el grafo. |
-| 2 | §10 obsidian-bridge | "construir el puente al vault (módulo Go, shell al CLI de Obsidian)" | **No construir.** (a) graphify ya exporta vault + `graph.canvas` nativo (`--obsidian`). (b) El CLI de Obsidian **requiere la app de escritorio corriendo** — inservible headless/CI. **Escribir archivos directo al vault** (que es lo que `kepano/obsidian-skills` habilita: `.md`/`.base`/`.canvas` son solo archivos). El CLI queda como lujo interactivo, no como dependencia. |
-| 3 | §5 distribución | "forma = engram exacto" | **Engram se equivoca aquí y no hay que copiarlo.** `bin/` de un plugin **sí** se añade al PATH del Bash tool automáticamente (docs, "File locations reference"). Engram no lo usa: instala el binario fuera de banda (brew / `go install`) y **si el usuario no lo instaló, sus hooks fallan en silencio**. Además sus hooks son shell scripts que dependen de `bash`+`jq`+`curl` → frágiles en Windows. **loom embarca el binario y lee el JSON del hook de stdin en exec form: cero dependencias de shell.** |
-| 4 | §14 headroom (ausente en v2) | — | **Evaluado y admitido como opcional.** El issue #951 (el daemon pre-forkeado no heredaba `ANTHROPIC_BASE_URL`) **está cerrado desde 2026-06-18**; la integración correcta hoy es `headroom init claude` (hooks `SessionStart`/`PreToolUse`, `supervisor_kind: none`). Su memoria es **opt-in**, así que no pisa a engram si no pasas `--memory`. Su **CacheAligner preserva el prompt cache** (96% hit medido independientemente). **PERO**: la ganancia real en coding es **~15-25%, no 60-95%** (el 95% es JSON), y hay una duda sin resolver sobre si ahorra algo en workflows de fan-out. → capacidad opcional **instrumentada**, no pieza de arquitectura (§9). |
-| 5 | §6.1 SQLite | "una goroutine single-writer + busy_timeout" | Incompleto. Falta lo que engram sí hace y casi todos omiten: **`db.SetMaxOpenConns(1)`**. Sin eso, el pool de `database/sql` abre varias conexiones al mismo archivo y te da `SQLITE_BUSY` **contra ti mismo**. Los 4 PRAGMA + `SetMaxOpenConns(1)` son el patrón completo. |
-| 6 | §2 "el producto es observabilidad" | el wedge era "loop + budget governor + DAG-TUI" | **El wedge es más estrecho y mejor: el spec.** La observabilidad es *consecuencia* de tener el proceso declarado, no el producto. Un DAG-TUI sin spec es un visor de logs bonito; un spec sin TUI ya bloquea cierres sin evidencia y ya impide colisiones de write-set. **El valor está en el `loom.yaml`, no en el grafo.** |
+| 1 | §8 TUI | "no Go library does Sugiyama→ASCII layout; building the graph TUI (~weeks) is the wedge" | **True, and irrelevant.** The **JSON Canvas 1.0** spec is complete and trivial (nodes `id/type/x/y/width/height/color`, edges `fromNode/toNode/fromSide/toEnd/label`). Emitting the run-DAG as a `.canvas` is ~200 LOC and **Obsidian renders it for free**, navigable and git-diffable. **The TUI stops being the MVP and becomes an optional phase.** The wedge was never drawing the graph — it was *having* the graph. |
+| 2 | §10 obsidian-bridge | "build the bridge to the vault (Go module, shelling out to the Obsidian CLI)" | **Do not build it.** (a) graphify already exports a vault + a native `graph.canvas` (`--obsidian`). (b) The Obsidian CLI **requires the desktop app to be running** — useless headless/CI. **Write files straight into the vault** (which is exactly what `kepano/obsidian-skills` enables: `.md`/`.base`/`.canvas` are just files). The CLI stays an interactive luxury, not a dependency. |
+| 3 | §5 distribution | "shape = exactly engram" | **Engram gets this wrong and must not be copied.** A plugin's `bin/` **is** added to the Bash tool's PATH automatically (docs, "File locations reference"). Engram does not use it: it installs the binary out of band (brew / `go install`) and **if the user did not install it, its hooks fail silently**. Its hooks are also shell scripts depending on `bash`+`jq`+`curl` → fragile on Windows. **loom ships the binary and reads the hook JSON from stdin in exec form: zero shell dependencies.** |
+| 4 | §14 headroom (absent from v2) | — | **Evaluated and admitted as optional.** Issue #951 (the pre-forked daemon did not inherit `ANTHROPIC_BASE_URL`) **has been closed since 2026-06-18**; the correct integration today is `headroom init claude` (`SessionStart`/`PreToolUse` hooks, `supervisor_kind: none`). Its memory is **opt-in**, so it does not step on engram unless you pass `--memory`. Its **CacheAligner preserves the prompt cache** (96% hit, measured independently). **BUT**: the real gain in coding is **~15-25%, not 60-95%** (the 95% is JSON), and there is an unresolved doubt over whether it saves anything in fan-out workflows. → an optional **instrumented** capability, not a piece of the architecture (§9). |
+| 5 | §6.1 SQLite | "a single-writer goroutine + busy_timeout" | Incomplete. It misses the thing engram does do and almost everyone omits: **`db.SetMaxOpenConns(1)`**. Without it, the `database/sql` pool opens several connections to the same file and hands you `SQLITE_BUSY` **against yourself**. The 4 PRAGMAs + `SetMaxOpenConns(1)` are the complete pattern. |
+| 6 | §2 "the product is observability" | the wedge was "loop + budget governor + DAG-TUI" | **The wedge is narrower and better: the spec.** Observability is a *consequence* of having the process declared, not the product. A DAG-TUI without a spec is a pretty log viewer; a spec without a TUI already blocks closes without evidence and already prevents write-set collisions. **The value is in the `loom.yaml`, not in the graph.** |
 
 ---
 
-## 2. El producto en una frase
+## 2. The product in one sentence
 
-> **`loom.yaml` es a tu proceso lo que `Dockerfile` es a tu entorno**: un archivo declarativo, versionado,
-> diffeable, que convierte una práctica implícita en un artefacto ejecutable y verificable.
+> **`loom.yaml` is to your process what a `Dockerfile` is to your environment**: a declarative, versioned,
+> diffable file that turns an implicit practice into an executable, verifiable artifact.
 
-Todo lo demás (binario, hooks, SQLite, canvas, MCP, TUI) existe para **servir** a ese archivo.
+Everything else (binary, hooks, SQLite, canvas, MCP, TUI) exists to **serve** that file.
 
 ---
 
-## 3. La generalización — qué es genérico y qué es del proyecto
+## 3. The generalization — what is generic and what belongs to the project
 
-Tu flujo de 7 fases **ya es una máquina de estados genérica disfrazada de prosa**:
+Your 7-phase workflow **is already a generic state machine disguised as prose**:
 
 ```
 research → plan → build(fan-out) → verify(gate) → fix → reverify(gate) → close
 ```
 
-Eso es universal. Sirve para AgroSat, para un SaaS TypeScript, para un repo de investigación.
-Lo que es de AgroSat es **puro dato**:
+That is universal. It works for AgroSat, for a TypeScript SaaS, for a research repo.
+What belongs to AgroSat is **pure data**:
 
-- la lista de skills por dominio
-- las reglas por capa (`session_id` en toda query, Polars no pandas, i18n trilingüe)
-- los comandos del checker (`make check`, `pytest`, `pnpm lint`)
-- las rutas de artefactos (`docs/us-*/`)
-- el recurso en contención (la H100) y su orden de prioridad
-- la llave de provenance (`US + git_sha + mlflow + dvc`)
+- the list of skills per domain
+- the per-layer rules (`session_id` in every query, Polars not pandas, trilingual i18n)
+- the checker commands (`make check`, `pytest`, `pnpm lint`)
+- the artifact paths (`docs/us-*/`)
+- the contended resource (the H100) and its priority order
+- the provenance key (`US + git_sha + mlflow + dvc`)
 
-**Todo eso sale al `loom.yaml`. El motor no sabe qué es FarSLIP, ni una H100, ni una US.**
+**All of that moves out into the `loom.yaml`. The engine does not know what FarSLIP is, or an H100, or a US.**
 
-### El test de neutralidad
+### The neutrality test
 
-El core es neutral si y solo si **el mismo binario corre en dos repos no relacionados y lo único que difiere es
-el `loom.yaml`**. Ese es el criterio de aceptación de la Fase 1, y se dogfoodea en AgroSat como *primer adapter*,
-no como caso especial.
+The core is neutral if and only if **the same binary runs in two unrelated repos and the only thing that differs is
+the `loom.yaml`**. That is Phase 1's acceptance criterion, and it is dogfooded on AgroSat as the *first adapter*,
+not as a special case.
 
 ---
 
-## 4. El spec (`loom.yaml`)
+## 4. The spec (`loom.yaml`)
 
 ```yaml
 version: 1
@@ -213,30 +215,30 @@ capabilities:
     measure: true                  # instrumentar: ¿ahorra de verdad en NUESTRO fan-out?
 ```
 
-**Nada en el motor conoce estas palabras.** El motor lee `domains[*].check` y lo ejecuta; no sabe qué es `pytest`.
+**Nothing in the engine knows these words.** The engine reads `domains[*].check` and executes it; it does not know what `pytest` is.
 
-### `loom init` — el arranque que hace que esto sea usable
+### `loom init` — the bootstrap that makes this usable
 
-El spec solo es "general" si migrar a él es barato. `loom init` **entrevista al repo**:
+The spec is only "general" if migrating to it is cheap. `loom init` **interviews the repo**:
 
-- detecta lenguajes, gestores de paquetes, targets de `Makefile`, `AGENTS.md`/`CLAUDE.md` por carpeta
-- detecta skills instalados y los mapea a dominios
-- `loom init --from docs/general/prompts_optimizers_v2.local.md` → **lee tu flujo en prosa y propone el `loom.yaml`**
+- detects languages, package managers, `Makefile` targets, per-folder `AGENTS.md`/`CLAUDE.md`
+- detects installed skills and maps them to domains
+- `loom init --from docs/general/prompts_optimizers_v2.local.md` → **reads your workflow in prose and proposes the `loom.yaml`**
 
-Migrar AgroSat es un comando, no una reescritura.
+Migrating AgroSat is one command, not a rewrite.
 
 ---
 
-## 5. Los tres wedges — lo que la prosa no puede y un hook sí
+## 5. The three wedges — what prose cannot do and a hook can
 
-Esto es lo único que se construye. Todo lo demás se reutiliza.
+This is the only thing that gets built. Everything else is reused.
 
-### 5.1 Verdict gate real
+### 5.1 A real verdict gate
 
-Hoy la regla de oro ("prohibido `ok` con `evidence[]` vacío") es una **súplica**. El agente puede cerrar igual.
+Today the golden rule ("no `ok` with an empty `evidence[]`") is a **plea**. The agent can close anyway.
 
-`PreToolUse` con matcher `Bash`, inspeccionando `tool_input.command`: si es un `git commit` y no existe un veredicto
-`ok` con `evidence[]` no vacío para la unidad activa → **deny**.
+`PreToolUse` with matcher `Bash`, inspecting `tool_input.command`: if it is a `git commit` and no `ok` verdict
+with a non-empty `evidence[]` exists for the active unit → **deny**.
 
 ```json
 { "hookSpecificOutput": {
@@ -246,34 +248,34 @@ Hoy la regla de oro ("prohibido `ok` con `evidence[]` vacío") es una **súplica
 }}
 ```
 
-No es una convención. **Es imposible de saltarse.**
+It is not a convention. **It is impossible to skip.**
 
-### 5.2 Write-sets disjuntos verificados
+### 5.2 Verified disjoint write-sets
 
-Hoy "dos agentes NUNCA escriben el mismo archivo" es **disciplina**. Un agente distraído la rompe y te enteras en el merge.
+Today "two agents NEVER write the same file" is **discipline**. A distracted agent breaks it and you find out in the merge.
 
-El motor conoce el write-set de cada sub-agente (lo declara el plan de la fase `plan`). `PreToolUse` con matcher
-`Write|Edit`, cruzando `tool_input.file_path` contra el write-set del `agent_id` que lo pide → **deny** si el archivo
-es de otro agente.
+The engine knows each sub-agent's write-set (the `plan` phase's plan declares it). `PreToolUse` with matcher
+`Write|Edit`, crossing `tool_input.file_path` against the write-set of the `agent_id` requesting it → **deny** if the file
+belongs to another agent.
 
-Esto convierte tu regla más importante y más frágil en un invariante mecánico.
+This turns your most important and most fragile rule into a mechanical invariant.
 
-### 5.3 Run-DAG como `.canvas`
+### 5.3 The run-DAG as a `.canvas`
 
-Los hooks `SubagentStart`/`SubagentStop` traen `agent_id` y `agent_type`. **El DAG sale solo.** Se materializa como
-un archivo JSON Canvas 1.0 en el vault:
+The `SubagentStart`/`SubagentStop` hooks carry `agent_id` and `agent_type`. **The DAG falls out on its own.** It materializes as
+a JSON Canvas 1.0 file in the vault:
 
-- nodos = fases, sub-agentes, gates; color por estado (verde ok / rojo blocked / amarillo warn)
-- edges tipadas = `spawn`, `depends_on`, `retry_of`, `rollback`
-- grupos = las fases
+- nodes = phases, sub-agents, gates; colored by state (green ok / red blocked / yellow warn)
+- typed edges = `spawn`, `depends_on`, `retry_of`, `rollback`
+- groups = the phases
 
-Obsidian lo abre y lo navegas. **Cero LOC de layout.**
+Obsidian opens it and you navigate it. **Zero LOC of layout.**
 
 ---
 
-## 6. Arquitectura
+## 6. Architecture
 
-Un binario Go puro (`CGO_ENABLED=0`, `modernc.org/sqlite`) con cinco caras, y un plugin delgado que lo invoca.
+A pure Go binary (`CGO_ENABLED=0`, `modernc.org/sqlite`) with five faces, and a thin plugin that invokes it.
 
 ```
 loom init            # entrevista el repo -> genera loom.yaml (o migra desde un doc en prosa)
@@ -287,7 +289,7 @@ loom tui             # visor Bubbletea            (FASE 3 — opcional)
 loom serve           # sink HTTP de hooks + OTLP  (FASE 3 — opcional)
 ```
 
-### El plugin (delgado, self-contained)
+### The plugin (thin, self-contained)
 
 ```
 .claude-plugin/plugin.json        # name, version, license
@@ -300,25 +302,25 @@ skills/loom-engine/SKILL.md       # cómo leer loom.yaml y ejecutar una fase
 skills/loom-verdict/SKILL.md      # el sobre + la regla de la evidencia
 ```
 
-**Estado en `${CLAUDE_PLUGIN_DATA}`, jamás en `${CLAUDE_PLUGIN_ROOT}`** — el root se borra en cada update del plugin
-(los docs lo dicen explícito: "treat it as ephemeral, do not write state here"). Este es un pie de bala clásico.
+**State in `${CLAUDE_PLUGIN_DATA}`, never in `${CLAUDE_PLUGIN_ROOT}`** — the root is wiped on every plugin update
+(the docs say it explicitly: "treat it as ephemeral, do not write state here"). This is a classic footgun.
 
-### Los hooks
+### The hooks
 
-| Evento | Qué hace loom |
+| Event | What loom does |
 |--------|---------------|
-| `SessionStart` | inyecta el estado de la unidad activa (fase, veredicto, presupuesto gastado) |
-| `PreToolUse` (`Bash`) | **verdict gate**: deny en `git commit` sin veredicto ok |
-| `PreToolUse` (`Write\|Edit`) | **write-set guard**: deny si el archivo es de otro agente |
-| `SubagentStart` | crea el nodo en el DAG (`agent_id`, `agent_type`) |
-| `SubagentStop` | cierra el nodo, captura `last_assistant_message`, ingesta tokens/costo |
-| `Stop` | cierra el run; recalcula presupuesto; re-emite el `.canvas` |
-| `PostToolUse` | ingesta eventos al log append-only (replay) |
+| `SessionStart` | injects the active unit's state (phase, verdict, budget spent) |
+| `PreToolUse` (`Bash`) | **verdict gate**: deny on `git commit` without an ok verdict |
+| `PreToolUse` (`Write\|Edit`) | **write-set guard**: deny if the file belongs to another agent |
+| `SubagentStart` | creates the node in the DAG (`agent_id`, `agent_type`) |
+| `SubagentStop` | closes the node, captures `last_assistant_message`, ingests tokens/cost |
+| `Stop` | closes the run; recomputes the budget; re-emits the `.canvas` |
+| `PostToolUse` | ingests events into the append-only log (replay) |
 
-### El spine SQLite
+### The SQLite spine
 
-En `${CLAUDE_PLUGIN_DATA}/loom.db`. Esquema del v2 §6.2, intacto — era correcto.
-Setup de concurrencia **completo** (el v2 omitía la línea que más importa):
+In `${CLAUDE_PLUGIN_DATA}/loom.db`. The v2 §6.2 schema, intact — it was correct.
+**Complete** concurrency setup (v2 omitted the line that matters most):
 
 ```go
 db, _ := sql.Open("sqlite", path)      // driver "sqlite", no "sqlite3"
@@ -326,115 +328,115 @@ db.SetMaxOpenConns(1)                  // <-- SIN ESTO te das SQLITE_BUSY a ti m
 // PRAGMA journal_mode=WAL; busy_timeout=5000; synchronous=NORMAL; foreign_keys=ON
 ```
 
-`SetMaxOpenConns(1)` serializa las escrituras **dentro** del proceso; WAL + `busy_timeout` absorbe la contención
-**entre** procesos (los hooks son procesos separados). Los dos, no uno.
+`SetMaxOpenConns(1)` serializes writes **inside** the process; WAL + `busy_timeout` absorbs contention
+**across** processes (hooks are separate processes). Both, not one.
 
 ---
 
-## 7. Qué NO se construye
+## 7. What does NOT get built
 
-Tan importante como lo que sí. El v2 iba a construir tres cosas que no hacen falta:
+As important as what does. v2 was going to build three things that are not needed:
 
-| v2 iba a construir | Por qué no |
+| v2 was going to build | Why not |
 |--------------------|------------|
-| **TUI de grafo Bubbletea + layout Sugiyama propio** (~semanas) | JSON Canvas + Obsidian lo renderiza gratis. Fase 3 opcional, por gusto, no por necesidad. |
-| **obsidian-bridge (módulo Go)** | Son **archivos**. Se escriben directo. El CLI de Obsidian exige la app abierta → inútil headless. |
-| **Memoria semántica** | engram. Nicho saturado (~89k★). Interoperar por MCP. |
-| **Motor de fan-out** | Dynamic Workflows de Claude Code (GA, 16 concurrentes / 1000 totales). **Gobernar, no re-orquestar.** |
-| **Grafo de código** | graphify (tree-sitter, 0 tokens de LLM, MIT). |
-| **Compresión de contexto** | headroom, si se demuestra que ahorra (§9). |
+| **Bubbletea graph TUI + its own Sugiyama layout** (~weeks) | JSON Canvas + Obsidian renders it for free. Optional Phase 3, for pleasure, not need. |
+| **obsidian-bridge (Go module)** | They are **files**. Write them directly. The Obsidian CLI demands the app open → useless headless. |
+| **Semantic memory** | engram. Saturated niche (~89k★). Interoperate over MCP. |
+| **Fan-out engine** | Claude Code's Dynamic Workflows (GA, 16 concurrent / 1000 total). **Govern, do not re-orchestrate.** |
+| **Code graph** | graphify (tree-sitter, 0 LLM tokens, MIT). |
+| **Context compression** | headroom, if it is shown to save (§9). |
 
 ---
 
-## 8. Cómo encajan las tres piezas externas
+## 8. How the three external pieces fit
 
-### graphify — memoria estructural (adoptar, desacoplado)
+### graphify — structural memory (adopt, decoupled)
 
-MIT, tree-sitter, **0 tokens de LLM para código**. Se enchufa donde tu flujo **paga el impuesto de re-orientación**:
-la Fase 2 dice literalmente *"entiende qué YA existe (Grep antes que Read)"* — eso es exactamente el gasto que el
-grafo elimina.
+MIT, tree-sitter, **0 LLM tokens for code**. It plugs in where your workflow **pays the re-orientation tax**:
+Phase 2 literally says *"understand what ALREADY exists (Grep before Read)"* — that is exactly the spend the
+graph eliminates.
 
 ```
 antes:  grep -r "keyword" ml/ -l  →  Read  →  Read  →  Read   (~15-20k tokens)
 ahora:  graphify query "qué ya existe para filtrado de PASTIS"  (~1-2k)
 ```
 
-**Con reservas honestas**: el 70x es best-case de **un** benchmark. Reviews independientes: <100 archivos ≈ nada;
-100-500 ≈ 6-15x; 500-5000 ≈ 30-49x. Su hook `PreToolUse` **ya se rompió** con Claude Code ≥2.1.117. Es pre-1.0
-(v0.9.15, branch `v8`, 537 issues abiertos).
+**With honest reservations**: the 70x is the best case of **one** benchmark. Independent reviews: <100 files ≈ nothing;
+100-500 ≈ 6-15x; 500-5000 ≈ 30-49x. Its `PreToolUse` hook **already broke** with Claude Code ≥2.1.117. It is pre-1.0
+(v0.9.15, branch `v8`, 537 open issues).
 
-→ **Desacoplado**: `capabilities.graph.provider: graphify | none`. Si falta, cae a grep. **No usamos su hook**
-(usamos el nuestro) ni su capa `lessons`/`reflect` (**pisa a engram** y es su parte más débil).
+→ **Decoupled**: `capabilities.graph.provider: graphify | none`. If it is missing, fall back to grep. **We do not use its hook**
+(we use ours) nor its `lessons`/`reflect` layer (**it steps on engram** and is its weakest part).
 
-### obsidian-skills — la superficie humana (adoptar, dependencia blanda)
+### obsidian-skills — the human surface (adopt, soft dependency)
 
-MIT, de Steph Ango (CEO de Obsidian). Cinco skills markdown puros. No aportan código: **enseñan los formatos**.
-Con ellos, el agente autora `.md` con frontmatter tipado, `.base` (dashboards) y `.canvas` (el DAG) correctamente.
+MIT, by Steph Ango (Obsidian's CEO). Five pure-markdown skills. They contribute no code: **they teach the formats**.
+With them, the agent authors `.md` with typed frontmatter, `.base` (dashboards), and `.canvas` (the DAG) correctly.
 
-`loom` escribe los archivos directo al vault. Obsidian los renderiza. **No hay integración que mantener.**
+`loom` writes the files straight into the vault. Obsidian renders them. **There is no integration to maintain.**
 
-Caveat que sí importa: los **rows renderizados de un `.base` no son legibles por scripts**. El `.base` es vista humana;
-SQLite es canónico. Nunca scrapear output de Bases.
+A caveat that does matter: the **rendered rows of a `.base` are not script-readable**. The `.base` is a human view;
+SQLite is canonical. Never scrape Bases output.
 
-### headroom — compresión (opcional, e **instrumentado**)
+### headroom — compression (optional, and **instrumented**)
 
-Admitido tras corregir mi propio error (§1.4). Pero entra **medido, no por fe**:
+Admitted after correcting my own mistake (§1.4). But it comes in **measured, not on faith**:
 
-- `capabilities.compression.provider: headroom`, `memory: false` (engram es dueño de lo episódico).
-- Instalación: `headroom init claude` (hooks, `supervisor_kind: none`). **No** el modo MCP: ahí `headroom_compress`
-  es una tool que el modelo llama **voluntariamente**, *después* de que el contenido ya entró al contexto y **ya se
-  facturó**. Solo el proxy intercepta de verdad.
-- **`measure: true`**: como `loom` ya lleva contabilidad en dólares por nodo, **medimos si ahorra en TU fan-out**
-  en vez de creerle al README. Hay una duda abierta y real de si los hooks disparan para sub-agentes lanzados con la
-  Agent tool — y tu flujo es fan-out puro. Si no ahorra, se apaga con una línea del yaml.
+- `capabilities.compression.provider: headroom`, `memory: false` (engram owns the episodic).
+- Installation: `headroom init claude` (hooks, `supervisor_kind: none`). **Not** the MCP mode: there `headroom_compress`
+  is a tool the model calls **voluntarily**, *after* the content already entered the context and **was already
+  billed**. Only the proxy truly intercepts.
+- **`measure: true`**: since `loom` already keeps per-node dollar accounting, **we measure whether it saves in YOUR fan-out**
+  instead of believing the README. There is an open, real doubt over whether the hooks fire for sub-agents launched with the
+  Agent tool — and your workflow is pure fan-out. If it does not save, it is turned off with one line of yaml.
 
-Expectativa calibrada: **15-25% en coding**, ~90ms de latencia por request, 200-500 tokens de overhead en passthrough,
-y un modo de fallo **silencioso** (mal configurado no da error, simplemente no ahorra → revisar `/stats`).
+Calibrated expectation: **15-25% in coding**, ~90ms of latency per request, 200-500 tokens of overhead in passthrough,
+and a **silent** failure mode (misconfigured it raises no error, it simply does not save → check `/stats`).
 
 ---
 
 ## 9. Roadmap
 
-| Fase | Qué | Criterio de éxito |
+| Phase | What | Success criterion |
 |------|-----|-------------------|
-| **0** | `loom.yaml` + JSON Schema + `loom init --from <doc en prosa>` | El flujo de AgroSat migra a un yaml de ~80 líneas y el original queda obsoleto |
-| **1 (MVP)** | Binario Go: `init`, `hook`, spine SQLite, **verdict gate**, **write-set guard** | Un `git commit` sin evidencia **es imposible**. Dos agentes no pueden pisarse un archivo. |
-| **2** | `run` (máquina de fases) + `canvas` + budget governor + MCP | El `.canvas` dibuja el camino real con reintentos visibles; el governor corta al romper el tope en dólares |
-| **3** | graphify + headroom cableados y **medidos**; export OTLP | Números reales de ahorro en TU fan-out, no del README |
-| **4 (gated)** | TUI Bubbletea | Solo si el `.canvas` demuestra no bastar |
+| **0** | `loom.yaml` + JSON Schema + `loom init --from <doc in prose>` | AgroSat's workflow migrates to a ~80-line yaml and the original becomes obsolete |
+| **1 (MVP)** | Go binary: `init`, `hook`, SQLite spine, **verdict gate**, **write-set guard** | A `git commit` without evidence **is impossible**. Two agents cannot step on one file. |
+| **2** | `run` (phase machine) + `canvas` + budget governor + MCP | The `.canvas` draws the real path with retries visible; the governor cuts off when the dollar ceiling breaks |
+| **3** | graphify + headroom wired and **measured**; OTLP export | Real savings numbers in YOUR fan-out, not the README's |
+| **4 (gated)** | Bubbletea TUI | Only if the `.canvas` proves not to be enough |
 
-**Criterio de neutralidad (bloqueante para v1)**: el mismo binario corre en AgroSat y en un repo web TS no
-relacionado, y **lo único que difiere es el `loom.yaml`**.
-
----
-
-## 10. Riesgos
-
-- **Sobre-declarar.** Si el `loom.yaml` intenta expresar todo, se vuelve un DSL y nadie lo escribe. Regla: **si no lo
-  puede hacer cumplir un hook o ejecutar un comando, no va en el yaml.** La prosa que quede, que quede en prosa.
-- **`loom init` mediocre = producto muerto.** Si migrar cuesta una tarde, nadie migra. Es la feature más importante
-  de la Fase 0, no una utilidad.
-- **Dependencias pre-1.0** (graphify v0.9.15, headroom v0.31): por eso son **capacidades opcionales que degradan**,
-  no dependencias duras. El core no las conoce.
-- **APIs de Claude Code en movimiento**: Dynamic Workflows es GA pero el scripting puede cambiar. Los hooks son la
-  superficie estable — apoyarse ahí.
-- **El gate como fricción.** Un verdict gate que bloquea mal es peor que no tenerlo. Necesita un escape explícito y
-  auditado (`loom override --reason "..."`), que **queda en el log**. Sin escape, el usuario desinstala el plugin.
+**Neutrality criterion (blocking for v1)**: the same binary runs on AgroSat and on an unrelated TS web repo,
+and **the only thing that differs is the `loom.yaml`**.
 
 ---
 
-## 11. Fuentes (verificadas jul-2026)
+## 10. Risks
 
-**Claude Code** — [plugins-reference](https://code.claude.com/docs/en/plugins-reference) (`bin/`→PATH, `${CLAUDE_PLUGIN_DATA}`, schema de `plugin.json`/`marketplace.json`) · [hooks](https://code.claude.com/docs/en/hooks) (30 eventos, `permissionDecision: deny`, exec form, tipo `http`)
+- **Over-declaring.** If the `loom.yaml` tries to express everything, it becomes a DSL and nobody writes it. Rule: **if a
+  hook cannot enforce it or a command cannot execute it, it does not go in the yaml.** Whatever prose remains, let it stay prose.
+- **A mediocre `loom init` = a dead product.** If migrating costs an afternoon, nobody migrates. It is the most important
+  feature of Phase 0, not a utility.
+- **Pre-1.0 dependencies** (graphify v0.9.15, headroom v0.31): which is why they are **optional capabilities that degrade**,
+  not hard dependencies. The core does not know them.
+- **Claude Code APIs in motion**: Dynamic Workflows is GA but the scripting may change. Hooks are the stable
+  surface — lean on that.
+- **The gate as friction.** A verdict gate that blocks wrongly is worse than no gate at all. It needs an explicit, audited
+  escape (`loom override --reason "..."`) that **stays in the log**. Without an escape, the user uninstalls the plugin.
 
-**Referencia de implementación** — [Gentleman-Programming/engram](https://github.com/Gentleman-Programming/engram) (`store.go`: `SetMaxOpenConns(1)` + 4 PRAGMA; `hooks.json`; distribución del binario)
+---
 
-**Obsidian** — [kepano/obsidian-skills](https://github.com/kepano/obsidian-skills) (MIT) · [JSON Canvas 1.0](https://jsoncanvas.org/spec/1.0/) · [Bases syntax](https://help.obsidian.md/bases/syntax) · [CLI](https://obsidian.md/help/cli) (exige app abierta)
+## 11. Sources (verified Jul 2026)
 
-**Grafo de código** — [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) (MIT, branch `v8`) · [review crítico](https://www.roborhythms.com/graphify-review/) (procedencia del 71x, hook roto)
+**Claude Code** — [plugins-reference](https://code.claude.com/docs/en/plugins-reference) (`bin/`→PATH, `${CLAUDE_PLUGIN_DATA}`, `plugin.json`/`marketplace.json` schema) · [hooks](https://code.claude.com/docs/en/hooks) (30 events, `permissionDecision: deny`, exec form, `http` type)
 
-**Compresión** — [headroomlabs-ai/headroom](https://github.com/headroomlabs-ai/headroom) (Apache-2.0) · [#951 CERRADO 2026-06-18](https://github.com/headroomlabs-ai/headroom/issues/951) · [docs MCP](https://headroom-docs.vercel.app/docs/mcp) (compresión manual, post-facturación) · [medición independiente](https://andrewpatterson.dev/posts/token-savings-rtk-headroom/) (96% cache-hit; el grueso del ahorro vino de otra herramienta)
+**Implementation reference** — [Gentleman-Programming/engram](https://github.com/Gentleman-Programming/engram) (`store.go`: `SetMaxOpenConns(1)` + 4 PRAGMAs; `hooks.json`; binary distribution)
 
-**SQLite** — [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) v1.53.0 (Go puro, driver `"sqlite"`)
+**Obsidian** — [kepano/obsidian-skills](https://github.com/kepano/obsidian-skills) (MIT) · [JSON Canvas 1.0](https://jsoncanvas.org/spec/1.0/) · [Bases syntax](https://help.obsidian.md/bases/syntax) · [CLI](https://obsidian.md/help/cli) (requires the app open)
 
-**Interno** — `ecosistema-agentico-2026.local.md` (v2, superado por este doc) · `prompts_optimizers_v2.local.md` (el flujo que se generaliza; se vuelve el primer `loom.yaml`)
+**Code graph** — [Graphify-Labs/graphify](https://github.com/Graphify-Labs/graphify) (MIT, branch `v8`) · [critical review](https://www.roborhythms.com/graphify-review/) (provenance of the 71x, broken hook)
+
+**Compression** — [headroomlabs-ai/headroom](https://github.com/headroomlabs-ai/headroom) (Apache-2.0) · [#951 CLOSED 2026-06-18](https://github.com/headroomlabs-ai/headroom/issues/951) · [MCP docs](https://headroom-docs.vercel.app/docs/mcp) (manual compression, post-billing) · [independent measurement](https://andrewpatterson.dev/posts/token-savings-rtk-headroom/) (96% cache-hit; the bulk of the savings came from another tool)
+
+**SQLite** — [modernc.org/sqlite](https://gitlab.com/cznic/sqlite) v1.53.0 (pure Go, `"sqlite"` driver)
+
+**Internal** — `ecosistema-agentico-2026.local.md` (v2, superseded by this doc) · `prompts_optimizers_v2.local.md` (the workflow being generalized; it becomes the first `loom.yaml`)

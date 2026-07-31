@@ -549,7 +549,7 @@ un cambio que yo había escrito, revisado y creído.
 
 Todos los blockers están arreglados, cada uno con un test que falla contra el commit anterior. El
 relato completo —qué se rompió, qué se refutó y por qué, y en qué acertó el método— está en
-[docs/FIELD-TEST.md](docs/FIELD-TEST.md).
+[docs/FIELD-TEST.es.md](docs/FIELD-TEST.es.md) ([en](docs/FIELD-TEST.md)).
 
 Desde entonces la réplica del field test se **reconstruyó como script commiteado**
 ([`scripts/replica-ui.sh`](scripts/replica-ui.sh)) y los ocho fixes se re-corrieron contra ella — un
@@ -564,7 +564,7 @@ que lo encontró ahora corre como script commiteado:
 
 Esos 52 hallazgos confirmados se trabajaron después. **45 están arreglados y verificados; 7 siguen
 abiertos.** Están enumerados, con reproducciones, bajo *Known gaps* en
-[CHANGELOG.md](CHANGELOG.md) — porque un proyecto cuyo argumento entero es *"nunca reportes un
+[CHANGELOG.es.md](CHANGELOG.es.md) — porque un proyecto cuyo argumento entero es *"nunca reportes un
 número que no tenés"* no tiene derecho a resumir su propia lista de defectos como "casi todo
 listo".
 
@@ -603,7 +603,7 @@ cambiar sin aviso; si el parseo se rompe, batten reporta el conteo como no dispo
 adivinar.
 
 El inventario completo —qué está probado, qué está apenas construido, qué falta, y las decisiones de
-nombre todavía abiertas— está en [ROADMAP.md](ROADMAP.md). Lo que aterrizó hasta ahora está en
-[CHANGELOG.md](CHANGELOG.md).
+nombre todavía abiertas— está en [ROADMAP.es.md](ROADMAP.es.md) ([en](ROADMAP.md)). Lo que aterrizó
+hasta ahora está en [CHANGELOG.es.md](CHANGELOG.es.md) ([en](CHANGELOG.md)).
 
 MIT.

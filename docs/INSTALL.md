@@ -93,11 +93,15 @@ exits.
 > not exist, so the bootstrap declared victory over an empty `bin/` and nothing was being gated.
 > The hooks name a file, not a command.
 
-> **An honest wart of `v0.1.0-beta.1`:** a binary built with `go install` reports `batten 0.1.0`
-> instead of `0.1.0-beta.1`, because GoReleaser injects the version through ldflags and that tag did
-> not yet carry the fallback that reads it from the module. `batten doctor` will say the plugin and
-> the binary disagree. It is fixed for the next tag; until then use (a) or (c), or ignore that one
-> warning.
+> **Version reporting, fixed after `v0.1.0-beta.1`.** Route (a) now stamps the version the same way
+> the release does, so a binary you built reports the same string as one you downloaded and
+> `batten doctor` agrees with `plugin.json`. Route (b) reports the module version it was installed
+> at. If you are still on `v0.1.0-beta.1` itself, a `go install` build says `batten 0.1.0` and
+> doctor calls out the mismatch — use (a) or (c), or ignore that one warning.
+>
+> *(What was actually broken: `-X main.version` is silently ignored by the Go linker unless the
+> variable is declared uninitialized or with a constant. It was initialized with a function call,
+> so the flag GoReleaser has always passed did nothing — no error, no warning.)*
 
 ## Installing (5 steps)
 
