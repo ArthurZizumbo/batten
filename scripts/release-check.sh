@@ -60,9 +60,16 @@ mkdir -p "$dist"
 
 # Kept in step with .goreleaser.yaml by hand, because goreleaser is not a dependency of this
 # repo and a check you cannot run locally is a check nobody runs. If the yaml changes, change
-# these two lines in the same commit.
+# these lines in the same commit — a preflight that builds something other than what ships is
+# worse than no preflight, because it reports READY TO TAG about the wrong artifact.
 platforms="linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64"
 ldflags="-s -w -X main.version=${version}"
+flags="-trimpath" # .goreleaser.yaml builds[].flags
+
+# .goreleaser.yaml `before.hooks`: the Windows VERSIONINFO resource. Go links the .syso whose
+# _windows_<arch> suffix matches, so generating it here is what makes the two Windows binaries
+# below the same ones the release publishes.
+bash "$(dirname "$0")/gen-winres.sh" "$version" >/dev/null
 
 for p in $platforms; do
   os="${p%/*}"; arch="${p#*/}"
@@ -71,7 +78,7 @@ for p in $platforms; do
   mkdir -p "$out"
 
   if ! CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
-       go build -ldflags "$ldflags" -o "$out/batten${ext}" ./cmd/batten 2>"$out/build.log"; then
+       go build $flags -ldflags "$ldflags" -o "$out/batten${ext}" ./cmd/batten 2>"$out/build.log"; then
     bad "$os/$arch does not build:"; sed 's/^/      /' "$out/build.log" >&2
     continue
   fi

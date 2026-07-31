@@ -11,6 +11,24 @@ version: 2
 
 project_name: batten
 
+# The Windows VERSIONINFO resources, generated once before any target is built.
+#
+# A Go .exe ships with NO version resource: no CompanyName, no ProductName, no LegalCopyright.
+# Every legitimate Windows program has them, so their absence is one of the few cheap negative
+# signals a heuristic scanner has left to work with. Measured cost of filling them in: 1024 bytes
+# on a 15 MB binary. Measured effect on Windows: `(Get-Item batten.exe).VersionInfo` goes from
+# seven empty fields to seven populated ones.
+#
+# It does NOT make the false positive go away, and nothing in this file should ever claim it does
+# — see the Windows note in docs/INSTALL.md for what is actually promised.
+#
+# This is `before` and not `builds[].hooks.pre` on purpose: the .syso files are per-architecture,
+# not per-target, and Go picks the right one from the _windows_<arch> suffix. A pre-hook would
+# regenerate the identical pair once per target.
+before:
+  hooks:
+    - bash scripts/gen-winres.sh {{ .Version }}
+
 builds:
   - id: batten
     main: ./cmd/batten
@@ -25,8 +43,29 @@ builds:
     goos: [linux, darwin, windows]
     goarch: [amd64, arm64]
 
+    # -trimpath, and it is a PRIVACY fix before it is a reproducibility one. Measured on this
+    # tree, 2026-07-31: a `-s -w` binary built WITHOUT it embeds the absolute source paths —
+    #
+    #   C:/Users/arthu/Proyectos/Public/LoopWorkFlow/cmd/batten/main.go
+    #
+    # — the author's username and directory layout, in all six published binaries. With -trimpath:
+    # zero matches. `-s -w` does NOT remove them; only -trimpath does.
+    #
+    # This repo already guards personal paths in FILES (the CI personal-path check,
+    # TestNoPrivateProjectTokensAreTracked). Neither of them can see inside a compiled binary,
+    # which is the one artifact strangers actually download. TestTheReleasedBinaryLeaksNoPersonalPaths
+    # closes that gap.
+    flags:
+      - -trimpath
+
     # -s -w strips the symbol table and DWARF; main.version is stamped so that
     # `batten version` reports the tag it was cut from rather than the placeholder.
+    #
+    # Kept, against the folklore that says stripping causes antivirus false positives. The
+    # evidence for that is ONE golang-nuts report from 2020 with two variables changed at once
+    # (stripped AND cross-compiled). Dropping it costs +43.6% on this binary — measured, not
+    # estimated: 15,545,344 -> 22,316,544 bytes — on something bootstrap.sh downloads. If that
+    # trade is ever made, it gets made against a measurement, not against a forum post.
     ldflags:
       - -s -w -X main.version={{.Version}}
 

@@ -1,5 +1,7 @@
 # batten — what it is, what works, what's next
 
+> **English** · [Español](ROADMAP.es.md)
+
 > The living document. [README.md](README.md) is the pitch; [DESIGN.md](DESIGN.md) is the
 > reasoning behind the shape. **This file is the honest inventory**: what is proven, what is
 > merely built, what is missing, and what we have not decided yet.

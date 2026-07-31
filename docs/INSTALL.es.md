@@ -90,11 +90,15 @@ Con el binario ya en su lugar, el bootstrap lo ve y **no descarga nada** — es 
 > archivo que los hooks nombran no existía, así que el bootstrap cantaba victoria sobre un `bin/`
 > vacío y nada quedaba gobernado. Los hooks nombran un archivo, no un comando.
 
-> **Un detalle honesto de `v0.1.0-beta.1`:** un binario hecho con `go install` reporta
-> `batten 0.1.0` en vez de `0.1.0-beta.1`, porque la versión la inyecta GoReleaser por ldflags y
-> ese tag todavía no traía el fallback que la lee del módulo. `batten doctor` va a decir que el
-> plugin y el binario no coinciden. Está arreglado para el próximo tag; mientras tanto, usá (a) o
-> (c), o ignorá ese aviso puntual.
+> **El reporte de versión, arreglado después de `v0.1.0-beta.1`.** La ruta (a) ahora estampa la
+> versión igual que el release, así que un binario compilado por vos reporta lo mismo que uno
+> descargado y `batten doctor` coincide con `plugin.json`. La ruta (b) reporta la versión de módulo
+> con la que se instaló. Si seguís en `v0.1.0-beta.1`, un binario de `go install` dice
+> `batten 0.1.0` y doctor marca la discrepancia — usá (a) o (c), o ignorá ese aviso puntual.
+>
+> *(Qué estaba roto de verdad: el linker de Go ignora `-X main.version` **en silencio** salvo que la
+> variable esté declarada sin inicializar o con una constante. Estaba inicializada con una llamada a
+> función, así que el flag que GoReleaser siempre pasó no hacía nada — sin error y sin aviso.)*
 
 ## Instalación (5 pasos)
 

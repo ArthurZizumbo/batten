@@ -1,5 +1,7 @@
 # Field test
 
+> **English** · [Español](FIELD-TEST.es.md)
+
 > batten run against a replica of a real project and a repo built from zero, by agents that had
 > never seen it. 90 behaviours confirmed working, 80 findings, every one of them verified or
 > refuted by a second agent whose job was to prove it wrong. 2026-07-28.

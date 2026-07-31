@@ -49,7 +49,24 @@ import (
 // version is what `batten version` prints and what `doctor` compares the installed binary
 // against. GoReleaser overrides it with `-X main.version={{.Version}}`; buildVersion recovers it
 // for every other way batten can legitimately be built.
-var version = buildVersion("0.1.0")
+//
+// THE EMPTY-STRING INITIALIZER IS LOAD-BEARING. `-X` is silently ignored unless the variable is
+// "declared uninitialized or initialized to a constant string expression" (cmd/link). This was
+// `var version = buildVersion("0.1.0")` — a function call — so the linker flag GoReleaser has
+// always passed did nothing at all, and every release reported whatever ReadBuildInfo happened to
+// embed. Silently: no error, no warning, the build looked fine.
+//
+// Do not "simplify" this back into a one-line initializer. TestTheLinkerCanStampTheVersion holds
+// the line by actually running the linker.
+var version = ""
+
+func init() {
+	// Only when the linker did not stamp it. buildVersion is the fallback for `go install` and
+	// for a plain checkout build, which are both legitimate ways to get a batten.
+	if version == "" {
+		version = buildVersion("0.1.0")
+	}
+}
 
 // buildVersion answers "which batten is this" for a binary GoReleaser did not stamp.
 //
