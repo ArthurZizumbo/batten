@@ -162,6 +162,15 @@ The same discipline in the suite: **a fix ships with a test that FAILS against t
 Revert the *behaviour* and leave the symbols standing — reverting a whole file fails to compile, and
 a compile error proves nothing about the fix.
 
+**And when a guard fires on legitimate work, narrow its claim — never widen the exception.** The
+distinction that matters is between a guard being *wrong* and a guard being *too broad*. The
+archive-name check greps `.goreleaser.yaml` for `{{ .Version }}`, because an asset name carrying a
+version cannot be fetched from `releases/latest/download`. That rule is right. Its reach was not:
+it read the whole file, so it also fired on `before.hooks` and on ldflags, where the template is
+exactly what should be there. The fix was to scope the grep to the `archives:` block — **and then
+to prove, with a control, that it still fails on a versioned `name_template`.** A narrowed guard
+that was never re-tested against its own positive case is a deleted guard with extra steps.
+
 ---
 
 ## Documentation rules
@@ -215,6 +224,15 @@ that line now. Two things follow:
 - **Never commit an absolute home path** (`C:\Users\…`, `/home/…`, `/Users/…`). Use `~` or a
   placeholder. A JSON settings file escapes its backslashes, which is how the first version of that
   guard ran green for weeks over a real path.
+- **The rule covers examples, comments and the prose that explains the rule.** There is no "but it
+  is only an illustration" exemption. `.goreleaser.yaml` once pasted the author's real path into a
+  comment whose subject was *why `-trimpath` removes personal paths* — the sentence explaining the
+  fix committed the defect. If you are quoting a path to make a point, the point survives
+  `C:/Users/<user>/<...>/file.go`; the privacy leak does not.
+- **Run the guard before pushing, not after CI runs it for you.** Every check in the `lint` job is
+  a shell one-liner you can paste into a terminal; the personal-path one is a single `git grep`.
+  Discovering the violation from a red PR costs a round trip and puts the bad bytes on a remote,
+  where "it was only in a branch" is not the same as never having pushed it.
 - **`graphify . --code-only`, always.** Plain `graphify update .` indexes documents too and pulls
   prose into a committed 2 MB JSON that no diff review will ever read — and CI's personal-path guard
   excludes `graphify-out`. `.graphifyignore` is the second line of defence, not the first.

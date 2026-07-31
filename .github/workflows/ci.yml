@@ -196,7 +196,15 @@ jobs:
         run: |
           grep -q 'batten_${os}_${arch}.tar.gz' scripts/bootstrap.sh
           grep -q '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}' .goreleaser.yaml
-          if grep -q '{{ .Version }}' .goreleaser.yaml; then
+          # Scoped to the `archives:` block, not the whole file. The claim being defended is
+          # narrow — an asset NAME that carries a version cannot be fetched from
+          # releases/latest/download, because that URL cannot know the tag. Everywhere else in
+          # this config `{{ .Version }}` is correct and expected: `before.hooks` passes it to
+          # gen-winres.sh, and ldflags stamps it into the binary.
+          #
+          # It used to grep the entire file, which made it fire on those legitimate uses. Narrowed
+          # rather than deleted: the rule it protects is real, its reach was not.
+          if sed -n '/^archives:/,/^[a-z]/p' .goreleaser.yaml | grep -q '{{ .Version }}'; then
             echo "archives.name_template carries a version; releases/latest/download cannot predict it"
             exit 1
           fi
